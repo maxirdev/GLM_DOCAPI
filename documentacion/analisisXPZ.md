@@ -104,23 +104,19 @@ Los nombres internos de SDT sirven solo para localizar evidencia y no se publica
 
 ### 4. Calcular `Obligatorio`
 
-Analizar la obligatoriedad después de resolver la entrada completa. Las validaciones funcionales se inspeccionan únicamente para esta columna y no se publican como contenido del servicio.
+Analizar la obligatoriedad después de resolver la entrada completa, limitándose al programa principal. No recorrer procedimientos llamados en cascada. Las validaciones funcionales se inspeccionan únicamente para esta columna y no se publican como contenido del servicio.
 
 Usar `SI` cuando se confirme al menos una de estas evidencias:
 
 1. Una comprobación explícita o condicional rechaza el campo vacío o inválido, agrega un error o interrumpe el proceso.
-2. El campo se usa para filtrar datos o decidir una selección funcional.
-3. El campo se pasa directamente a otro proceso como `in:`, `inout:` o sin dirección especificada.
-4. Su valor se copia a una variable primitiva y esa copia cumple alguna condición anterior.
-5. El campo se referencia en una llamada cuyo procedimiento no está exportado.
+2. El campo se usa para filtrar datos o decidir una selección funcional (p. ej. en una cláusula `where`).
+3. El campo se referencia en cualquier parte del programa principal: asignación, condición, paso como parámetro a otro procedimiento o cualquier uso que consuma su valor.
 
-Cuando un campo primitivo alcance `SI`, detener su recorrido: no es necesario seguir procedimientos posteriores para volver a confirmar la misma obligatoriedad.
+Usar `NO` cuando el campo no aparece referenciado en el programa principal.
 
-Usar `NO` cuando no exista ninguna de esas evidencias. Un parámetro exclusivamente `out:` no aporta obligatoriedad.
+Un parámetro exclusivamente `out:` no aporta obligatoriedad.
 
-Si se pasa una estructura o colección completa, marcar `SI` solo en su fila. Sus hijos no heredan ese valor. Recorrer el procedimiento llamado únicamente para resolver la obligatoriedad de los hijos todavía pendientes, aplicando el mismo criterio y deteniendo cada campo primitivo al obtener una respuesta.
-
-Asignar varios campos a un SDT y pasar después el SDT completo tampoco convierte automáticamente en obligatorios a sus integrantes. Si el procedimiento llamado no está exportado, no se puede resolver o forma un ciclo, detener esa rama; los hijos sin evidencia individual quedan en `NO`.
+Si se pasa una estructura o colección completa como parámetro a otro procedimiento, marcar `SI` en la fila de esa estructura o colección. Sus hijos no heredan ese valor: cada uno requiere evidencia propia de uso en el programa principal.
 
 Caso de control: en `ValidarDatosDeVehiculo`, la entrada raíz contiene `SistemaOrigen`, `Usuario`, `Rama`, `Solicitud`, `Instalacion` y `RiesgoAUT`, sin `EmpCod`. `Rama`, `Solicitud`, `Instalacion` y `RiesgoAUT` son `SI`; `SistemaOrigen` y `Usuario` son `NO`. `RiesgoAUT` y `RiesgoAUT.AcreedorPrendario` se expanden en tablas independientes y sus hijos requieren evidencia propia.
 
@@ -191,8 +187,8 @@ Esta ficha es la única transferencia hacia [reglasEditoriales.md](reglasEditori
 - [ ] `EmpCod` se aplicó únicamente bajo la excepción definida.
 - [ ] Cada estructura compuesta conserva su fila y tiene una tabla por ruta JSON.
 - [ ] Los tipos usan exclusivamente la tipografía canónica.
-- [ ] Cada campo primitivo dejó de recorrerse al confirmar `Obligatorio`.
-- [ ] Solo se recorrieron procedimientos posteriores para hijos pendientes de estructuras compuestas.
+- [ ] El análisis de `Obligatorio` se limitó al programa principal sin recorrer procedimientos en cascada.
+- [ ] Los campos sin referencia en el programa principal quedaron como `NO`.
 - [ ] La salida indica colección, campos, tipos y descripciones.
 - [ ] Los errores explícitos provienen únicamente de `GenerarAPIGLMResponse` en el programa principal.
 - [ ] Los errores funcionales bajo HTTP 200 y los códigos externos al programa principal fueron excluidos.
