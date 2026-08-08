@@ -227,7 +227,13 @@ try {
         $lastDot = $item.Fqn.LastIndexOf('.')
         $module = ''
         if ($lastDot -gt 0) { $module = $item.Fqn.Substring(0, $lastDot) }
-        $final.Add([pscustomobject]@{ Fqn = $item.Fqn; Name = $item.Name; Module = $module })
+        $nombre = $item.Name
+        if ($nombre.StartsWith('WS')) { $nombre = 'WS - ' + $nombre.Substring(2) }
+        $descripcion = $item.Object.GetAttribute('description')
+        if (-not $descripcion) { $descripcion = '' }
+        $endpoint = 'a' + $item.Name.ToLowerInvariant()
+        if ($module) { $endpoint = $module.ToLowerInvariant() + '.' + $endpoint }
+        $final.Add([pscustomobject]@{ Fqn = $item.Fqn; Name = $item.Name; Module = $module; Nombre = $nombre; Descripcion = $descripcion; Endpoint = $endpoint })
         Write-Host ("  [OK] " + $item.Fqn) -ForegroundColor Green
     }
 
@@ -235,7 +241,7 @@ try {
     if (-not (Test-Path -LiteralPath $OutputDirectory)) {
         New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
     }
-    $endpointsArr = @($final | ForEach-Object { [pscustomobject]@{ fqn = $_.Fqn; name = $_.Name; module = $_.Module } })
+    $endpointsArr = @($final | ForEach-Object { [pscustomobject]@{ nombre = $_.Nombre; descripcion = $_.Descripcion; proceso = $_.Fqn; endpoint = $_.Endpoint } })
     $unresolvedArr = @($unresolved | ForEach-Object { [pscustomobject]@{ candidate = $_.Candidate; reason = $_.Reason } })
     $payload = [pscustomobject]@{
         meta = [pscustomobject]@{
@@ -263,8 +269,10 @@ try {
     Add-Line $sb
     Add-Line $sb '## Endpoints'
     Add-Line $sb
-    for ($i = 0; $i -lt $final.Count; $i++) {
-        Add-Line $sb (("{0}. {1}{2}{1}" -f ($i + 1), $bt, $final[$i].Fqn))
+    Add-Line $sb '| Nombre | Descripción | Proceso | Endpoint |'
+    Add-Line $sb '|---|---|---|---|'
+    foreach ($e in $final) {
+        Add-Line $sb ("| " + $e.Nombre + " | " + $e.Descripcion + " | " + $bt + $e.Fqn + $bt + " | " + $bt + $e.Endpoint + $bt + " |")
     }
     if ($unresolved.Count -gt 0) {
         Add-Line $sb
