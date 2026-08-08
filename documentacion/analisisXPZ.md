@@ -163,9 +163,9 @@ Casos de control:
 
 ### 7. Resolver el endpoint publicado
 
-Documentar únicamente el endpoint relativo confirmado, en minúsculas. Para Procedures HTTP configuradas como `Main`, anteponer `a` al nombre del proceso: `wslistarsolicitudes` se publica como `awslistarsolicitudes`.
+Documentar el nombre completo del endpoint publicado, en minúsculas, incluida la base del package, por ejemplo `ar.com.glmsa.seguros.comercial.apiglm.emision.awsobtenertotalessolicitud`. Para Procedures HTTP configuradas como `Main`, anteponer `a` al nombre del proceso: `wslistarsolicitudes` se publica como `awslistarsolicitudes` dentro de su package.
 
-No inferir el endpoint por semejanza con otro servicio ni construir host, base URL o package cuando esos datos no forman parte de la documentación final. Si el endpoint relativo no puede confirmarse, registrarlo como pendiente.
+La base del package no se confirma desde el XPZ; requiere evidencia operativa (configuración desplegada o una respuesta real sanitizada) y puede variar entre servicios. No inferir el endpoint por semejanza con otro servicio ni construir host o base URL. Si el nombre completo no puede confirmarse, registrarlo como pendiente indicando la evidencia necesaria.
 
 ## Ficha técnica interna
 
@@ -197,7 +197,7 @@ Esta ficha es la única transferencia hacia [reglasEditoriales.md](reglasEditori
 - [ ] Los errores explícitos provienen únicamente de `GenerarAPIGLMResponse` en el programa principal.
 - [ ] Los errores funcionales bajo HTTP 200 y los códigos externos al programa principal fueron excluidos.
 - [ ] Los mensajes dinámicos usan marcadores descriptivos.
-- [ ] El endpoint relativo está confirmado o marcado como pendiente.
+- [ ] El endpoint publicado (nombre completo) está confirmado o marcado como pendiente.
 - [ ] Toda incertidumbre indica la evidencia necesaria.
 
 Siguiente paso obligatorio: [reglasEditoriales.md](reglasEditoriales.md).

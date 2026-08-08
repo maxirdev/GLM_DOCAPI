@@ -77,7 +77,7 @@ PENDIENTE DE CONFIRMACIÓN: <dato faltante>. Evidencia requerida: <fuente necesa
 
 Los marcadores descriptivos dentro de mensajes dinámicos también deben conservarse.
 
-Usar el endpoint relativo recibido en la ficha, en minúsculas. No reconstruir host, base URL, package ni endpoint por analogía.
+Usar el nombre completo del endpoint publicado recibido en la ficha, en minúsculas. No reconstruir host, base URL, la base del package ni el endpoint por analogía.
 
 ## Lista de verificación editorial
 
