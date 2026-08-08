@@ -9,6 +9,7 @@ Este documento es la tercera fuente normativa y contiene el formato final. Se ut
 - Usar la plantilla solo cuando exista un programa principal separado y único.
 - Conservar únicamente la variante de entrada correspondiente.
 - Reemplazar los marcadores editoriales con datos confirmados o pendientes.
+- El campo Endpoint lleva el nombre completo publicado (package + módulo + procedimiento), en minúsculas, recibido en la ficha.
 - Conservar en el JSON común `<Código HTTP>`, `<descripción general>` y `<detalle>`.
 - Conservar los marcadores descriptivos de mensajes dinámicos, como `<número>`.
 - Conservar literalmente `{Base64(usuario:contraseña)}` y no incluir credenciales reales.
@@ -26,7 +27,7 @@ Este documento es la tercera fuente normativa y contiene el formato final. Se ut
 
 | Dato | Valor |
 |---|---|
-| Endpoint | `<endpoint confirmado o PENDIENTE DE CONFIRMACIÓN>` |
+| Endpoint | `<nombre completo del endpoint publicado o PENDIENTE DE CONFIRMACIÓN>` |
 | Descripción | <Descripción funcional> |
 | Método HTTP | `<GET/POST>` |
 | Autenticación | HTTP Basic mediante `Authorization` |

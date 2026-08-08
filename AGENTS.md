@@ -18,7 +18,7 @@ Ambas carpetas están en `.gitignore`: son referencias locales, no parte del pro
 - `templateDoc.md` — fuente normativa #3: plantilla obligatoria de cada servicio.
 - `Endpoints/analisisEndpoint.md` — cómo reproducir el inventario de endpoints desde `APIGLM.APIGLMMain`.
 - `Endpoints/endpoints.md` — inventario esperado de endpoints (aún no existe en el repo).
-- `servicios/` — documentos por servicio (aún vacío).
+- `servicios/` — documentos por servicio (p. ej. `wsobtenertotalessolicitud.md`).
 
 Orden obligatorio por servicio: analisisXPZ → reglasEditoriales → templateDoc. No recalcular decisiones durante la redacción.
 
@@ -26,7 +26,7 @@ Orden obligatorio por servicio: analisisXPZ → reglasEditoriales → templateDo
 
 - El XPZ se abre como ZIP de solo lectura; el XML interno tiene raíz `ExportFile`.
 - Inventario: solo llamadas `WS...` activas en `APIGLMMain` (una línea que comienza con `//` es una llamada inactiva). Confirmar que el objeto sea Procedure, `IsMain=True` y `CALL_PROTOCOL=HTTP`. Conservar el `fullyQualifiedName` literal, p. ej. `APIGLM.Cotizacion.WSObtenerDatosProductor`.
-- Endpoint publicado ≠ nombre GeneXus: se escribe en minúsculas y, para procedures HTTP `Main`, se antepone `a` (`wslistarsolicitudes` → `awslistarsolicitudes`). No construir host, base URL ni package.
+- Endpoint publicado ≠ nombre GeneXus: se documenta el nombre completo en minúsculas (package + módulo + procedimiento) y, para procedures HTTP `Main`, se antepone `a` (`wslistarsolicitudes` → `...apiglm...awslistarsolicitudes`). La base del package no se confirma desde el XPZ, puede variar entre servicios y se valida con evidencia operativa; si no está confirmada, registrar `PENDIENTE DE CONFIRMACIÓN`. No construir host ni base URL.
 - Entrada: solo dos patrones — GET por posiciones de `APIGLMRequestIn.QueryParams`; POST por `FromJson` desde `APIGLMRequestIn.Body`.
 - Tipos canónicos únicos: `Integer (<longitud>)`, `Decimal (<longitud>, <decimales>)`, `String (<longitud>)`, `Boolean`, `Date (YYYY-MM-DD)`, `DateTime`, `Base64`, `Estructura <attr>`, `Colección de Estructura <attr>`, `Colección JSON`. No usar `Texto`, `Numérico`, `Objeto JSON`, etc.
 - `Obligatorio` = `SI` solo con evidencia confirmada; al confirmar un campo primitivo, dejar de recorrer. Sin evidencia = `NO`.
