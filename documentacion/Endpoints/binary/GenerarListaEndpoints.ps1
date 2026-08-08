@@ -8,9 +8,9 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-if (-not $XpzDirectory) { $XpzDirectory = Join-Path $PSScriptRoot '..\..\xpz' }
-if (-not $CatalogPath) { $CatalogPath = Join-Path $PSScriptRoot '..\..\GeneXus-XPZ-Skills-main\scripts\gx-object-type-catalog.json' }
-if (-not $OutputDirectory) { $OutputDirectory = $PSScriptRoot }
+if (-not $XpzDirectory) { $XpzDirectory = Join-Path $PSScriptRoot '..\..\..\xpz' }
+if (-not $CatalogPath) { $CatalogPath = Join-Path $PSScriptRoot '..\..\..\GeneXus-XPZ-Skills-main\scripts\gx-object-type-catalog.json' }
+if (-not $OutputDirectory) { $OutputDirectory = Join-Path $PSScriptRoot '..\assets' }
 $XpzName = ''
 $StartTime = Get-Date
 $ProcedureTypeGuid = '84a12160-f59b-4ad7-a683-ea4481ac23e9'
@@ -263,7 +263,7 @@ try {
     $sb = New-Object System.Text.StringBuilder
     Add-Line $sb '# Inventario de endpoints APIGLM'
     Add-Line $sb
-    Add-Line $sb 'Inventario de endpoints activos y únicos confirmados desde `APIGLM.APIGLMMain` en el XPZ, generado por `Invoke-EndpointInventory.ps1`.'
+    Add-Line $sb 'Inventario de endpoints activos y únicos confirmados desde `APIGLM.APIGLMMain` en el XPZ, generado por `GenerarListaEndpoints.ps1`.'
     Add-Line $sb
     Add-Line $sb ("Conteo confirmado: **" + $final.Count + "** (esperado: " + $ExpectedCount + ").")
     Add-Line $sb

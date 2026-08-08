@@ -1,8 +1,8 @@
 # Identificación de endpoints APIGLM desde el XPZ
 
-Esta guía explica cómo un agente debe reproducir el inventario de [endpoints.md](endpoints.md) a partir de [LPS_COM_v01.xpz](../recursos/LPS_COM_v01.xpz) y del proceso `APIGLM.APIGLMMain`.
+Esta guía explica cómo un agente debe reproducir el inventario de [endpoints.md](endpoints.md) a partir de [LPS_COM_v01.xpz](../../../xpz/LPS_COM_v01.xpz) y del proceso `APIGLM.APIGLMMain`.
 
-En este inventario, un endpoint es el nombre completo del procedimiento GeneXus que funciona como wrapper HTTP. No es una URL desplegada. La determinación del método HTTP, los datos de entrada y salida o la URL publicada pertenece al análisis individual definido en [analisisXPZ.md](analisisXPZ.md).
+En este inventario, un endpoint es el nombre completo del procedimiento GeneXus que funciona como wrapper HTTP. No es una URL desplegada. La determinación del método HTTP, los datos de entrada y salida o la URL publicada pertenece al análisis individual definido en [analisisXPZ.md](../../analisisXPZ.md).
 
 ## Fuentes de evidencia
 
@@ -12,7 +12,7 @@ El agente debe usar estas fuentes:
 2. Su XML interno `LPS_COM_v01.xml`, cuya raíz es `ExportFile`.
 3. El `Source` del objeto `APIGLM.APIGLMMain`, que delimita los candidatos activos.
 4. Los objetos exportados dentro de `/ExportFile/Objects`.
-5. El [catálogo de tipos GeneXus](../scripts/gx-object-type-catalog.json), que permite confirmar que el valor de `Object/@type` corresponde a `Procedure`.
+5. El [catálogo de tipos GeneXus](../../../GeneXus-XPZ-Skills-main/scripts/gx-object-type-catalog.json), que permite confirmar que el valor de `Object/@type` corresponde a `Procedure`.
 
 `APIGLMMain` es la fuente del alcance, pero una llamada presente allí es solamente un candidato hasta que el objeto correspondiente quede confirmado en el XML.
 
@@ -113,4 +113,4 @@ Este procedimiento identifica únicamente los nombres GeneXus que forman el inve
 - la estructura de salida;
 - los códigos y mensajes HTTP del servicio.
 
-Esos datos requieren el análisis individual del wrapper y de su programa principal conforme a [analisisXPZ.md](analisisXPZ.md).
+Esos datos requieren el análisis individual del wrapper y de su programa principal conforme a [analisisXPZ.md](../../analisisXPZ.md).

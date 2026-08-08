@@ -16,8 +16,12 @@ Ambas carpetas están en `.gitignore`: son referencias locales, no parte del pro
 - `analisisXPZ.md` — fuente normativa #1: cómo construir la ficha técnica desde el XPZ.
 - `reglasEditoriales.md` — fuente normativa #2: presentación del documento final.
 - `templateDoc.md` — fuente normativa #3: plantilla obligatoria de cada servicio.
-- `Endpoints/analisisEndpoint.md` — cómo reproducir el inventario de endpoints desde `APIGLM.APIGLMMain`.
-- `Endpoints/endpoints.md` — inventario esperado de endpoints (aún no existe en el repo).
+- `Endpoints/assets/analisisEndpoint.md` — cómo reproducir el inventario de endpoints desde `APIGLM.APIGLMMain`.
+- `Endpoints/assets/endpoints.md` — inventario esperado de endpoints (aún no existe en el repo).
+- `Endpoints/assets/` — salidas del inventario (`endpoints.json`, `endpoints.md`, ambas ignoradas).
+- `Endpoints/binary/` — scripts: `GenerarListaEndpoints.ps1` (inventario), `GenerarVistaHTML.ps1` (visor) y `ObtenerEndpoints.cmd`.
+- `Endpoints/web/` — visor estático: `index.html` (generado e ignorado), `style.css`, `app.js`.
+- `GenerarDocumentacion.cmd` (raíz del repo) — orquestador que regenera inventario y visor.
 - `servicios/` — documentos por servicio (p. ej. `wsobtenertotalessolicitud.md`).
 
 Orden obligatorio por servicio: analisisXPZ → reglasEditoriales → templateDoc. No recalcular decisiones durante la redacción.
@@ -35,10 +39,9 @@ Orden obligatorio por servicio: analisisXPZ → reglasEditoriales → templateDo
 
 ## Verificación e inconsistencias conocidas
 
-- No hay lint ni tests. La verificación son las listas de control al final de `analisisXPZ.md`, `reglasEditoriales.md` y `templateDoc.md`; `Endpoints/analisisEndpoint.md` espera 135 endpoints. Si el conteo difiere, primero determinar si cambió el XPZ o `APIGLMMain`; no forzar el número.
+- No hay lint ni tests. La verificación son las listas de control al final de `analisisXPZ.md`, `reglasEditoriales.md` y `templateDoc.md`; `Endpoints/assets/analisisEndpoint.md` espera 135 endpoints. Si el conteo difiere, primero determinar si cambió el XPZ o `APIGLMMain`; no forzar el número.
 - Markdown en UTF-8 sin BOM y finales de línea LF.
-- `Endpoints/analisisEndpoint.md` referencia `../recursos/LPS_COM_v01.xpz` y `../scripts/gx-object-type-catalog.json`; las rutas reales son `xpz/LPS_COM.xpz` y `GeneXus-XPZ-Skills-main/scripts/gx-object-type-catalog.json`.
-- El README escribe `Endpoint/` (singular) y `Endpoint/endpoints.md`; la carpeta real es `Endpoints/`. No corregir estas referencias por cuenta propia sin avisar.
+- `Endpoints/assets/analisisEndpoint.md` referencia las rutas reales `xpz/LPS_COM_v01.xpz` y `GeneXus-XPZ-Skills-main/scripts/gx-object-type-catalog.json` mediante `../../../`.
 
 ## Skills
 
