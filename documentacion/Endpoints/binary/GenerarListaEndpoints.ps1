@@ -117,13 +117,13 @@ try {
     } catch {
         throw ("No se pudo abrir el XPZ como contenedor ZIP. Motivo: " + $_.Exception.Message)
     }
-    $entry = $zip.Entries | Where-Object { $_.Name -eq 'LPS_COM_v01.xml' } | Select-Object -First 1
-    if (-not $entry) {
-        throw ('El XPZ ' + $XpzName + ' no contiene el archivo LPS_COM_v01.xml.')
+$entry = $zip.Entries | Where-Object { $_.Name -like '*.xml' } | Select-Object -First 1
+if (-not $entry) {
+    throw ('El XPZ ' + $XpzName + ' no contiene ningún archivo XML.')
     }
     Write-Host ("  Entrada localizada: " + $entry.FullName + " (" + $entry.Length + " bytes)") -ForegroundColor DarkGray
 
-    Write-Step 2 ("Leyendo LPS_COM_v01.xml desde " + $XpzName + "...")
+    Write-Step 2 ("Leyendo " + $entry.Name + " desde " + $XpzName + "...")
     $reader = New-Object System.IO.StreamReader($entry.Open())
     try {
         $xmlText = $reader.ReadToEnd()
@@ -215,6 +215,10 @@ try {
             if ($byFqn.ContainsKey($call)) { $matches = $byFqn[$call] }
         } else {
             if ($byName.ContainsKey($call)) { $matches = $byName[$call] }
+        }
+        if ($matches -and $matches.Count -gt 1) {
+            $procedures = $matches | Where-Object { $_.GetAttribute('type') -eq $ProcedureTypeGuid }
+            if ($procedures.Count -eq 1) { $matches = @($procedures) }
         }
         if (-not $matches -or $matches.Count -ne 1) {
             $count = 0

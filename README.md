@@ -28,16 +28,16 @@ El inventario y el visor web se regeneran con un orquestador ubicado en la raíz
 |---|---|---|
 | [GenerarDocumentacion.cmd](GenerarDocumentacion.cmd) | raíz del repo | Ejecuta en secuencia los dos scripts siguientes y termina con `%ERRORLEVEL%` ≠ 0 si alguno falla. |
 | `GenerarListaEndpoints.ps1` | `documentacion/Endpoints/binary/` | Lee `xpz/LPS_COM.xpz` y el catálogo de tipos de GeneXus, extrae las llamadas `WS...` activas de `APIGLM.APIGLMMain`, valida que cada objeto sea Procedure con `IsMain=True` y `CALL_PROTOCOL=HTTP`, y escribe `endpoints.json` y `endpoints.md`. |
-| `GenerarVistaHTML.ps1` | `documentacion/Endpoints/binary/` | Lee `endpoints.json`, incrusta los datos tal cual (sin cifrado, sin peticiones de red) en `<script type="application/json">` y escribe `index.html`. |
+| `GenerarVistaHTML.ps1` | `documentacion/Endpoints/binary/` | Lee `endpoints.json`, incrusta los datos tal cual (sin cifrado, sin peticiones de red) en `<script type="application/json">` y escribe `APIServicios.html`. |
 | `ObtenerEndpoints.cmd` | `documentacion/Endpoints/binary/` | Genera únicamente el inventario (sin visor). |
 
-Los archivos generados (`endpoints.json`, `endpoints.md` e `index.html`) están en `.gitignore`: se producen en cada ejecución y no se versionan. Para regenerar todo basta ejecutar `GenerarDocumentacion.cmd` en la raíz del repositorio.
+Los archivos generados (`endpoints.json`, `endpoints.md` y `APIServicios.html`) están en `.gitignore`: se producen en cada ejecución y no se versionan. Para regenerar todo basta ejecutar `GenerarDocumentacion.cmd` en la raíz del repositorio.
 
 ### Visor web
 
-El visor resultante (`documentacion/Endpoints/web/index.html`) se abre con doble clic (`file://`), sin servidor, frameworks ni CDN:
+El visor resultante (`documentacion/Endpoints/web/APIServicios.html`) se abre con doble clic (`file://`), sin servidor, frameworks ni CDN:
 
-- encabezado con "Cliente: LPS_COM", la fecha de `meta.generatedAt` en formato `DD/MM/AAAA HH:mm` y el total de `meta.totalConfirmed`;
+- encabezado con el cliente definido en `configuracion.json`, la fecha de `meta.generatedAt` en formato `DD/MM/AAAA HH:mm` y el total de `meta.totalConfirmed`;
 - grilla con una fila por endpoint, con Nombre y Descripción alineadas a la izquierda;
 - filtro en vivo por Nombre o Descripción, sin distinguir mayúsculas ni acentos;
 - toggle de tema claro/oscuro con persistencia en `localStorage` (por defecto según `prefers-color-scheme`).
@@ -54,7 +54,7 @@ El visor resultante (`documentacion/Endpoints/web/index.html`) se abre con doble
 | [servicios](documentacion/servicios/) | Contiene la documentación generada para los servicios analizados. |
 | [Endpoints/assets/](documentacion/Endpoints/assets/) | Guía del inventario (`analisisEndpoint.md`) y salidas generadas (`endpoints.json`, `endpoints.md`). |
 | [Endpoints/binary/](documentacion/Endpoints/binary/) | Scripts del pipeline: `GenerarListaEndpoints.ps1`, `GenerarVistaHTML.ps1` y `ObtenerEndpoints.cmd`. |
-| [Endpoints/web/](documentacion/Endpoints/web/) | Visor estático: `index.html` (generado), `style.css` y `app.js`. |
+| [Endpoints/web/](documentacion/Endpoints/web/) | Visor estático: `APIServicios.html` (generado), `style.css` y `app.js`. |
 | [GenerarDocumentacion.cmd](GenerarDocumentacion.cmd) | Orquestador que regenera inventario y visor. |
 | `specs/` | Especificaciones (specs) del proyecto. |
 

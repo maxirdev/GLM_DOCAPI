@@ -6,7 +6,7 @@ Repositorio de documentación (sin código, sin build, sin tests). Produce ficha
 
 ## Fuentes de evidencia (solo lectura, no editar)
 
-- `xpz/LPS_COM.xpz` — archivo ZIP que contiene un único XML `LPS_COM_v01.xml`, raíz `ExportFile`. Es la fuente de verdad: Source, Rules, variables, SDT, dominios, atributos y asignaciones.
+- `xpz/` — archivo `.xpz` configurado en `configuracion.json` (p. ej. `trunk.xpz`, `LPS_COM.xpz`). Es un ZIP que contiene un único XML con raíz `ExportFile`. Es la fuente de verdad: Source, Rules, variables, SDT, dominios, atributos y asignaciones.
 - `GeneXus-XPZ-Skills-main/` — repositorio auxiliar vendido. Contiene scripts y catálogos (p. ej. `scripts/gx-object-type-catalog.json`, para confirmar tipos de objeto).
 
 Ambas carpetas están en `.gitignore`: son referencias locales, no parte del producto.
@@ -20,7 +20,7 @@ Ambas carpetas están en `.gitignore`: son referencias locales, no parte del pro
 - `Endpoints/assets/endpoints.md` — inventario esperado de endpoints (aún no existe en el repo).
 - `Endpoints/assets/` — salidas del inventario (`endpoints.json`, `endpoints.md`, ambas ignoradas).
 - `Endpoints/binary/` — scripts: `GenerarListaEndpoints.ps1` (inventario), `GenerarVistaHTML.ps1` (visor) y `ObtenerEndpoints.cmd`.
-- `Endpoints/web/` — visor estático: `index.html` (generado e ignorado), `style.css`, `app.js`.
+- `Endpoints/web/` — visor estático: `APIServicios.html` (generado e ignorado), `style.css`, `app.js`.
 - `GenerarDocumentacion.cmd` (raíz del repo) — orquestador que regenera inventario y visor.
 - `configuracion.json` (raíz del repo) — configuración operativa: ruta del XPZ, rutas de salida y `packagename` constante del endpoint publicado por XPZ.
 - `servicios/` — documentos por servicio (p. ej. `wsobtenertotalessolicitud.md`).
@@ -42,7 +42,7 @@ Orden obligatorio por servicio: analisisXPZ → reglasEditoriales → templateDo
 
 - No hay lint ni tests. La verificación son las listas de control al final de `analisisXPZ.md`, `reglasEditoriales.md` y `templateDoc.md`; `Endpoints/assets/analisisEndpoint.md` espera 135 endpoints. Si el conteo difiere, primero determinar si cambió el XPZ o `APIGLMMain`; no forzar el número.
 - Markdown en UTF-8 sin BOM y finales de línea LF.
-- `Endpoints/assets/analisisEndpoint.md` referencia las rutas reales `xpz/LPS_COM_v01.xpz` y `GeneXus-XPZ-Skills-main/scripts/gx-object-type-catalog.json` mediante `../../../`.
+- `Endpoints/assets/analisisEndpoint.md` referencia el XPZ configurado en `configuracion.json` y `GeneXus-XPZ-Skills-main/scripts/gx-object-type-catalog.json` mediante `../../../`.
 
 ## Skills
 

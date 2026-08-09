@@ -4,7 +4,7 @@
   var nodoDatos = document.getElementById('endpoints-data');
   var datos = JSON.parse(nodoDatos.textContent);
 
-  var cliente = 'LPS_COM';
+  var cliente = datos.meta.cliente || '';
   var fecha = formatearFecha(datos.meta.generatedAt);
   var total = datos.meta.totalConfirmed;
 

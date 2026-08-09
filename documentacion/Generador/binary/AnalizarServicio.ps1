@@ -11,7 +11,7 @@ function Abrir-XPZ {
     .SYNOPSIS
     Abre el XPZ como ZIP de solo lectura y devuelve el XML interno cargado.
     .DESCRIPTION
-    Localiza la entrada LPS_COM_v01.xml dentro del XPZ, lee su contenido,
+    Localiza la primera entrada XML del XPZ, lee su contenido,
     lo carga como System.Xml.XmlDocument y valida que la raiz sea ExportFile.
     #>
     [CmdletBinding()]
@@ -27,9 +27,9 @@ function Abrir-XPZ {
     $zip = $null
     try {
         $zip = [System.IO.Compression.ZipFile]::OpenRead($RutaXpz)
-        $entry = $zip.Entries | Where-Object { $_.Name -eq 'LPS_COM_v01.xml' } | Select-Object -First 1
+        $entry = $zip.Entries | Where-Object { $_.Name -like '*.xml' } | Select-Object -First 1
         if (-not $entry) {
-            throw ('El XPZ ' + [System.IO.Path]::GetFileName($RutaXpz) + ' no contiene el archivo LPS_COM_v01.xml.')
+            throw ('El XPZ ' + [System.IO.Path]::GetFileName($RutaXpz) + ' no contiene ningún archivo XML.')
         }
         $reader = New-Object System.IO.StreamReader($entry.Open())
         try {
@@ -73,7 +73,11 @@ function Obtener-Objeto {
         return $null
     }
     if ($nodos.Count -gt 1) {
-        throw ('El objeto ' + $NombreCompleto + ' aparece ' + $nodos.Count + ' veces en el XPZ.')
+        $procedimientos = @($nodos | Where-Object { $_.GetAttribute('type') -eq '84a12160-f59b-4ad7-a683-ea4481ac23e9' })
+        if ($procedimientos.Count -eq 1) {
+            return $procedimientos[0]
+        }
+        throw ('El objeto ' + $NombreCompleto + ' aparece ' + $nodos.Count + ' veces en el XPZ sin un unico Procedure.')
     }
     return $nodos[0]
 }
@@ -146,8 +150,12 @@ function Obtener-DelegacionUnica {
     foreach ($objeto in $Xml.SelectNodes('//Object')) {
         $nombreCompleto = $objeto.GetAttribute('fullyQualifiedName')
         $nombre = $objeto.GetAttribute('name')
-        if ($nombreCompleto -and -not $porNombreCompleto.ContainsKey($nombreCompleto)) {
-            $porNombreCompleto[$nombreCompleto] = $objeto
+        if ($nombreCompleto) {
+            if (-not $porNombreCompleto.ContainsKey($nombreCompleto)) {
+                $porNombreCompleto[$nombreCompleto] = $objeto
+            } elseif ($objeto.GetAttribute('type') -eq '84a12160-f59b-4ad7-a683-ea4481ac23e9') {
+                $porNombreCompleto[$nombreCompleto] = $objeto
+            }
         }
         if ($nombre) {
             if (-not $porNombre.ContainsKey($nombre)) {
@@ -487,6 +495,11 @@ function Obtener-DatosTipo {
             break
         }
 
+        if ($longitud -or $longitudMaxima) {
+            $baseTipo = 'Numeric'
+            break
+        }
+
         $noResuelto = $true
         break
     }
@@ -580,6 +593,15 @@ function Obtener-DescripcionCampo {
             if ($descripcion) { return $descripcion }
             $descripcion = Obtener-Propiedad -Nodo $objetos[0] -Nombre 'Description'
             if ($descripcion) { return $descripcion }
+        }
+        foreach ($obj in $Xml.SelectNodes('//Object//Item')) {
+            $ref = Obtener-Propiedad -Nodo $obj -Nombre 'idBasedOn'
+            if ($ref -eq $idBasedOn) {
+                $desc = $obj.GetAttribute('description')
+                if ($desc) { return ($desc -replace '^\*\s*', '') }
+                $desc = Obtener-Propiedad -Nodo $obj -Nombre 'Description'
+                if ($desc) { return $desc }
+            }
         }
     }
     return ''

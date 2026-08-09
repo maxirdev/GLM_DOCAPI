@@ -7,8 +7,16 @@ param(
 $ErrorActionPreference = 'Stop'
 if (-not $InputDirectory) { $InputDirectory = Join-Path $PSScriptRoot '..\assets' }
 $JsonPath = Join-Path $InputDirectory 'endpoints.json'
-$HtmlPath = Join-Path (Join-Path $PSScriptRoot '..\web') 'index.html'
+$HtmlPath = Join-Path (Join-Path $PSScriptRoot '..\web') 'APIServicios.html'
 if ($OutputPath) { $HtmlPath = $OutputPath }
+$ConfigPath = Join-Path $PSScriptRoot '..\..\..\configuracion.json'
+$Cliente = ''
+if (Test-Path -LiteralPath $ConfigPath) {
+    try {
+        $configuracion = Get-Content -LiteralPath $ConfigPath -Raw | ConvertFrom-Json
+        $Cliente = [string]$configuracion.cliente
+    } catch { }
+}
 $StartTime = Get-Date
 
 if (-not [Console]::IsOutputRedirected) {
@@ -44,23 +52,29 @@ try {
         throw ("No se encontró el inventario en: " + $JsonPath + ". Ejecute primero GenerarListaEndpoints.ps1 o generelo desde el XPZ.")
     }
     $jsonText = [System.IO.File]::ReadAllText($JsonPath, (New-Object System.Text.UTF8Encoding($false)))
+    $jsonObj = $jsonText | ConvertFrom-Json
+    $jsonObj.meta | Add-Member -MemberType NoteProperty -Name 'cliente' -Value $Cliente -Force
+    $jsonModified = $jsonObj | ConvertTo-Json -Depth 5
+    $jsonModified = $jsonModified -replace "`r`n", "`n"
     Write-Host ("  Leídos " + $jsonText.Length + " caracteres desde " + [System.IO.Path]::GetFileName($JsonPath)) -ForegroundColor DarkGray
 
-    Write-Step 2 'Incrustando los datos en index.html...'
-    $embedded = $jsonText -replace '</script', '<\/script'
+    Write-Step 2 'Incrustando los datos en APIServicios.html...'
+    $embedded = $jsonModified -replace '</script', '<\/script'
     $sb = New-Object System.Text.StringBuilder
     Add-Line $sb '<!DOCTYPE html>'
     Add-Line $sb '<html lang="es">'
     Add-Line $sb '<head>'
     Add-Line $sb '  <meta charset="UTF-8">'
     Add-Line $sb '  <meta name="viewport" content="width=device-width, initial-scale=1.0">'
-    Add-Line $sb '  <title>Visor de Endpoints APIGLM</title>'
+    $titulo = 'Listado de Servicios API'
+    if ($Cliente) { $titulo = $titulo + ' - ' + $Cliente }
+    Add-Line $sb ('  <title>' + $titulo + '</title>')
     Add-Line $sb '  <link rel="stylesheet" href="style.css">'
     Add-Line $sb '</head>'
     Add-Line $sb '<body>'
     Add-Line $sb '  <header class="encabezado">'
     Add-Line $sb '    <div class="encabezado-texto">'
-    Add-Line $sb '      <h1>Visor de Endpoints APIGLM</h1>'
+    Add-Line $sb ('      <h1>' + $titulo + '</h1>')
     Add-Line $sb '      <p class="metadatos" id="metadatos"></p>'
     Add-Line $sb '    </div>'
     Add-Line $sb '    <button type="button" id="alternar-tema" aria-label="Alternar tema">Modo oscuro</button>'
@@ -105,7 +119,7 @@ try {
     Write-Host ("  Tamaño: " + $bytes.Length + " bytes") -ForegroundColor White
     Write-Host ("  UTF-8 sin BOM: " + $(if ($tieneBom) { 'NO (contiene BOM)' } else { 'SI' })) -ForegroundColor White
     Write-Host ''
-    Write-Host ('Abra index.html con doble clic para visualizar el visor.') -ForegroundColor DarkGray
+    Write-Host ('Abra APIServicios.html con doble clic para visualizar el listado.') -ForegroundColor DarkGray
 } catch {
     Write-Host ''
     Write-Host ("ERROR: " + $_.Exception.Message) -ForegroundColor Red

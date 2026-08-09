@@ -1,4 +1,5 @@
 {
-  "xpz": "xpz/LPS_COM.xpz",
-  "packagename": "ar.com.glmsa.seguros.comercial."
+  "xpz": "xpz/trunk.xpz",
+  "packagename": "glmsuit.comercial.",
+  "cliente": "Trunk"
 }
