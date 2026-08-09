@@ -64,48 +64,48 @@ function Agregar-ItemsCampo {
 function Generar-ItemsRevision {
     <#
     .SYNOPSIS
-    Genera los items del informe de revision a partir de la ficha tecnica.
+    Genera los items del informe de revision a partir de la documentación técnica.
     .DESCRIPTION
     Recorre el endpoint, la entrada, las estructuras, la salida y los errores de
-    la ficha y registra cada juicio no automatizable con su evidencia requerida
+    la documentación y registra cada juicio no automatizable con su evidencia requerida
     y un ejemplo.
     #>
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory = $true)][object]$Ficha
+        [Parameter(Mandatory = $true)][object]$Documentacion
     )
 
     $items = New-Object System.Collections.Generic.List[object]
 
-    if ($Ficha.EndpointPublicado -match '^PENDIENTE') {
-        $ultimoPunto = $Ficha.FqWrapper.LastIndexOf('.')
+    if ($Documentacion.EndpointPublicado -match '^PENDIENTE') {
+        $ultimoPunto = $Documentacion.FqWrapper.LastIndexOf('.')
         $rutaSinBase = ''
         if ($ultimoPunto -gt 0) {
-            $modulo = $Ficha.FqWrapper.Substring(0, $ultimoPunto)
-            $procedimiento = $Ficha.FqWrapper.Substring($ultimoPunto + 1)
+            $modulo = $Documentacion.FqWrapper.Substring(0, $ultimoPunto)
+            $procedimiento = $Documentacion.FqWrapper.Substring($ultimoPunto + 1)
             $rutaSinBase = $modulo.ToLowerInvariant() + '.' + 'a' + $procedimiento.ToLowerInvariant()
         }
         $items.Add([pscustomobject]@{
             campo = ''
             asunto = 'endpoint'
-            evidenciaRequerida = (Obtener-EvidenciaRequerida -Pendiente $Ficha.EndpointPublicado)
+            evidenciaRequerida = (Obtener-EvidenciaRequerida -Pendiente $Documentacion.EndpointPublicado)
             ejemplo = $rutaSinBase
-            pendiente = $Ficha.EndpointPublicado
+            pendiente = $Documentacion.EndpointPublicado
         })
     }
 
-    foreach ($campo in $Ficha.Entrada) {
+    foreach ($campo in $Documentacion.Entrada) {
         Agregar-ItemsCampo -Items $items -Campo $campo
     }
-    foreach ($estructura in $Ficha.Estructuras) {
+    foreach ($estructura in $Documentacion.Estructuras) {
         foreach ($hijo in $estructura.Hijos) {
             Agregar-ItemsCampo -Items $items -Campo $hijo -PrefijoRuta $estructura.RutaJson
         }
     }
-    foreach ($campo in $Ficha.Salida) {
+    foreach ($campo in $Documentacion.Salida) {
         Agregar-ItemsCampo -Items $items -Campo $campo
     }
-    foreach ($error in $Ficha.Errores) {
+    foreach ($error in $Documentacion.Errores) {
         if ($error.Codigo -eq 0) {
             $pendiente = 'PENDIENTE DE CONFIRMACIÓN: codigo HTTP del error. Evidencia requerida: respuesta real sanitizada o configuración desplegada.'
             $items.Add([pscustomobject]@{
@@ -141,17 +141,17 @@ function Escribir-Salidas {
     #>
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory = $true)][object]$Ficha,
+        [Parameter(Mandatory = $true)][object]$Documentacion,
         [Parameter(Mandatory = $true)][string]$Documento,
         [Parameter(Mandatory = $true)][string]$DirectorioSalida,
         [Parameter(Mandatory = $true)][string]$RutaInformeRevision
     )
 
-    $ultimoPunto = $Ficha.FqWrapper.LastIndexOf('.')
+    $ultimoPunto = $Documentacion.FqWrapper.LastIndexOf('.')
     if ($ultimoPunto -le 0) {
-        throw ('El wrapper ' + $Ficha.FqWrapper + ' no tiene un nombre completo valido.')
+        throw ('El wrapper ' + $Documentacion.FqWrapper + ' no tiene un nombre completo valido.')
     }
-    $nombreWrapper = $Ficha.FqWrapper.Substring($ultimoPunto + 1).ToLowerInvariant()
+    $nombreWrapper = $Documentacion.FqWrapper.Substring($ultimoPunto + 1).ToLowerInvariant()
     $rutaDocumento = Join-Path $DirectorioSalida ($nombreWrapper + '.md')
 
     if (-not (Test-Path -LiteralPath $DirectorioSalida)) {
@@ -160,8 +160,8 @@ function Escribir-Salidas {
     $documentoNormalizado = $Documento -replace "`r`n", "`n"
     [System.IO.File]::WriteAllText($rutaDocumento, $documentoNormalizado, (New-Object System.Text.UTF8Encoding($false)))
 
-    $items = Generar-ItemsRevision -Ficha $Ficha
-    $informe = [pscustomobject]@{ servicio = $Ficha.FqWrapper; items = @($items) }
+    $items = Generar-ItemsRevision -Documentacion $Documentacion
+    $informe = [pscustomobject]@{ servicio = $Documentacion.FqWrapper; items = @($items) }
     $json = $informe | ConvertTo-Json -Depth 6
     $json = $json -replace "`r`n", "`n"
     $directorioInforme = [System.IO.Path]::GetDirectoryName($RutaInformeRevision)

@@ -3,7 +3,7 @@
 > **Estado:** Aprobado
 > **Depende de:** —
 > **Fecha:** 2026-08-08
-> **Objetivo:** Crear un generador en PowerShell 5.1 (sin dependencias) que, a partir del XPZ y del inventario `endpoints.json`, produzca la ficha pública de un servicio APIGLM siguiendo `analisisXPZ.md` → `reglasEditoriales.md` → `templateDoc.md`, con un informe de revisión para los juicios no automatizables.
+> **Objetivo:** Crear un generador en PowerShell 5.1 (sin dependencias) que, a partir del XPZ y del inventario `endpoints.json`, produzca la documentación pública de un servicio APIGLM siguiendo `analisisXPZ.md` → `reglasEditoriales.md` → `templateDoc.md`, con un informe de revisión para los juicios no automatizables.
 
 ## Alcance
 
@@ -41,7 +41,7 @@ Las rutas fijas del repositorio (`endpoints.json`, `documentacion/servicios/`, `
 
 `packagename` es la constante del prefijo del endpoint publicado (por ejemplo `ar.com.glmsa.seguros.comercial.` en LPS_COM.xpz o `glmsuit.comercial.` en versiones más nuevas como Trunk.xpz). No se confirma desde el XPZ; se define manualmente en `configuracion.json` según el XPZ que se documenta. El endpoint se compone como `packagename` + ruta del módulo en minúsculas + `a` + procedimiento en minúsculas.
 
-**Ficha técnica en memoria (objeto PowerShell, única transferencia al editor):**
+**Documentación técnica en memoria (objeto PowerShell, única transferencia al editor):**
 
 ```
 FqWrapper, ProgramaPrincipal, MetodoHttp ("GET"|"POST"),
@@ -79,13 +79,13 @@ Pendientes = [ "PENDIENTE DE CONFIRMACIÓN: ..." ]
 9. Crear `documentacion/Generador/binary/RedactarDocumento.ps1` (`Redactar-Documento`): renderiza el markdown según `templateDoc.md`, conservando bloques canónicos, la variante GET o POST única y el JSON común; reemplaza los demás marcadores con datos o pendientes.
 10. Crear `documentacion/Generador/binary/EscribirSalidas.ps1` (`Escribir-Salidas`): escribe el documento en `documentacion/servicios/<wrapper>.md` con UTF-8 sin BOM y finales LF; si existe, aborta sin sobrescribir; escribe `apiglm-doc-review.json`.
 11. Crear `documentacion/Generador/binary/GenerarDocumento.ps1` (orquestador): carga la config, lee `endpoints.json`, muestra la lista numerada, pide el número por `Read-Host`, y encadena análisis → redacción → salida.
-12. Crear `documentacion/Generador/binary/ObtenerDocumento.cmd` (análogo a `ObtenerEndpoints.cmd`) y el orquestador raíz `GenerarFichaServicio.cmd` (análogo a `GenerarDocumentacion.cmd`).
+12. Crear `documentacion/Generador/binary/ObtenerDocumento.cmd` (análogo a `ObtenerEndpoints.cmd`) y el orquestador raíz `GenerarDocumentoServicio.cmd` (análogo a `GenerarDocumentacion.cmd`).
 13. Verificar contra las tres listas de control normativas usando un servicio aún no documentado.
 
 ## Criterios de aceptación
 
 - [ ] `configuracion.json` existe en la raíz con las claves `xpz` y `packagename`; las rutas fijas están hardcodeadas en los scripts.
-- [ ] `GenerarFichaServicio.cmd` muestra la lista numerada de `endpoints.json` y seleccionar un número válido genera el documento.
+- [ ] `GenerarDocumentoServicio.cmd` muestra la lista numerada de `endpoints.json` y seleccionar un número válido genera el documento.
 - [ ] Elegir un servicio no documentado produce `documentacion/servicios/<wrapper>.md`.
 - [ ] Elegir un servicio ya documentado aborta sin modificar el archivo existente.
 - [ ] El documento respeta el orden exacto de `templateDoc.md` y conserva solo la variante GET o POST aplicable.
@@ -101,7 +101,7 @@ Pendientes = [ "PENDIENTE DE CONFIRMACIÓN: ..." ]
 ## Decisiones
 
 - **Sí:** PowerShell 5.1 nativo. Ya es el shell del entorno; `System.IO.Compression` y `[xml]` cubren ZIP+XML sin dependencias.
-- **Sí:** Entrada directa del XPZ. Es la fuente de verdad de `AGENTS.md`; el script no depende de una ficha intermedia persistente.
+- **Sí:** Entrada directa del XPZ. Es la fuente de verdad de `AGENTS.md`; el script no depende de una documentación intermedia persistente.
 - **Sí:** Un documento por invocación con selección interactiva desde `endpoints.json`. Control editorial por servicio y coherencia con SPEC 01.
 - **Sí:** Salida en `documentacion/servicios/<wrapper>.md` sin sobrescribir. Los pendientes se completan a mano y una sobrescritura los borraría.
 - **Sí:** Config JSON en la raíz con `packagename`. El XPZ no confirma el prefijo del package publicado; la constante se define en `configuracion.json` según el XPZ que se documenta (LPS_COM.xpz → `ar.com.glmsa.seguros.comercial.`, Trunk.xpz → `glmsuit.comercial.`).

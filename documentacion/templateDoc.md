@@ -5,11 +5,11 @@ Este documento es la tercera fuente normativa y contiene el formato final. Se ut
 ## Instrucciones de uso
 
 - Copiar la plantilla para cada servicio.
-- Trasladar la única ficha técnica sin recalcular método, entrada, tipos, obligatoriedad, salida, errores ni endpoint.
+- Trasladar la única documentación técnica sin recalcular método, entrada, tipos, obligatoriedad, salida, errores ni endpoint.
 - Usar la plantilla solo cuando exista un programa principal separado y único.
 - Conservar únicamente la variante de entrada correspondiente.
 - Reemplazar los marcadores editoriales con datos confirmados o pendientes.
-- El campo Endpoint lleva el nombre completo publicado (package + módulo + procedimiento), en minúsculas, recibido en la ficha.
+- El campo Endpoint lleva el nombre completo publicado (package + módulo + procedimiento), en minúsculas, recibido en la documentación.
 - Conservar en el JSON común `<Código HTTP>`, `<descripción general>` y `<detalle>`.
 - Conservar los marcadores descriptivos de mensajes dinámicos, como `<número>`.
 - Conservar literalmente `{Base64(usuario:contraseña)}` y no incluir credenciales reales.
@@ -54,7 +54,7 @@ No incluir credenciales reales.
 | 503 | Servicio no disponible o inactivo. |
 | <Código HTTP explícito> | <Significado confirmado> |
 
-<!-- Repetir la fila anterior por cada código adicional recibido en la ficha, ordenar numéricamente y no duplicar códigos. Si no existen adicionales, eliminar la fila de ejemplo. -->
+<!-- Repetir la fila anterior por cada código adicional recibido en la documentación, ordenar numéricamente y no duplicar códigos. Si no existen adicionales, eliminar la fila de ejemplo. -->
 
 ## Entrada
 

@@ -4,7 +4,7 @@ title Documentacion de Servicio APIGLM
 set "ERRORLEVEL=0"
 
 echo ==============================================================
-echo   GENERACION DE FICHA DE SERVICIO APIGLM
+echo   GENERACION DE DOCUMENTACION DE SERVICIO APIGLM
 echo   %DATE% %TIME%
 echo ==============================================================
 echo.

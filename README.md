@@ -14,7 +14,7 @@ XPZ
        └─ wrappers HTTP activos
             └─ inventario de endpoints
                  └─ análisis del programa principal
-                      └─ ficha técnica
+                       └─ documentación técnica
                            └─ documentación del servicio
 ```
 
@@ -42,15 +42,15 @@ El visor resultante (`documentacion/Endpoints/web/APIServicios.html`) se abre co
 - filtro en vivo por Nombre o Descripción, sin distinguir mayúsculas ni acentos;
 - toggle de tema claro/oscuro con persistencia en `localStorage` (por defecto según `prefers-color-scheme`).
 
-## Generador automático de fichas de servicio
+## Generador automático de documentación de servicios
 
-Además del inventario, existe un pipeline en PowerShell 5.1 (sin dependencias externas) que genera la ficha individual de un servicio aplicando mecánicamente `analisisXPZ.md` → `reglasEditoriales.md` → `templateDoc.md`. Se invoca con `ObtenerDocumento.cmd` y presenta un menú interactivo con 6 opciones:
+Además del inventario, existe un pipeline en PowerShell 5.1 (sin dependencias externas) que genera la documentación individual de un servicio aplicando mecánicamente `analisisXPZ.md` → `reglasEditoriales.md` → `templateDoc.md`. Se invoca con `ObtenerDocumento.cmd` y presenta un menú interactivo con 6 opciones:
 
 | Opción | Descripción |
 |---|---|
-| 1 — Servicio particular | Lista numerada de endpoints, elige uno y genera su ficha. |
+| 1 — Servicio particular | Lista numerada de endpoints, elige uno y genera su documentación. |
 | 2 — Múltiples servicios | Abre `Out-GridView` para seleccionar varios con Ctrl+Click. |
-| 3 — TODOS | Genera fichas para todos los endpoints del inventario. |
+| 3 — TODOS | Genera documentación para todos los endpoints del inventario. |
 | 4 — (reservada para futura expansión) | — |
 | 5 — Grafo de dependencias | Dado un endpoint, recorre el XPZ y construye un grafo de dependencias (SDTs, procedimientos llamados) desde el wrapper hasta su entrada/salida. Guarda `grafo-<wrapper>.json` en `assets/` y lo imprime en consola. |
 | 6 — Detectar cambios y regenerar modificados | Compara los checksums por objeto del XPZ actual contra `controlVersiones.json`. Si detecta servicios modificados, los lista, pide confirmación y regenera solo esos con barra de progreso. |
@@ -59,12 +59,12 @@ En modos 2 y 3 se muestra barra de progreso global (`N/M` y porcentaje). Los arc
 
 ### Pipeline del generador
 
-Cada ficha se produce en tres etapas, implementadas como módulos PowerShell independientes:
+Cada documento se produce en tres etapas, implementadas como módulos PowerShell independientes:
 
 | Módulo | Función |
 |---|---|
 | `AnalizarServicio.ps1` | Abre el XPZ como ZIP de solo lectura, localiza el wrapper por `fullyQualifiedName`, confirma que sea Procedure con `IsMain=True` y `CALL_PROTOCOL=HTTP`, detecta el programa principal delegado, resuelve método HTTP (GET por `QueryParams`, POST por `FromJson`), tipifica campos, expande SDTs, determina obligatoriedad, resuelve salida y errores HTTP, y construye el endpoint publicado. |
-| `RedactarDocumento.ps1` | Toma la ficha técnica en memoria y renderiza el markdown según `templateDoc.md`, respetando bloques canónicos y reemplazando marcadores con datos o pendientes. |
+| `RedactarDocumento.ps1` | Toma la documentación técnica en memoria y renderiza el markdown según `templateDoc.md`, respetando bloques canónicos y reemplazando marcadores con datos o pendientes. |
 | `EscribirSalidas.ps1` | Escribe el `.md` en `servicios/<wrapper>.md` (UTF-8 sin BOM, LF), genera `apiglm-doc-review.json` con juicios no automatizables, y actualiza `controlVersiones.json` con la nueva versión del servicio. |
 | `GenerarDocumento.ps1` | Orquestador: carga configuración, lee inventario, despliega menú, encadena los tres módulos anteriores. |
 
@@ -99,10 +99,10 @@ El resultado es un JSON (`grafo-<wrapper>.json`) con nodos (objetos referenciado
 | [GenerarDocumentacion.cmd](GenerarDocumentacion.cmd) | Orquestador que regenera inventario (`endpoints.json`, `endpoints.md`) y visor (`APIServicios.html`). |
 | [.gitignore](.gitignore) | Excluye XPZ, salidas generadas (`endpoints.json`, `endpoints.md`, `APIServicios.html`, `*.json` de `assets/`, logs) y `GeneXus-XPZ-Skills-main/`. |
 | `specs/` | Especificaciones numeradas que guían el desarrollo del proyecto (ver sección abajo). |
-| `documentacion/analisisXPZ.md` | Fuente normativa #1: cómo construir la ficha técnica desde el XPZ. Define el flujo de análisis, tipos canónicos, reglas de obligatoriedad y criterios de detención. |
+| `documentacion/analisisXPZ.md` | Fuente normativa #1: cómo construir la documentación técnica desde el XPZ. Define el flujo de análisis, tipos canónicos, reglas de obligatoriedad y criterios de detención. |
 | `documentacion/reglasEditoriales.md` | Fuente normativa #2: presentación del documento final. Lenguaje, formato de tablas, secciones obligatorias y nomenclatura de archivos. |
 | `documentacion/templateDoc.md` | Fuente normativa #3: plantilla markdown de cada servicio. Bloques canónicos y marcadores de reemplazo. |
-| `documentacion/servicios/` | Fichas generadas por servicio (ej. `wsobtenertotalessolicitud.md`). Una por wrapper documentado. |
+| `documentacion/servicios/` | Documentos generados por servicio (ej. `wsobtenertotalessolicitud.md`). Uno por wrapper documentado. |
 | `documentacion/Endpoints/assets/analisisEndpoint.md` | Guía para reproducir el inventario de endpoints desde `APIGLM.APIGLMMain`. |
 | `documentacion/Endpoints/assets/endpoints.json` | Inventario de endpoints en JSON (generado, ignorado). |
 | `documentacion/Endpoints/assets/endpoints.md` | Inventario de endpoints en markdown (generado, ignorado). |
@@ -113,7 +113,7 @@ El resultado es un JSON (`grafo-<wrapper>.json`) con nodos (objetos referenciado
 | `documentacion/Endpoints/web/style.css` | Estilos del visor (claro/oscuro). |
 | `documentacion/Endpoints/web/app.js` | Lógica del visor: renderizado de grilla, filtro en vivo, toggle de tema. |
 | `documentacion/Generador/binary/AnalizarServicio.ps1` | Módulo de análisis: abre XPZ, resuelve wrapper, método HTTP, entrada/salida, tipos, obligatoriedad, endpoint. |
-| `documentacion/Generador/binary/RedactarDocumento.ps1` | Módulo de redacción: ficha técnica → markdown según template. |
+| `documentacion/Generador/binary/RedactarDocumento.ps1` | Módulo de redacción: documentación técnica → markdown según template. |
 | `documentacion/Generador/binary/EscribirSalidas.ps1` | Módulo de escritura: guarda `.md`, `apiglm-doc-review.json`, actualiza `controlVersiones.json`. |
 | `documentacion/Generador/binary/GenerarDocumento.ps1` | Orquestador del generador: menú interactivo de 6 opciones, pipeline análisis → redacción → escritura. |
 | `documentacion/Generador/binary/ObtenerDocumento.cmd` | Atajo para invocar el generador. |
@@ -130,11 +130,15 @@ El desarrollo sigue el método spec-driven. Cada spec define el alcance, modelo 
 
 | Spec | Estado | Descripción |
 |---|---|---|
-| SPEC 01 | — | Ficha técnica de `WSObtenerTotalesSolicitud` (servicio de referencia). |
+| SPEC 01 | — | Documentación técnica de `WSObtenerTotalesSolicitud` (servicio de referencia). |
 | SPEC 02 | Aprobado | Visor web de endpoints: grilla con filtro, toggle claro/oscuro, generado desde `endpoints.json`. |
 | SPEC 03 | Aprobado | Generador automático de documentación: pipeline `AnalizarServicio.ps1` → `RedactarDocumento.ps1` → `EscribirSalidas.ps1`, `configuracion.json`, selección interactiva. |
 | SPEC 04 | Borrador | Menú interactivo con 3 modos (individual, múltiple vía `Out-GridView`, lote completo), barra de progreso, regeneración sin confirmación, log de errores. |
-| SPEC 05 | Borrador | Detector de cambios entre versiones del XPZ (`controlVersiones.json`, `DetectarCambios.ps1`) y grafo de dependencias (`GenerarGrafoDependencias.ps1`). Nuevas opciones 5 y 6 en el menú. |
+| SPEC 05 | Borrador | Integridad del pipeline: configuración única del XPZ, duplicados, estados, logs, salida de errores y optimización de parseo. |
+| SPEC 06 | Borrador | Analizador XPZ de contratos completos: tipos estrictos, estructuras SDT recursivas, llamadas multilínea y estados de resolución. |
+| SPEC 07 | Borrador | Coherencia documental y robustez del visor: normas, rutas, formato Markdown, seguridad, accesibilidad, móvil y rendimiento. |
+| SPEC 08 | Borrador | Detector de cambios por árbol transitivo del XPZ, checksums nativos/semánticos, historial de versiones y grafo de dependencias. |
+| SPEC 09 | Borrador | Harness local sin dependencias para probar pipeline, analizador y visor en entornos aislados. |
 
 ## Obtención del inventario de endpoints
 
@@ -165,7 +169,7 @@ Ese nombre identifica el wrapper dentro de la base de conocimiento, pero todaví
 
 Una vez seleccionado un elemento del inventario, se analiza su objeto `WS...`. Este objeto funciona como wrapper HTTP: recibe la solicitud, ejecuta controles generales y delega el procesamiento en un procedimiento separado.
 
-El procedimiento separado que recibe `APIGLMRequestIn` y produce `APIGLMResponse` es el programa principal del servicio. Allí se busca la información necesaria para preparar la ficha técnica.
+El procedimiento separado que recibe `APIGLMRequestIn` y produce `APIGLMResponse` es el programa principal del servicio. Allí se busca la información necesaria para preparar la documentación técnica.
 
 El análisis individual comprende:
 
@@ -178,7 +182,7 @@ El análisis individual comprende:
 5. Determinar qué campos son obligatorios a partir del uso confirmado en el proceso.
 6. Identificar la estructura devuelta cuando la operación finaliza correctamente.
 7. Registrar únicamente los errores HTTP explícitos generados por `GenerarAPIGLMResponse` dentro del programa principal.
-8. Resolver el endpoint publicado y preparar la ficha técnica que utilizarán las reglas editoriales y la plantilla.
+8. Resolver el endpoint publicado y preparar la documentación técnica que utilizarán las reglas editoriales y la plantilla.
 
 Las validaciones funcionales pueden servir para determinar si un campo es obligatorio, pero no se publican como una sección independiente. Los errores incluidos dentro de una respuesta HTTP 200 tampoco se presentan como errores HTTP del servicio.
 

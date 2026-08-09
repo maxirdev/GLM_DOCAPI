@@ -1,6 +1,6 @@
 # Análisis de servicios APIGLM desde XPZ
 
-Este documento es la primera fuente normativa del proceso de documentación de servicios APIGLM. Define cómo obtener desde el XPZ la ficha técnica que consumen las reglas editoriales y la plantilla.
+Este documento es la primera fuente normativa del proceso de documentación de servicios APIGLM. Define cómo obtener desde el XPZ la documentación técnica que consumen las reglas editoriales y la plantilla.
 
 ## Orden obligatorio
 
@@ -163,9 +163,9 @@ Documentar el nombre completo del endpoint publicado, en minúsculas, incluido e
 
 El `packagename` es una constante única por XPZ definida en `configuracion.json` (raíz del repo): `ar.com.glmsa.seguros.comercial.` para LPS_COM.xpz, `glmsuit.comercial.` para versiones más nuevas como Trunk.xpz. No se confirma desde el XPZ; se toma tal cual de la configuración. No inferir el endpoint por semejanza con otro servicio ni construir host o base URL.
 
-## Ficha técnica interna
+## Documentación técnica interna
 
-Antes de redactar, preparar una única ficha con:
+Antes de redactar, preparar un único documento técnico con:
 
 - Wrapper y programa principal identificados.
 - Endpoint publicado y método HTTP.
@@ -175,7 +175,7 @@ Antes de redactar, preparar una única ficha con:
 - Errores HTTP explícitos con código, condición y mensaje o patrón.
 - Pendientes y evidencia necesaria.
 
-Esta ficha es la única transferencia hacia [reglasEditoriales.md](reglasEditoriales.md) y [templateDoc.md](templateDoc.md). No recalcular decisiones durante la redacción.
+Esta documentación es la única transferencia hacia [reglasEditoriales.md](reglasEditoriales.md) y [templateDoc.md](templateDoc.md). No recalcular decisiones durante la redacción.
 
 ## Lista de verificación técnica
 

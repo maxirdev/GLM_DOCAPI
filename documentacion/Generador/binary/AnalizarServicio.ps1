@@ -800,7 +800,7 @@ function Resolver-Obligatorio {
 function Agregar-Obligatorio {
     <#
     .SYNOPSIS
-    Agrega la propiedad Obligatorio a una fila de la ficha.
+    Agrega la propiedad Obligatorio a una fila de la documentación técnica.
     #>
     [CmdletBinding()]
     param(
@@ -1047,12 +1047,12 @@ function Obtener-Source {
 function Analizar-Servicio {
     <#
     .SYNOPSIS
-    Analiza un servicio desde el XPZ y arma la ficha tecnica unica.
+    Analiza un servicio desde el XPZ y arma la documentación técnica unica.
     .DESCRIPTION
     Encadena la confirmacion del wrapper, la delegacion al programa principal,
     el metodo, la entrada (GET o POST), la expansion de estructuras, la
     obligatoriedad, la salida, los errores y el endpoint publicado. Devuelve la
-    ficha que consumen la redaccion y la escritura de salidas.
+    documentación que consumen la redaccion y la escritura de salidas.
     #>
     [CmdletBinding()]
     param(

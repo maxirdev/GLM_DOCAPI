@@ -2,7 +2,7 @@
 
 ## Propósito del repositorio
 
-Repositorio de documentación (sin código, sin build, sin tests). Produce fichas técnicas de los servicios HTTP de APIGLM a partir del export GeneXus `xpz/LPS_COM.xpz`. Todo el contenido se escribe en **español**.
+Repositorio de documentación (sin código, sin build, sin tests). Produce documentos técnicos de los servicios HTTP de APIGLM a partir del export GeneXus `xpz/LPS_COM.xpz`. Todo el contenido se escribe en **español**.
 
 ## Fuentes de evidencia (solo lectura, no editar)
 
@@ -13,7 +13,7 @@ Ambas carpetas están en `.gitignore`: son referencias locales, no parte del pro
 
 ## Estructura de trabajo (`documentacion/`, commiteada)
 
-- `analisisXPZ.md` — fuente normativa #1: cómo construir la ficha técnica desde el XPZ.
+- `analisisXPZ.md` — fuente normativa #1: cómo construir la documentación técnica desde el XPZ.
 - `reglasEditoriales.md` — fuente normativa #2: presentación del documento final.
 - `templateDoc.md` — fuente normativa #3: plantilla obligatoria de cada servicio.
 - `Endpoints/assets/analisisEndpoint.md` — cómo reproducir el inventario de endpoints desde `APIGLM.APIGLMMain`.

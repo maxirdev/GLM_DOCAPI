@@ -44,19 +44,19 @@ function Procesar-Servicio {
         }
         $packageName = [string]$Configuracion.packagename
         $xml = Abrir-XPZ -RutaXpz (Join-Path (Split-Path $RutaConfig -Parent) $Configuracion.xpz)
-        $ficha = Analizar-Servicio -Xml $xml -NombreCompletoWrapper $Endpoint.proceso -PackageName $packageName
+        $documentacion = Analizar-Servicio -Xml $xml -NombreCompletoWrapper $Endpoint.proceso -PackageName $packageName
         if (-not $Silencioso) {
-            Write-Host ("  Programa principal: " + $ficha.ProgramaPrincipal) -ForegroundColor DarkGray
-            Write-Host ("  Metodo HTTP: " + $ficha.MetodoHttp) -ForegroundColor DarkGray
-            Write-Host ("  Endpoint: " + $ficha.EndpointPublicado) -ForegroundColor DarkGray
+            Write-Host ("  Programa principal: " + $documentacion.ProgramaPrincipal) -ForegroundColor DarkGray
+            Write-Host ("  Metodo HTTP: " + $documentacion.MetodoHttp) -ForegroundColor DarkGray
+            Write-Host ("  Endpoint: " + $documentacion.EndpointPublicado) -ForegroundColor DarkGray
         }
 
         if (-not $Silencioso) { Write-Step 4 'Redactando el documento segun la plantilla...' }
-        $documento = Redactar-Documento -Ficha $ficha
+        $documento = Redactar-Documento -Documentacion $documentacion
         if (-not $Silencioso) { Write-Host ("  Documento redactado (" + $documento.Length + " caracteres)") -ForegroundColor DarkGray }
 
         if (-not $Silencioso) { Write-Step 5 'Escribiendo las salidas...' }
-        $rutaDocumento = Escribir-Salidas -Ficha $ficha -Documento $documento -DirectorioSalida $DirectorioSalida -RutaInformeRevision $RutaInformeRevision
+        $rutaDocumento = Escribir-Salidas -Documentacion $documentacion -Documento $documento -DirectorioSalida $DirectorioSalida -RutaInformeRevision $RutaInformeRevision
 
         return $true
     } catch {

@@ -1,6 +1,6 @@
 # Reglas editoriales para documentar servicios APIGLM
 
-Este documento es la segunda fuente normativa. Se aplica después de completar la ficha técnica definida en [analisisXPZ.md](analisisXPZ.md) y regula únicamente la presentación del documento final.
+Este documento es la segunda fuente normativa. Se aplica después de completar la documentación técnica definida en [analisisXPZ.md](analisisXPZ.md) y regula únicamente la presentación del documento final.
 
 ## Audiencia y contenido
 
@@ -18,15 +18,15 @@ No incluir:
 
 ## Reglas de presentación
 
-- Consumir la ficha técnica sin recalcular programa principal, método, entrada, tipos, obligatoriedad, salida, errores ni endpoint.
-- No iniciar la redacción si la ficha no identifica un programa principal separado y único.
+- Consumir la documentación técnica sin recalcular programa principal, método, entrada, tipos, obligatoriedad, salida, errores ni endpoint.
+- No iniciar la redacción si la documentación no identifica un programa principal separado y único.
 - Mantener nombres de campos y mensajes con su grafía real.
 - Usar únicamente `SI` o `NO` en la columna `Obligatorio`.
 - Conservar la tipografía canónica recibida desde el análisis.
 - Usar `YYYY-MM-DD` para fechas.
 - Escribir descripciones funcionales y omitir conversiones, variables auxiliares o llamadas internas.
 - No inventar una descripción cuando la función del campo no esté confirmada.
-- No agregar una fila pendiente para una variable ausente de la ficha.
+- No agregar una fila pendiente para una variable ausente de la documentación.
 - En la salida, indicar únicamente si es una colección y enumerar sus campos.
 
 ### Estructuras compuestas
@@ -44,14 +44,14 @@ Copiar desde [templateDoc.md](templateDoc.md), sin reescribirlos, la autenticaci
 - Conservar el texto `Error interno de Servicio.` para el código 500.
 - Mantener `detail` en minúscula.
 - Mostrar siempre la tabla completa de Generalidades.
-- Agregar los códigos adicionales recibidos en la ficha sin duplicados y en orden numérico.
+- Agregar los códigos adicionales recibidos en la documentación sin duplicados y en orden numérico.
 - Si un código común también tiene condiciones explícitas, mantener una sola fila en Generalidades y detallar sus condiciones únicamente en `Errores específicos`.
 
 Un campo funcional como `Usuario` o `UsuCod` no reemplaza la autenticación del encabezado.
 
 ### Errores específicos
 
-Documentar únicamente los rechazos HTTP explícitos recibidos en la ficha técnica. No publicar comprobaciones funcionales ni errores contenidos en una respuesta HTTP 200.
+Documentar únicamente los rechazos HTTP explícitos recibidos en la documentación técnica. No publicar comprobaciones funcionales ni errores contenidos en una respuesta HTTP 200.
 
 Cuando existan errores explícitos:
 
@@ -77,12 +77,12 @@ PENDIENTE DE CONFIRMACIÓN: <dato faltante>. Evidencia requerida: <fuente necesa
 
 Los marcadores descriptivos dentro de mensajes dinámicos también deben conservarse.
 
-Usar el nombre completo del endpoint publicado recibido en la ficha, en minúsculas. No reconstruir host, base URL, el packagename ni el endpoint por analogía.
+Usar el nombre completo del endpoint publicado recibido en la documentación, en minúsculas. No reconstruir host, base URL, el packagename ni el endpoint por analogía.
 
 ## Lista de verificación editorial
 
 - [ ] El documento respeta el orden de la plantilla.
-- [ ] Método, endpoint, entrada y salida coinciden con la ficha técnica.
+- [ ] Método, endpoint, entrada y salida coinciden con la documentación técnica.
 - [ ] La obligatoriedad usa solo `SI` o `NO`.
 - [ ] Los tipos conservan la tipografía canónica.
 - [ ] Las estructuras compuestas están separadas por ruta JSON.
