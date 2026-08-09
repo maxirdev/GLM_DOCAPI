@@ -36,7 +36,7 @@ Esta spec no introduce estructuras de datos de código. El entregable es un docu
 5. Calcular la columna `Obligatorio` con el criterio de la sección 4.
 6. Resolver la salida satisfactoria (sección 5).
 7. Extraer errores HTTP explícitos: únicamente llamadas a `GenerarAPIGLMResponse` con código ≠ 200 en el programa principal (sección 6).
-8. Confirmar el endpoint publicado `ar.com.glmsa.seguros.comercial.apiglm.emision.awsobtenertotalessolicitud` (base del package validada con evidencia operativa + FQN en minúsculas con prefijo `a` para Procedures HTTP `Main`) o registrarlo como pendiente.
+8. Confirmar el endpoint publicado `ar.com.glmsa.seguros.comercial.apiglm.emision.awsobtenertotalessolicitud` (packagename constante de `configuracion.json` + FQN en minúsculas con prefijo `a` para Procedures HTTP `Main`).
 9. Preparar la ficha técnica interna del análisis (sección «Ficha técnica interna»).
 10. Redactar `documentacion/servicios/wsobtenertotalessolicitud.md` trasladando la ficha sin recalcular, conservando bloques canónicos y el JSON común.
 11. Verificar contra las tres listas de control; registrar cada dato no confirmado como pendiente con su evidencia requerida.
@@ -45,7 +45,7 @@ Esta spec no introduce estructuras de datos de código. El entregable es un docu
 
 - [ ] Existe `documentacion/servicios/wsobtenertotalessolicitud.md`.
 - [ ] El documento respeta el orden exacto de `templateDoc.md` y conserva solo la variante GET o POST aplicable.
-- [ ] El campo Endpoint es `ar.com.glmsa.seguros.comercial.apiglm.emision.awsobtenertotalessolicitud` o `PENDIENTE DE CONFIRMACIÓN`.
+- [ ] El campo Endpoint es `ar.com.glmsa.seguros.comercial.apiglm.emision.awsobtenertotalessolicitud`.
 - [ ] El método HTTP está confirmado desde el programa principal.
 - [ ] La entrada documenta solo posiciones confirmadas de `QueryParams` o la estructura completa de `FromJson`.
 - [ ] Los tipos usan exclusivamente la tipografía canónica.
@@ -61,7 +61,7 @@ Esta spec no introduce estructuras de datos de código. El entregable es un docu
 
 - **Sí:** Entregable único: ficha pública en `documentacion/servicios/wsobtenertotalessolicitud.md`. La ficha interna intermedia no se conserva.
 - **Sí:** Nombre de archivo `wsobtenertotalessolicitud.md` (wrapper en minúsculas). Se acepta el riesgo de colisión con un WS homónimo de otro módulo; se migrará a FQN normalizado si ocurre.
-- **Sí:** El campo Endpoint documenta el nombre completo publicado (package + módulo + procedimiento), en minúsculas. La base del package puede variar entre servicios y se valida con evidencia operativa; no se construye por analogía.
+- **Sí:** El campo Endpoint documenta el nombre completo publicado (package + módulo + procedimiento), en minúsculas, compuesto por el packagename constante de `configuracion.json`; no se construye por analogía.
 - **Sí:** Ante evidencia insuficiente, registrar `PENDIENTE DE CONFIRMACIÓN` y continuar (regla de `AGENTS.md`). Nunca inferir por analogía.
 - **Sí:** No crear commit; lo decide el usuario.
 - **No:** Crear `Endpoints/endpoints.md`. Tarea de alcance distinto, spec futuro.
@@ -73,7 +73,7 @@ Esta spec no introduce estructuras de datos de código. El entregable es un docu
 | Riesgo | Mitigación |
 |---|---|
 | Evidencia insuficiente en el XPZ (SDT no localizado, ciclo, entrada no resoluble) | Registrar pendiente con la evidencia requerida; detener solo la rama afectada y continuar con el resto. |
-| Base del package no confirmada para un servicio | Registrar `PENDIENTE DE CONFIRMACIÓN` con la evidencia operativa necesaria; nunca construir el package por analogía. |
+| Packagename no confirmado desde el XPZ | Constante única definida en `configuracion.json` según el XPZ; nunca construir el prefijo por analogía. |
 | Colisión futura del nombre de archivo con un WS homónimo de otro módulo | Migrar el archivo a `apiglm-<modulo>-wsobtenertotalessolicitud.md` si ocurre. |
 | Discrepancia `Length` vs `AttMaxLen` en tipos textuales | Usar `String` sin dimensión, sin registrar pendiente (regla ya establecida). |
 

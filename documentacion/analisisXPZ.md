@@ -159,9 +159,9 @@ Casos de control:
 
 ### 7. Resolver el endpoint publicado
 
-Documentar el nombre completo del endpoint publicado, en minúsculas, incluida la base del package, por ejemplo `ar.com.glmsa.seguros.comercial.apiglm.emision.awsobtenertotalessolicitud`. Para Procedures HTTP configuradas como `Main`, anteponer `a` al nombre del proceso: `wslistarsolicitudes` se publica como `awslistarsolicitudes` dentro de su package.
+Documentar el nombre completo del endpoint publicado, en minúsculas, incluido el packagename, por ejemplo `ar.com.glmsa.seguros.comercial.apiglm.emision.awsobtenertotalessolicitud`. Para Procedures HTTP configuradas como `Main`, anteponer `a` al nombre del proceso: `wslistarsolicitudes` se publica como `awslistarsolicitudes` dentro de su package.
 
-La base del package no se confirma desde el XPZ; requiere evidencia operativa (configuración desplegada o una respuesta real sanitizada) y puede variar entre servicios. No inferir el endpoint por semejanza con otro servicio ni construir host o base URL. Si el nombre completo no puede confirmarse, registrarlo como pendiente indicando la evidencia necesaria.
+El `packagename` es una constante única por XPZ definida en `configuracion.json` (raíz del repo): `ar.com.glmsa.seguros.comercial.` para LPS_COM.xpz, `glmsuit.comercial.` para versiones más nuevas como Trunk.xpz. No se confirma desde el XPZ; se toma tal cual de la configuración. No inferir el endpoint por semejanza con otro servicio ni construir host o base URL.
 
 ## Ficha técnica interna
 
