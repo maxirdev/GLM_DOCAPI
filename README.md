@@ -2,7 +2,7 @@
 
 Este repositorio reúne la metodología y los documentos generados para los servicios HTTP de APIGLM. Su objetivo es transformar la información técnica exportada desde GeneXus en documentación uniforme, verificable y comprensible para quienes necesitan consumir los servicios.
 
-La fuente principal es el archivo [LPS_COM.xpz](xpz/LPS_COM.xpz). El XPZ contiene el XML exportado de la base de conocimiento GeneXus: procedimientos, código fuente, reglas, variables, estructuras de datos, dominios y atributos. La documentación se obtiene de esa evidencia; no se completa por semejanza con otros servicios ni por suposiciones.
+La fuente principal es el archivo [trunk.xpz](xpz/trunk.xpz) (versión original) y [trunk_v2.xpz](xpz/trunk_v2.xpz) (versión con modificaciones). El XPZ contiene el XML exportado de la base de conocimiento GeneXus: procedimientos, código fuente, reglas, variables, estructuras de datos, dominios y atributos. La documentación se obtiene de esa evidencia; no se completa por semejanza con otros servicios ni por suposiciones.
 
 ## Visión general del proceso
 
@@ -27,7 +27,7 @@ El inventario y el visor web se regeneran con un orquestador ubicado en la raíz
 | Script | Ubicación | Función |
 |---|---|---|
 | [GenerarDocumentacion.cmd](GenerarDocumentacion.cmd) | raíz del repo | Ejecuta en secuencia los dos scripts siguientes y termina con `%ERRORLEVEL%` ≠ 0 si alguno falla. |
-| `GenerarListaEndpoints.ps1` | `documentacion/Endpoints/binary/` | Lee `xpz/LPS_COM.xpz` y el catálogo de tipos de GeneXus, extrae las llamadas `WS...` activas de `APIGLM.APIGLMMain`, valida que cada objeto sea Procedure con `IsMain=True` y `CALL_PROTOCOL=HTTP`, y escribe `endpoints.json` y `endpoints.md`. |
+| `GenerarListaEndpoints.ps1` | `documentacion/Endpoints/binary/` | Lee el XPZ configurado y el catálogo de tipos de GeneXus, extrae las llamadas `WS...` activas de `APIGLM.APIGLMMain`, valida que cada objeto sea Procedure con `IsMain=True` y `CALL_PROTOCOL=HTTP`, y escribe `endpoints.json` y `endpoints.md`. |
 | `GenerarVistaHTML.ps1` | `documentacion/Endpoints/binary/` | Lee `endpoints.json`, incrusta los datos tal cual (sin cifrado, sin peticiones de red) en `<script type="application/json">` y escribe `APIServicios.html`. |
 | `ObtenerEndpoints.cmd` | `documentacion/Endpoints/binary/` | Genera únicamente el inventario (sin visor). |
 
@@ -42,23 +42,99 @@ El visor resultante (`documentacion/Endpoints/web/APIServicios.html`) se abre co
 - filtro en vivo por Nombre o Descripción, sin distinguir mayúsculas ni acentos;
 - toggle de tema claro/oscuro con persistencia en `localStorage` (por defecto según `prefers-color-scheme`).
 
+## Generador automático de fichas de servicio
+
+Además del inventario, existe un pipeline en PowerShell 5.1 (sin dependencias externas) que genera la ficha individual de un servicio aplicando mecánicamente `analisisXPZ.md` → `reglasEditoriales.md` → `templateDoc.md`. Se invoca con `ObtenerDocumento.cmd` y presenta un menú interactivo con 6 opciones:
+
+| Opción | Descripción |
+|---|---|
+| 1 — Servicio particular | Lista numerada de endpoints, elige uno y genera su ficha. |
+| 2 — Múltiples servicios | Abre `Out-GridView` para seleccionar varios con Ctrl+Click. |
+| 3 — TODOS | Genera fichas para todos los endpoints del inventario. |
+| 4 — (reservada para futura expansión) | — |
+| 5 — Grafo de dependencias | Dado un endpoint, recorre el XPZ y construye un grafo de dependencias (SDTs, procedimientos llamados) desde el wrapper hasta su entrada/salida. Guarda `grafo-<wrapper>.json` en `assets/` y lo imprime en consola. |
+| 6 — Detectar cambios y regenerar modificados | Compara los checksums por objeto del XPZ actual contra `controlVersiones.json`. Si detecta servicios modificados, los lista, pide confirmación y regenera solo esos con barra de progreso. |
+
+En modos 2 y 3 se muestra barra de progreso global (`N/M` y porcentaje). Los archivos existentes se sobrescriben sin preguntar. Si hay errores, se genera `logErrores.txt` en `assets/`.
+
+### Pipeline del generador
+
+Cada ficha se produce en tres etapas, implementadas como módulos PowerShell independientes:
+
+| Módulo | Función |
+|---|---|
+| `AnalizarServicio.ps1` | Abre el XPZ como ZIP de solo lectura, localiza el wrapper por `fullyQualifiedName`, confirma que sea Procedure con `IsMain=True` y `CALL_PROTOCOL=HTTP`, detecta el programa principal delegado, resuelve método HTTP (GET por `QueryParams`, POST por `FromJson`), tipifica campos, expande SDTs, determina obligatoriedad, resuelve salida y errores HTTP, y construye el endpoint publicado. |
+| `RedactarDocumento.ps1` | Toma la ficha técnica en memoria y renderiza el markdown según `templateDoc.md`, respetando bloques canónicos y reemplazando marcadores con datos o pendientes. |
+| `EscribirSalidas.ps1` | Escribe el `.md` en `servicios/<wrapper>.md` (UTF-8 sin BOM, LF), genera `apiglm-doc-review.json` con juicios no automatizables, y actualiza `controlVersiones.json` con la nueva versión del servicio. |
+| `GenerarDocumento.ps1` | Orquestador: carga configuración, lee inventario, despliega menú, encadena los tres módulos anteriores. |
+
+### Detección de cambios entre versiones del XPZ
+
+Cuando se dispone de una nueva versión del XPZ (ej. `trunk_v2.xpz`), la opción 6 del menú ejecuta `DetectarCambios.ps1`, que:
+
+1. Compara el SHA256 del archivo XPZ completo contra `controlVersiones.json` (fast-path: si coincide, no hay cambios y termina).
+2. Si difiere, abre el XML y compara el atributo `checksum` de cada objeto wrapper contra su registro en `controlVersiones.json`.
+3. Lista los servicios cuyo checksum cambió y pregunta confirmación antes de regenerar.
+4. Regenera solo los modificados usando el pipeline análisis → redacción → escritura.
+
+`controlVersiones.json` es el registro maestro de versiones. Cada vez que `EscribirSalidas.ps1` guarda un `.md`, actualiza la entrada del servicio (`version`, `fecha`, `checksum`). La primera ejecución (bootstrap) crea entradas baseline (`version: 1`) para todos los `.md` existentes en `servicios/`.
+
+### Grafo de dependencias
+
+`GenerarGrafoDependencias.ps1` (opción 5) recorre el XML del XPZ a partir de un wrapper y construye un grafo de dependencias usando:
+
+- **`parentGuid`**: jerarquía de objetos en el XML (wrapper → módulo → SDTs contenidos).
+- **Referencias en Source**: análisis del texto CDATA buscando llamadas a otros `fullyQualifiedName` (Procedures, SDTs).
+
+El resultado es un JSON (`grafo-<wrapper>.json`) con nodos (objetos referenciados, con tipo y relación) y aristas (conexiones entre ellos), más una impresión en consola.
+
 ## Estructura del repositorio
 
-| Recurso | Función |
+| Recurso | Qué hace |
 |---|---|
-| [xpz/LPS_COM.xpz](xpz/LPS_COM.xpz) | Fuente de verdad: export GeneXus de APIGLM (ignorada por git). |
-| `GeneXus-XPZ-Skills-main/` | Repositorio auxiliar con scripts y catálogos (ignorado por git). |
-| [analisisXPZ.md](documentacion/analisisXPZ.md) | Fuente normativa #1: cómo construir la ficha técnica desde el XPZ. |
-| [reglasEditoriales.md](documentacion/reglasEditoriales.md) | Fuente normativa #2: presentación del documento final. |
-| [templateDoc.md](documentacion/templateDoc.md) | Fuente normativa #3: plantilla obligatoria de cada servicio. |
-| [servicios](documentacion/servicios/) | Contiene la documentación generada para los servicios analizados. |
-| [Endpoints/assets/](documentacion/Endpoints/assets/) | Guía del inventario (`analisisEndpoint.md`) y salidas generadas (`endpoints.json`, `endpoints.md`). |
-| [Endpoints/binary/](documentacion/Endpoints/binary/) | Scripts del pipeline: `GenerarListaEndpoints.ps1`, `GenerarVistaHTML.ps1` y `ObtenerEndpoints.cmd`. |
-| [Endpoints/web/](documentacion/Endpoints/web/) | Visor estático: `APIServicios.html` (generado), `style.css` y `app.js`. |
-| [GenerarDocumentacion.cmd](GenerarDocumentacion.cmd) | Orquestador que regenera inventario y visor. |
-| `specs/` | Especificaciones (specs) del proyecto. |
+| [xpz/](xpz/) | Fuente de verdad: export GeneXus. Contiene `trunk.xpz` (original), `trunk_v2.xpz` (versión modificada) y `LPS_COM.xpz` (otro package). Ignorados por git. |
+| `GeneXus-XPZ-Skills-main/` | Repositorio auxiliar con scripts y catálogos (ej. `gx-object-type-catalog.json` para confirmar tipos de objeto). Ignorado por git. |
+| [configuracion.json](configuracion.json) | Configuración operativa en raíz: ruta al XPZ activo, `packagename` (prefijo del endpoint publicado) y `cliente`. No se versiona. |
+| [AGENTS.md](AGENTS.md) | Memoria del proyecto para agentes: reglas no obvias, estructura de carpetas, fuentes normativas y convenciones. |
+| [GenerarDocumentacion.cmd](GenerarDocumentacion.cmd) | Orquestador que regenera inventario (`endpoints.json`, `endpoints.md`) y visor (`APIServicios.html`). |
+| [.gitignore](.gitignore) | Excluye XPZ, salidas generadas (`endpoints.json`, `endpoints.md`, `APIServicios.html`, `*.json` de `assets/`, logs) y `GeneXus-XPZ-Skills-main/`. |
+| `specs/` | Especificaciones numeradas que guían el desarrollo del proyecto (ver sección abajo). |
+| `documentacion/analisisXPZ.md` | Fuente normativa #1: cómo construir la ficha técnica desde el XPZ. Define el flujo de análisis, tipos canónicos, reglas de obligatoriedad y criterios de detención. |
+| `documentacion/reglasEditoriales.md` | Fuente normativa #2: presentación del documento final. Lenguaje, formato de tablas, secciones obligatorias y nomenclatura de archivos. |
+| `documentacion/templateDoc.md` | Fuente normativa #3: plantilla markdown de cada servicio. Bloques canónicos y marcadores de reemplazo. |
+| `documentacion/servicios/` | Fichas generadas por servicio (ej. `wsobtenertotalessolicitud.md`). Una por wrapper documentado. |
+| `documentacion/Endpoints/assets/analisisEndpoint.md` | Guía para reproducir el inventario de endpoints desde `APIGLM.APIGLMMain`. |
+| `documentacion/Endpoints/assets/endpoints.json` | Inventario de endpoints en JSON (generado, ignorado). |
+| `documentacion/Endpoints/assets/endpoints.md` | Inventario de endpoints en markdown (generado, ignorado). |
+| `documentacion/Endpoints/binary/GenerarListaEndpoints.ps1` | Script que extrae wrappers HTTP activos desde el XPZ y escribe el inventario. |
+| `documentacion/Endpoints/binary/GenerarVistaHTML.ps1` | Script que genera el visor web `APIServicios.html`. |
+| `documentacion/Endpoints/binary/ObtenerEndpoints.cmd` | Atajo para regenerar solo el inventario (sin visor). |
+| `documentacion/Endpoints/web/APIServicios.html` | Visor estático generado (ignorado). |
+| `documentacion/Endpoints/web/style.css` | Estilos del visor (claro/oscuro). |
+| `documentacion/Endpoints/web/app.js` | Lógica del visor: renderizado de grilla, filtro en vivo, toggle de tema. |
+| `documentacion/Generador/binary/AnalizarServicio.ps1` | Módulo de análisis: abre XPZ, resuelve wrapper, método HTTP, entrada/salida, tipos, obligatoriedad, endpoint. |
+| `documentacion/Generador/binary/RedactarDocumento.ps1` | Módulo de redacción: ficha técnica → markdown según template. |
+| `documentacion/Generador/binary/EscribirSalidas.ps1` | Módulo de escritura: guarda `.md`, `apiglm-doc-review.json`, actualiza `controlVersiones.json`. |
+| `documentacion/Generador/binary/GenerarDocumento.ps1` | Orquestador del generador: menú interactivo de 6 opciones, pipeline análisis → redacción → escritura. |
+| `documentacion/Generador/binary/ObtenerDocumento.cmd` | Atajo para invocar el generador. |
+| `documentacion/Generador/binary/DetectarCambios.ps1` | Compara checksums del XPZ contra `controlVersiones.json`, lista servicios modificados y regenera bajo confirmación. |
+| `documentacion/Generador/binary/GenerarGrafoDependencias.ps1` | Construye grafo de dependencias (SDTs, procedimientos) desde un wrapper usando `parentGuid` y referencias en Source. |
+| `documentacion/Generador/assets/apiglm-doc-review.json` | Informe de revisión con juicios no automatizables (generado, ignorado). |
+| `documentacion/Generador/assets/controlVersiones.json` | Registro maestro de versiones por servicio: `fullyQualifiedName`, `endpoint`, `fecha`, `version`, `checksum`. Se actualiza en cada generación. |
+| `documentacion/Generador/assets/grafo-<wrapper>.json` | Grafo de dependencias de un servicio (generado, ignorado). |
+| `documentacion/Generador/assets/logErrores.txt` | Log de errores de generación en lote (generado si hay fallos, ignorado). |
 
-Los tres documentos normativos se aplican en este orden: análisis técnico, reglas editoriales y plantilla final. Este README ofrece una introducción al proceso, pero no reemplaza esas reglas.
+## Especificaciones (specs)
+
+El desarrollo sigue el método spec-driven. Cada spec define el alcance, modelo de datos, plan de implementación y criterios de aceptación de una funcionalidad.
+
+| Spec | Estado | Descripción |
+|---|---|---|
+| SPEC 01 | — | Ficha técnica de `WSObtenerTotalesSolicitud` (servicio de referencia). |
+| SPEC 02 | Aprobado | Visor web de endpoints: grilla con filtro, toggle claro/oscuro, generado desde `endpoints.json`. |
+| SPEC 03 | Aprobado | Generador automático de documentación: pipeline `AnalizarServicio.ps1` → `RedactarDocumento.ps1` → `EscribirSalidas.ps1`, `configuracion.json`, selección interactiva. |
+| SPEC 04 | Borrador | Menú interactivo con 3 modos (individual, múltiple vía `Out-GridView`, lote completo), barra de progreso, regeneración sin confirmación, log de errores. |
+| SPEC 05 | Borrador | Detector de cambios entre versiones del XPZ (`controlVersiones.json`, `DetectarCambios.ps1`) y grafo de dependencias (`GenerarGrafoDependencias.ps1`). Nuevas opciones 5 y 6 en el menú. |
 
 ## Obtención del inventario de endpoints
 
@@ -73,7 +149,7 @@ La obtención del inventario sigue esta operatoria:
 3. Leer sus llamadas activas a procedimientos `WS...`, ignorando las llamadas completamente comentadas.
 4. Resolver cada llamada contra un objeto exportado en el XPZ.
 5. Confirmar que el objeto sea un procedimiento, tenga `IsMain=True` y utilice `CALL_PROTOCOL=HTTP`.
-6. Incorporar una sola vez cada objeto confirmado en [endpoints.md](documentacion/Endpoints/assets/endpoints.md), respetando el orden de `APIGLMMain`.
+6. Incorporar una sola vez cada objeto confirmado en `endpoints.md`, respetando el orden de `APIGLMMain`.
 
 Una llamada en `APIGLMMain` es inicialmente un candidato. Solo se considera endpoint confirmado cuando el objeto correspondiente existe en el XML y cumple las propiedades HTTP requeridas.
 
@@ -87,7 +163,7 @@ Ese nombre identifica el wrapper dentro de la base de conocimiento, pero todaví
 
 ## Análisis individual de un servicio
 
-Una vez seleccionado un elemento de [endpoints.md](documentacion/Endpoints/assets/endpoints.md), se analiza su objeto `WS...`. Este objeto funciona como wrapper HTTP: recibe la solicitud, ejecuta controles generales y delega el procesamiento en un procedimiento separado.
+Una vez seleccionado un elemento del inventario, se analiza su objeto `WS...`. Este objeto funciona como wrapper HTTP: recibe la solicitud, ejecuta controles generales y delega el procesamiento en un procedimiento separado.
 
 El procedimiento separado que recibe `APIGLMRequestIn` y produce `APIGLMResponse` es el programa principal del servicio. Allí se busca la información necesaria para preparar la ficha técnica.
 
@@ -113,33 +189,19 @@ El inventario y la documentación final muestran identificadores diferentes porq
 | Concepto | Ejemplo | Uso |
 |---|---|---|
 | Nombre GeneXus | `APIGLM.Cotizacion.WSObtenerDatosProductor` | Localiza el wrapper dentro del XPZ. |
-| Endpoint publicado | `apiglm.cotizacion.awsobtenerdatosproductor` | Identifica la ruta relativa documentada para consumir el servicio. |
+| Endpoint publicado | `glmsuit.comercial.cotizacion.awsobtenerdatosproductor` | Identifica la ruta relativa documentada para consumir el servicio. |
 
-El endpoint publicado se confirma durante el análisis individual. Se escribe en minúsculas y, para los procedimientos HTTP principales contemplados por la metodología, el nombre publicado incorpora el prefijo `a`. No se agregan host, base URL ni package cuando esos datos no están confirmados.
+El endpoint publicado se confirma durante el análisis individual. Se escribe en minúsculas y, para los procedimientos HTTP principales, incorpora el prefijo `a`. El `packagename` (ej. `glmsuit.comercial.` para Trunk) se define en `configuracion.json`.
 
-## Ejemplo resumido
+## Cómo documentar un servicio (vía generador automático)
 
-Para `APIGLM.Cotizacion.WSObtenerDatosProductor`, el proceso permite establecer lo siguiente:
+1. Asegurarse de que `configuracion.json` apunte al XPZ correcto y tenga el `packagename` adecuado.
+2. Ejecutar `GenerarDocumentacion.cmd` para regenerar el inventario desde el XPZ actual.
+3. Ejecutar `ObtenerDocumento.cmd` y elegir un modo en el menú interactivo (opciones 1, 2 o 3).
+4. El generador ejecuta automáticamente `analisisXPZ.md` → `reglasEditoriales.md` → `templateDoc.md` y escribe el `.md` en `servicios/`.
+5. Revisar `apiglm-doc-review.json` para los juicios no automatizables (obligatoriedad no resuelta, descripciones pendientes).
 
-1. `WSObtenerDatosProductor` es el wrapper HTTP incluido en el inventario.
-2. El wrapper delega en `ObtenerDatosProductor`, que es el programa principal.
-3. El programa principal interpreta una única posición de `QueryParams`, correspondiente al código de productor.
-4. La respuesta satisfactoria contiene los datos del productor y su código postal.
-5. El programa principal genera explícitamente respuestas 400 cuando la cantidad de parámetros es incorrecta y 404 cuando no encuentra al productor.
-6. La ficha resultante se presenta en `documentacion/servicios/WSObtenerDatosProductor.md`.
-
-Este ejemplo muestra la trazabilidad esperada: cada dato publicado debe poder relacionarse con una definición o una instrucción concreta del XPZ.
-
-## Cómo documentar un nuevo servicio
-
-Para agregar la documentación de otro servicio:
-
-1. Elegir el nombre completo desde [endpoints.md](documentacion/Endpoints/assets/endpoints.md).
-2. Aplicar el flujo técnico de [analisisXPZ.md](documentacion/analisisXPZ.md) y preparar una única ficha con método, endpoint, entrada, obligatoriedad, salida, errores y pendientes.
-3. Aplicar [reglasEditoriales.md](documentacion/reglasEditoriales.md) sin volver a interpretar la evidencia técnica.
-4. Copiar la estructura de [templateDoc.md](documentacion/templateDoc.md), conservar únicamente los bloques aplicables y reemplazar sus marcadores editoriales.
-5. Guardar el resultado en [servicios](documentacion/servicios/) con un nombre que permita reconocer el wrapper documentado.
-6. Verificar enlaces, formato Markdown, codificación UTF-8 sin BOM y finales de línea LF.
+Para regenerar servicios tras un cambio de XPZ, usar la opción 6 del menú: detecta automáticamente qué servicios cambiaron y los regenera.
 
 ## Cuándo detener el análisis
 
@@ -155,7 +217,7 @@ Cuando falta evidencia, el documento debe indicar qué dato está pendiente y qu
 
 ## Resultado esperado
 
-Cada archivo de [servicios](documentacion/servicios/) debe permitir que una persona comprenda, sin consultar directamente el código GeneXus:
+Cada archivo de `servicios/` debe permitir que una persona comprenda, sin consultar directamente el código GeneXus:
 
 - cuál es el propósito del servicio;
 - qué endpoint y método debe utilizar;
