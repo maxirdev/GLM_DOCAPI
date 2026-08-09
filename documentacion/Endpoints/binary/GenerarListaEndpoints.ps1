@@ -1,7 +1,6 @@
 ﻿[CmdletBinding()]
 param(
     [string]$XpzPath,
-    [string]$XpzDirectory,
     [string]$CatalogPath,
     [string]$OutputDirectory,
     [string]$ConfigPath,
@@ -9,15 +8,14 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-if (-not $XpzDirectory) { $XpzDirectory = Join-Path $PSScriptRoot '..\..\..\xpz' }
 if (-not $CatalogPath) { $CatalogPath = Join-Path $PSScriptRoot '..\..\..\GeneXus-XPZ-Skills-main\scripts\gx-object-type-catalog.json' }
 if (-not $OutputDirectory) { $OutputDirectory = Join-Path $PSScriptRoot '..\assets' }
 if (-not $ConfigPath) { $ConfigPath = Join-Path $PSScriptRoot '..\..\..\configuracion.json' }
-$XpzName = ''
+. (Join-Path $PSScriptRoot '..\..\Generador\binary\CargarConfiguracion.ps1')
+. (Join-Path $PSScriptRoot '..\..\Generador\binary\AnalizarServicio.ps1')
 $StartTime = Get-Date
 $ProcedureTypeGuid = '84a12160-f59b-4ad7-a683-ea4481ac23e9'
 $PackageName = ''
-$zip = $null
 
 if (-not [Console]::IsOutputRedirected) {
     try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch { }
@@ -29,7 +27,7 @@ function Write-Step {
         [string]$Text = ''
     )
     Write-Host ''
-    Write-Host ("[ {0}/8 ] {1}" -f $Number, $Text) -ForegroundColor Cyan
+    Write-Host ("[ {0}/6 ] {1}" -f $Number, $Text) -ForegroundColor Cyan
 }
 
 function Add-Line {
@@ -59,93 +57,25 @@ try {
     }
     Write-Host ("GUID de tipo Procedure: " + $ProcedureTypeGuid) -ForegroundColor DarkGray
 
-    if (Test-Path -LiteralPath $ConfigPath) {
-        try {
-            $configuracion = Get-Content -LiteralPath $ConfigPath -Raw | ConvertFrom-Json
-            $PackageName = [string]$configuracion.packagename
-        } catch {
-            Write-Host 'No se pudo leer configuracion.json; el endpoint no incluira el packagename.' -ForegroundColor DarkGray
-        }
-    } else {
-        Write-Host 'No se encontro configuracion.json en la raiz; el endpoint no incluira el packagename.' -ForegroundColor DarkGray
-    }
-    if ($PackageName) {
-        Write-Host ("PackageName: " + $PackageName) -ForegroundColor DarkGray
+    Write-Step 1 'Cargando configuracion y resolviendo XPZ...'
+    $cargarConfiguracionParametros = @{ ConfigPath = $ConfigPath }
+    if ($XpzPath) { $cargarConfiguracionParametros.XpzPath = $XpzPath }
+    $configuracion = Cargar-Configuracion @cargarConfiguracionParametros
+    $XpzPath = $configuracion.XpzPath
+    $PackageName = $configuracion.PackageName
+    Write-Host ("  XPZ: " + $configuracion.XpzPath) -ForegroundColor DarkGray
+    Write-Host ("  PackageName: " + $PackageName) -ForegroundColor DarkGray
+    if ($configuracion.Cliente) {
+        Write-Host ("  Cliente: " + $configuracion.Cliente) -ForegroundColor DarkGray
     }
 
-    Write-Step 1 'Buscando archivos .xpz...'
-    if ($XpzPath) {
-        if (-not (Test-Path -LiteralPath $XpzPath)) {
-            throw ("No se encontró el XPZ indicado en: " + $XpzPath)
-        }
-        $XpzPath = (Resolve-Path -LiteralPath $XpzPath).Path
-    } else {
-        if (-not (Test-Path -LiteralPath $XpzDirectory)) {
-            throw ("No existe el directorio de XPZ: " + $XpzDirectory)
-        }
-        $xpzFiles = @(Get-ChildItem -LiteralPath $XpzDirectory -Filter '*.xpz' -File)
-        if ($xpzFiles.Count -eq 0) {
-            throw ("No se encontró ningún archivo .xpz en: " + $XpzDirectory)
-        }
-        if ($xpzFiles.Count -gt 1) {
-            Write-Host ("  Se encontraron " + $xpzFiles.Count + " archivos .xpz:") -ForegroundColor Yellow
-            for ($i = 0; $i -lt $xpzFiles.Count; $i++) {
-                Write-Host ("    {0}. {1}" -f ($i + 1), $xpzFiles[$i].Name) -ForegroundColor White
-            }
-            $selection = 0
-            while ($selection -lt 1 -or $selection -gt $xpzFiles.Count) {
-                $selText = Read-Host ("  Seleccione un archivo [1-" + $xpzFiles.Count + "]")
-                $selection = 0
-                [int]$parsed = 0
-                if ([int]::TryParse($selText, [ref]$parsed)) { $selection = $parsed }
-                if ($selection -lt 1 -or $selection -gt $xpzFiles.Count) {
-                    Write-Host ("    Selección inválida. Ingrese un número entre 1 y " + $xpzFiles.Count + ".") -ForegroundColor Yellow
-                }
-            }
-            $XpzPath = $xpzFiles[$selection - 1].FullName
-            Write-Host ("  Seleccionado: " + $xpzFiles[$selection - 1].Name) -ForegroundColor DarkGray
-        } else {
-            $XpzPath = $xpzFiles[0].FullName
-        }
-    }
-    $XpzName = [System.IO.Path]::GetFileName($XpzPath)
+    $aperturaXpz = Abrir-XPZ -RutaXpz $XpzPath
+    $xml = $aperturaXpz.Xml
+    $XpzName = $aperturaXpz.Nombre
     Write-Host ("  Archivo: " + $XpzName) -ForegroundColor DarkGray
-    Write-Host ("  Abriendo " + $XpzName + " en modo solo lectura...") -ForegroundColor DarkGray
-    Add-Type -AssemblyName System.IO.Compression.FileSystem
-    try {
-        $zip = [System.IO.Compression.ZipFile]::OpenRead($XpzPath)
-    } catch {
-        throw ("No se pudo abrir el XPZ como contenedor ZIP. Motivo: " + $_.Exception.Message)
-    }
-$entry = $zip.Entries | Where-Object { $_.Name -like '*.xml' } | Select-Object -First 1
-if (-not $entry) {
-    throw ('El XPZ ' + $XpzName + ' no contiene ningún archivo XML.')
-    }
-    Write-Host ("  Entrada localizada: " + $entry.FullName + " (" + $entry.Length + " bytes)") -ForegroundColor DarkGray
+    Write-Host ("  Raiz: " + $xml.DocumentElement.Name) -ForegroundColor DarkGray
 
-    Write-Step 2 ("Leyendo " + $entry.Name + " desde " + $XpzName + "...")
-    $reader = New-Object System.IO.StreamReader($entry.Open())
-    try {
-        $xmlText = $reader.ReadToEnd()
-    } finally {
-        $reader.Close()
-    }
-    Write-Host ("  Tamaño leído: " + $xmlText.Length + " caracteres") -ForegroundColor DarkGray
-
-    Write-Step 3 'Cargando el XML y validando la raíz ExportFile...'
-    $xml = New-Object System.Xml.XmlDocument
-    $xml.PreserveWhitespace = $false
-    try {
-        $xml.LoadXml($xmlText)
-    } catch {
-        throw ("El XML interno no es un XML bien formado. Motivo: " + $_.Exception.Message)
-    }
-    if ($xml.DocumentElement.LocalName -ne 'ExportFile') {
-        throw ("La raíz del XML no es ExportFile; se encontró: " + $xml.DocumentElement.LocalName)
-    }
-    Write-Host ("  Raíz: " + $xml.DocumentElement.Name) -ForegroundColor DarkGray
-
-    Write-Step 4 ("Localizando APIGLM.APIGLMMain en " + $XpzName + " y su único Source no vacío...")
+    Write-Step 2 ("Localizando APIGLM.APIGLMMain en " + $XpzName + " y su único Source no vacío...")
     $mainNodes = $xml.SelectNodes("//Object[@fullyQualifiedName='APIGLM.APIGLMMain']")
     if ($mainNodes.Count -ne 1) {
         throw ("APIGLM.APIGLMMain no se encontró o aparece " + $mainNodes.Count + " veces.")
@@ -167,7 +97,7 @@ if (-not $entry) {
     $source = $sourceNode.InnerText
     Write-Host ("  Source localizado (" + $source.Length + " caracteres)") -ForegroundColor DarkGray
 
-    Write-Step 5 'Extrayendo llamadas WS... activas del Source...'
+    Write-Step 3 'Extrayendo llamadas WS... activas del Source...'
     $lines = [regex]::Split($source, "`r?`n")
     $candidates = New-Object System.Collections.Generic.List[object]
     $ignored = 0
@@ -188,7 +118,7 @@ if (-not $entry) {
     }
     Write-Host ("  Candidatos activos: " + $candidates.Count + " / líneas ignoradas por comentario: " + $ignored) -ForegroundColor DarkGray
 
-    Write-Step 6 'Resolviendo candidatos y confirmando Procedure / IsMain=True / CALL_PROTOCOL=HTTP...'
+    Write-Step 4 'Resolviendo candidatos y confirmando Procedure / IsMain=True / CALL_PROTOCOL=HTTP...'
     $allObjects = $xml.SelectNodes('//Object')
     $byFqn = @{}
     $byName = @{}
@@ -259,7 +189,7 @@ if (-not $entry) {
         Write-Host ("  [OK] " + $item.Fqn) -ForegroundColor Green
     }
 
-    Write-Step 7 'Escribiendo endpoints.json y endpoints.md...'
+    Write-Step 5 'Escribiendo endpoints.json y endpoints.md...'
     if (-not (Test-Path -LiteralPath $OutputDirectory)) {
         New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
     }
@@ -309,7 +239,7 @@ if (-not $entry) {
     $mdPath = Join-Path $OutputDirectory 'endpoints.md'
     [System.IO.File]::WriteAllText($mdPath, $md, (New-Object System.Text.UTF8Encoding($false)))
 
-    Write-Step 8 'Verificación final'
+    Write-Step 6 'Verificación final'
     Write-Host ''
     Write-Host ("Conteo confirmado: " + $final.Count) -ForegroundColor Cyan
     if ($final.Count -ne $ExpectedCount) {
@@ -338,7 +268,6 @@ if (-not $entry) {
     Write-Host ("ERROR: " + $_.Exception.Message) -ForegroundColor Red
     exit 1
 } finally {
-    if ($zip) { $zip.Dispose() }
     Write-Host ''
     Write-Host ("Fin: " + ((Get-Date) - $StartTime).ToString('mm\:ss')) -ForegroundColor DarkGray
 }

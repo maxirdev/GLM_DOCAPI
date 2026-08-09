@@ -6,12 +6,14 @@
 
 [CmdletBinding()]
 param(
-    [string]$ConfigPath
+    [string]$ConfigPath,
+    [string]$XpzPath
 )
 
 $ErrorActionPreference = 'Stop'
 $StartTime = Get-Date
 if (-not $ConfigPath) { $ConfigPath = Join-Path $PSScriptRoot '..\..\..\configuracion.json' }
+. (Join-Path $PSScriptRoot 'CargarConfiguracion.ps1')
 
 if (-not [Console]::IsOutputRedirected) {
     try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch { }
@@ -29,8 +31,9 @@ function Write-Step {
 function Procesar-Servicio {
     param(
         [Parameter(Mandatory = $true)][object]$Endpoint,
-        [Parameter(Mandatory = $true)][object]$Configuracion,
-        [Parameter(Mandatory = $true)][string]$RutaConfig,
+        [Parameter(Mandatory = $true)][string]$PackageName,
+        [Parameter(Mandatory = $true)][System.Xml.XmlDocument]$Xml,
+        [Parameter(Mandatory = $true)]$Indice,
         [Parameter(Mandatory = $true)][string]$DirectorioSalida,
         [Parameter(Mandatory = $true)][string]$RutaInformeRevision,
         [Parameter(Mandatory = $true)]$ListaErrores,
@@ -39,12 +42,7 @@ function Procesar-Servicio {
 
     try {
         if (-not $Silencioso) { Write-Step 3 'Analizando el servicio desde el XPZ...' }
-        if ([string]::IsNullOrWhiteSpace($Configuracion.packagename)) {
-            throw 'La configuracion no define packagename.'
-        }
-        $packageName = [string]$Configuracion.packagename
-        $xml = Abrir-XPZ -RutaXpz (Join-Path (Split-Path $RutaConfig -Parent) $Configuracion.xpz)
-        $documentacion = Analizar-Servicio -Xml $xml -NombreCompletoWrapper $Endpoint.proceso -PackageName $packageName
+        $documentacion = Analizar-Servicio -Xml $Xml -NombreCompletoWrapper $Endpoint.proceso -PackageName $PackageName -Indice $Indice
         if (-not $Silencioso) {
             Write-Host ("  Programa principal: " + $documentacion.ProgramaPrincipal) -ForegroundColor DarkGray
             Write-Host ("  Metodo HTTP: " + $documentacion.MetodoHttp) -ForegroundColor DarkGray
@@ -58,13 +56,29 @@ function Procesar-Servicio {
         if (-not $Silencioso) { Write-Step 5 'Escribiendo las salidas...' }
         $rutaDocumento = Escribir-Salidas -Documentacion $documentacion -Documento $documento -DirectorioSalida $DirectorioSalida -RutaInformeRevision $RutaInformeRevision
 
-        return $true
+        $tienePendientes = @($documentacion.Pendientes).Count -gt 0
+        $estado = 'OK'
+        if ($tienePendientes) { $estado = 'WARNING' }
+
+        return [pscustomobject]@{
+            FullyQualifiedName = $Endpoint.proceso
+            Estado = $estado
+            Documento = $rutaDocumento
+            Pendientes = @($documentacion.Pendientes)
+            Mensajes = @()
+        }
     } catch {
         $ListaErrores.Add([pscustomobject]@{
             servicio = $Endpoint.proceso
             error = $_.Exception.Message
         })
-        return $false
+        return [pscustomobject]@{
+            FullyQualifiedName = $Endpoint.proceso
+            Estado = 'ERROR'
+            Documento = ''
+            Pendientes = @()
+            Mensajes = @($_.Exception.Message)
+        }
     }
 }
 
@@ -83,11 +97,14 @@ try {
     . (Join-Path $PSScriptRoot 'EscribirSalidas.ps1')
 
     Write-Step 1 'Cargando configuracion e inventario...'
-    if (-not (Test-Path -LiteralPath $ConfigPath)) {
-        throw ("No se encontro el archivo de configuracion: " + $ConfigPath)
+    $cargarConfiguracionParametros = @{ ConfigPath = $ConfigPath }
+    if ($XpzPath) { $cargarConfiguracionParametros.XpzPath = $XpzPath }
+    $configuracion = Cargar-Configuracion @cargarConfiguracionParametros
+    Write-Host ("  XPZ: " + $configuracion.XpzPath) -ForegroundColor DarkGray
+    Write-Host ("  PackageName: " + $configuracion.PackageName) -ForegroundColor DarkGray
+    if ($configuracion.Cliente) {
+        Write-Host ("  Cliente: " + $configuracion.Cliente) -ForegroundColor DarkGray
     }
-    $ConfigPath = (Resolve-Path -LiteralPath $ConfigPath).Path
-    $config = Get-Content -LiteralPath $ConfigPath -Raw | ConvertFrom-Json
     if (-not (Test-Path -LiteralPath $RutaInventario)) {
         throw ("No se encontro el inventario en: " + $RutaInventario + ". Ejecute primero GenerarDocumentacion.cmd para regenerarlo desde el XPZ.")
     }
@@ -97,6 +114,11 @@ try {
         throw 'El inventario endpoints.json no contiene endpoints.'
     }
     Write-Host ("  Inventario: " + $endpoints.Count + " endpoints") -ForegroundColor DarkGray
+
+    Write-Step 2 'Abriendo XPZ y construyendo indices...'
+    $aperturaXpz = Abrir-XPZ -RutaXpz $configuracion.XpzPath
+    $indices = Construir-Indices -Xml $aperturaXpz.Xml
+    Write-Host ("  XPZ abierto y " + $aperturaXpz.Xml.SelectNodes('//Object').Count + " objetos indexados") -ForegroundColor DarkGray
 
     Write-Host ''
     Write-Host '  Modos de generacion:' -ForegroundColor Cyan
@@ -152,42 +174,149 @@ try {
         Write-Host ("  Procesando " + $serviciosSeleccionados.Count + " servicios") -ForegroundColor DarkGray
     }
 
-    $exitos = 0
-    $fallos = 0
+    $nombresLocalesVistos = @{}
+    $serviciosParaProcesar = New-Object System.Collections.Generic.List[object]
+    $duplicados = New-Object System.Collections.Generic.List[object]
+    foreach ($servicio in $serviciosSeleccionados) {
+        $ultimoPunto = $servicio.proceso.LastIndexOf('.')
+        if ($ultimoPunto -gt 0) {
+            $nombreLocal = $servicio.proceso.Substring($ultimoPunto + 1).ToLowerInvariant()
+        } else {
+            $nombreLocal = $servicio.proceso.ToLowerInvariant()
+        }
+        if ($nombresLocalesVistos.ContainsKey($nombreLocal)) {
+            $duplicados.Add([pscustomobject]@{
+                servicio = $servicio.proceso
+                nombreLocal = $nombreLocal
+                ganador = $nombresLocalesVistos[$nombreLocal]
+            })
+            Write-Host ("  [WARNING] Duplicado: " + $servicio.proceso + " -> " + $nombreLocal + " (ganador: " + $nombresLocalesVistos[$nombreLocal] + ")") -ForegroundColor Yellow
+        } else {
+            $nombresLocalesVistos[$nombreLocal] = $servicio.proceso
+            $serviciosParaProcesar.Add($servicio)
+        }
+    }
+
+    if ($duplicados.Count -gt 0) {
+        Write-Host ("  Duplicados omitidos: " + $duplicados.Count + " servicio(s)") -ForegroundColor Yellow
+    }
+
+    $okCount = 0
+    $warningCount = 0
+    $errorCount = 0
     $errores = New-Object System.Collections.Generic.List[object]
-    $totalServicios = $serviciosSeleccionados.Count
+    $resultados = New-Object System.Collections.Generic.List[object]
+    $totalServicios = $serviciosParaProcesar.Count
     $contador = 0
 
-    foreach ($servicio in $serviciosSeleccionados) {
+    foreach ($servicio in $serviciosParaProcesar) {
         $contador++
         if ($modoSeleccionado -ne 1) {
             $progreso = [math]::Floor(($contador / $totalServicios) * 100)
             Write-Progress -Activity 'Generando documentacion de servicio' -PercentComplete $progreso -Status "Procesando $contador de $totalServicios"
         }
-        if (Procesar-Servicio -Endpoint $servicio -Configuracion $config -RutaConfig $ConfigPath -DirectorioSalida $DirectorioSalida -RutaInformeRevision $RutaInformeRevision -ListaErrores $errores -Silencioso:($modoSeleccionado -ne 1)) {
-            $exitos++
-        } else {
-            $fallos++
-            Write-Host ("  Fallo: " + $servicio.proceso) -ForegroundColor Red
+        $resultado = Procesar-Servicio -Endpoint $servicio -PackageName $configuracion.PackageName -Xml $aperturaXpz.Xml -Indice $indices -DirectorioSalida $DirectorioSalida -RutaInformeRevision $RutaInformeRevision -ListaErrores $errores -Silencioso:($modoSeleccionado -ne 1)
+        $resultados.Add($resultado)
+        if ($resultado.Estado -eq 'OK') {
+            $okCount++
+        } elseif ($resultado.Estado -eq 'WARNING') {
+            $warningCount++
+            Write-Host ("  [WARNING] " + $servicio.proceso + " — PENDIENTES: " + (@($resultado.Pendientes).Count)) -ForegroundColor Yellow
+        } elseif ($resultado.Estado -eq 'ERROR') {
+            $errorCount++
+            Write-Host ("  [ERROR] " + $servicio.proceso) -ForegroundColor Red
+        }
+    }
+
+    foreach ($dup in $duplicados) {
+        $resultados.Add([pscustomobject]@{
+            FullyQualifiedName = $dup.servicio
+            Estado = 'WARNING'
+            Documento = ''
+            Pendientes = @()
+            Mensajes = @("Nombre local duplicado '$($dup.nombreLocal)'. El ganador es '$($dup.ganador)'.")
+        })
+        $warningCount++
+    }
+
+    foreach ($resultado in $resultados) {
+        if ($resultado.Estado -ne 'ERROR') { continue }
+        if (-not $resultado.FullyQualifiedName) { continue }
+        $ultimoPunto = $resultado.FullyQualifiedName.LastIndexOf('.')
+        if ($ultimoPunto -le 0) { continue }
+        $nombreArchivo = $resultado.FullyQualifiedName.Substring($ultimoPunto + 1).ToLowerInvariant() + '.md'
+        $rutaDocumentoError = Join-Path $DirectorioSalida $nombreArchivo
+        if (Test-Path -LiteralPath $rutaDocumentoError) {
+            Remove-Item -LiteralPath $rutaDocumentoError -Force
+            Write-Host ("  [ELIMINADO] " + $rutaDocumentoError + " (servicio en ERROR: " + $resultado.FullyQualifiedName + ")") -ForegroundColor Yellow
         }
     }
 
     Write-Host ''
-    Write-Host ("Completado: $exitos exitos, $fallos fallos.") -ForegroundColor Cyan
-    if ($fallos -gt 0) {
-        $rutaLogErrores = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..\..\logErrores.txt'))
-        $directorioLogErrores = [System.IO.Path]::GetDirectoryName($rutaLogErrores)
-        if (-not (Test-Path -LiteralPath $directorioLogErrores)) {
-            New-Item -ItemType Directory -Path $directorioLogErrores -Force | Out-Null
+    Write-Host ("Completado: $okCount OK, $warningCount WARNING, $errorCount ERROR.") -ForegroundColor Cyan
+
+    $directorioLogs = Join-Path $PSScriptRoot '..\Logs'
+    if (-not (Test-Path -LiteralPath $directorioLogs)) {
+        New-Item -ItemType Directory -Path $directorioLogs -Force | Out-Null
+    }
+
+    $finEjecucion = Get-Date
+    $marcaTemporal = $finEjecucion.ToString('yyyyMMdd-HHmmss')
+
+    $revision = [pscustomobject]@{
+        ejecucion = [pscustomobject]@{
+            xpz = $configuracion.XpzPath
+            inicio = $StartTime.ToString('s')
+            fin = $finEjecucion.ToString('s')
+            seleccionados = $serviciosSeleccionados.Count
+            ok = $okCount
+            warning = $warningCount
+            error = $errorCount
         }
-        $lineasLogErrores = $errores | ForEach-Object {
-            $timestamp = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
-            "$timestamp | " + $_.servicio + " | " + $_.error
+        servicios = @($resultados | ForEach-Object {
+            [pscustomobject]@{
+                fullyQualifiedName = $_.FullyQualifiedName
+                estado = $_.Estado
+                documento = $_.Documento
+                pendientes = @($_.Pendientes)
+                mensajes = @($_.Mensajes)
+            }
+        })
+    }
+    $rutaRevision = Join-Path $directorioLogs ($marcaTemporal + '-review.json')
+    $jsonRevision = $revision | ConvertTo-Json -Depth 5
+    $jsonRevision = $jsonRevision -replace "`r`n", "`n"
+    [System.IO.File]::WriteAllText($rutaRevision, $jsonRevision, (New-Object System.Text.UTF8Encoding($false)))
+    Write-Host ("Review: " + $rutaRevision) -ForegroundColor DarkGray
+
+    $tieneIncidencias = ($warningCount -gt 0 -or $errorCount -gt 0)
+    if ($tieneIncidencias) {
+        $lineasTxt = New-Object System.Collections.Generic.List[string]
+        foreach ($resultado in $resultados) {
+            if ($resultado.Estado -eq 'OK') { continue }
+            foreach ($mensaje in $resultado.Mensajes) {
+                $lineasTxt.Add($resultado.FullyQualifiedName + " | " + $resultado.Estado + " | " + $mensaje)
+            }
+            if ($resultado.Pendientes.Count -gt 0) {
+                foreach ($pendiente in $resultado.Pendientes) {
+                    $lineasTxt.Add($resultado.FullyQualifiedName + " | " + $resultado.Estado + " | PENDIENTE: " + $pendiente)
+                }
+            }
         }
-        $contenidoLogErrores = ($lineasLogErrores -join "`n")
-        if ($contenidoLogErrores) { $contenidoLogErrores += "`n" }
-        [System.IO.File]::WriteAllText($rutaLogErrores, $contenidoLogErrores, (New-Object System.Text.UTF8Encoding($false)))
-        Write-Host ("Log de errores: " + $rutaLogErrores) -ForegroundColor Yellow
+        if ($lineasTxt.Count -gt 0) {
+            $rutaErrores = Join-Path $directorioLogs ($marcaTemporal + '-errores.txt')
+            $contenidoTxt = ($lineasTxt -join "`n") + "`n"
+            [System.IO.File]::WriteAllText($rutaErrores, $contenidoTxt, (New-Object System.Text.UTF8Encoding($false)))
+            Write-Host ("Incidencias: " + $rutaErrores) -ForegroundColor DarkGray
+        }
+    }
+
+    if ($errorCount -gt 0) {
+        Write-Host ''
+        Write-Host ("  ATENCION: La ejecucion termino con " + $errorCount + " error(es). Revise los logs.") -ForegroundColor Yellow
+        $script:ExitCode = 1
+    } else {
+        $script:ExitCode = 0
     }
 } catch {
     Write-Host ''
@@ -196,4 +325,5 @@ try {
 } finally {
     Write-Host ''
     Write-Host ("Fin: " + ((Get-Date) - $StartTime).ToString('mm\:ss')) -ForegroundColor DarkGray
+    if ($script:ExitCode -eq 1) { exit 1 }
 }
