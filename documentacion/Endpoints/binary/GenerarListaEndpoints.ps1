@@ -4,6 +4,7 @@ param(
     [string]$XpzDirectory,
     [string]$CatalogPath,
     [string]$OutputDirectory,
+    [string]$ConfigPath,
     [int]$ExpectedCount = 135
 )
 
@@ -11,9 +12,11 @@ $ErrorActionPreference = 'Stop'
 if (-not $XpzDirectory) { $XpzDirectory = Join-Path $PSScriptRoot '..\..\..\xpz' }
 if (-not $CatalogPath) { $CatalogPath = Join-Path $PSScriptRoot '..\..\..\GeneXus-XPZ-Skills-main\scripts\gx-object-type-catalog.json' }
 if (-not $OutputDirectory) { $OutputDirectory = Join-Path $PSScriptRoot '..\assets' }
+if (-not $ConfigPath) { $ConfigPath = Join-Path $PSScriptRoot '..\..\..\configuracion.json' }
 $XpzName = ''
 $StartTime = Get-Date
 $ProcedureTypeGuid = '84a12160-f59b-4ad7-a683-ea4481ac23e9'
+$PackageName = ''
 $zip = $null
 
 if (-not [Console]::IsOutputRedirected) {
@@ -55,6 +58,20 @@ try {
         }
     }
     Write-Host ("GUID de tipo Procedure: " + $ProcedureTypeGuid) -ForegroundColor DarkGray
+
+    if (Test-Path -LiteralPath $ConfigPath) {
+        try {
+            $configuracion = Get-Content -LiteralPath $ConfigPath -Raw | ConvertFrom-Json
+            $PackageName = [string]$configuracion.packagename
+        } catch {
+            Write-Host 'No se pudo leer configuracion.json; el endpoint no incluira el packagename.' -ForegroundColor DarkGray
+        }
+    } else {
+        Write-Host 'No se encontro configuracion.json en la raiz; el endpoint no incluira el packagename.' -ForegroundColor DarkGray
+    }
+    if ($PackageName) {
+        Write-Host ("PackageName: " + $PackageName) -ForegroundColor DarkGray
+    }
 
     Write-Step 1 'Buscando archivos .xpz...'
     if ($XpzPath) {
@@ -233,6 +250,7 @@ try {
         if (-not $descripcion) { $descripcion = '' }
         $endpoint = 'a' + $item.Name.ToLowerInvariant()
         if ($module) { $endpoint = $module.ToLowerInvariant() + '.' + $endpoint }
+        if ($PackageName) { $endpoint = $PackageName.TrimEnd('.') + '.' + $endpoint }
         $final.Add([pscustomobject]@{ Fqn = $item.Fqn; Name = $item.Name; Module = $module; Nombre = $nombre; Descripcion = $descripcion; Endpoint = $endpoint })
         Write-Host ("  [OK] " + $item.Fqn) -ForegroundColor Green
     }
