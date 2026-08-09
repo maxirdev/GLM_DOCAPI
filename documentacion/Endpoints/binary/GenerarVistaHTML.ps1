@@ -1,7 +1,8 @@
 ﻿[CmdletBinding()]
 param(
     [string]$InputDirectory,
-    [string]$OutputPath
+    [string]$OutputPath,
+    [string]$ConfigPath
 )
 
 $ErrorActionPreference = 'Stop'
@@ -9,14 +10,13 @@ if (-not $InputDirectory) { $InputDirectory = Join-Path $PSScriptRoot '..\assets
 $JsonPath = Join-Path $InputDirectory 'endpoints.json'
 $HtmlPath = Join-Path (Join-Path $PSScriptRoot '..\web') 'APIServicios.html'
 if ($OutputPath) { $HtmlPath = $OutputPath }
-$ConfigPath = Join-Path $PSScriptRoot '..\..\..\configuracion.json'
+if (-not $ConfigPath) { $ConfigPath = Join-Path $PSScriptRoot '..\..\..\configuracion.json' }
+. (Join-Path $PSScriptRoot '..\..\Generador\binary\CargarConfiguracion.ps1')
 $Cliente = ''
-if (Test-Path -LiteralPath $ConfigPath) {
-    try {
-        $configuracion = Get-Content -LiteralPath $ConfigPath -Raw | ConvertFrom-Json
-        $Cliente = [string]$configuracion.cliente
-    } catch { }
-}
+try {
+    $configuracion = Cargar-Configuracion -ConfigPath $ConfigPath
+    $Cliente = $configuracion.Cliente
+} catch { }
 $StartTime = Get-Date
 
 if (-not [Console]::IsOutputRedirected) {
