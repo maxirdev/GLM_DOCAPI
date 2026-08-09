@@ -40,7 +40,7 @@ La consulta debe conservar exactamente 3 posiciones y respetar el orden indicado
 |---:|---|---|---|---|
 | 1 | `Empresa` | Integer | SI | Empresa |
 | 2 | `Anio` | Integer | SI | Anio |
-| 3 | `Id` | Integer | SI | PENDIENTE DE CONFIRMACIÓN: descripcion del campo Id. Evidencia requerida: respuesta real sanitizada o configuración desplegada. |
+| 3 | `Id` | Integer | SI | Id Novedad Operativa |
 
 ## Salida exitosa
 
@@ -70,9 +70,9 @@ Colección: `NO`.
 
 ## Errores específicos
 
-| Código HTTP | Condición | Respuesta o mensaje |
-|---:|---|---|
-| 400 | no se cumple: &colQueryParams.Count = 3 | `Servicio invocado sin los parametros necesarios` |
+| Código HTTP | Respuesta o mensaje |
+|---:|---|
+| 400 | `Servicio invocado sin los parametros necesarios` |
 
 ```json
 {

@@ -1,6 +1,6 @@
 @echo off
 chcp 65001 >nul
-title Generacion de ficha de servicio APIGLM
+title Documentacion de Servicio APIGLM
 set "ERRORLEVEL=0"
 
 echo ==============================================================
@@ -9,12 +9,12 @@ echo   %DATE% %TIME%
 echo ==============================================================
 echo.
 
-echo [ 1/1 ] Generando ficha del servicio seleccionado...
+echo Seleccione el modo de generacion en el menu interactivo.
 echo.
 %SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0documentacion\Generador\binary\GenerarDocumento.ps1"
 if errorlevel 1 goto error
 echo.
-echo Ficha generada correctamente.
+echo Documentacion generada correctamente.
 echo.
 
 echo ==============================================================

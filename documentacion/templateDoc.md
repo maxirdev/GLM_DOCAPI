@@ -97,9 +97,9 @@ Colección: `<SI/NO>`.
 
 <!-- Si existen errores explícitos, conservar la tabla y repetir una fila por cada condición. Si no existen, reemplazar la tabla por: No se identificaron errores específicos en el programa principal. En ambos casos, conservar el JSON común. -->
 
-| Código HTTP | Condición | Respuesta o mensaje |
-|---:|---|---|
-| <Código explícito> | <Condición confirmada> | `<Mensaje literal o patrón>` |
+| Código HTTP | Respuesta o mensaje |
+|---:|---|
+| <Código explícito> | `<Mensaje literal o patrón>` |
 
 ```json
 {
