@@ -1,5 +1,5 @@
 ﻿# RedactarDocumento.ps1
-# Modulo de redaccion de la ficha tecnica de un servicio APIGLM.
+# Modulo de redaccion de la documentacion tecnica de un servicio APIGLM.
 # Renderiza el markdown segun templateDoc.md, conservando los bloques canonicos,
 # la variante GET o POST unica y el JSON comun. Se importa por dot-source desde
 # GenerarDocumento.ps1. Se importa despues de AnalizarServicio.ps1.
@@ -135,14 +135,14 @@ function Redactar-Documento {
     Agregar-Linea '## Errores específicos'
     Agregar-Linea ''
     if (@($Ficha.Errores).Count -gt 0) {
-        Agregar-Linea '| Código HTTP | Condición | Respuesta o mensaje |'
-        Agregar-Linea '|---:|---|---|'
+        Agregar-Linea '| Código HTTP | Respuesta o mensaje |'
+        Agregar-Linea '|---:|---|'
         foreach ($error in $Ficha.Errores) {
             $codigoMostrado = $error.Codigo
             if ($error.Codigo -eq 0) {
                 $codigoMostrado = 'PENDIENTE DE CONFIRMACIÓN'
             }
-            Agregar-Linea ('| ' + $codigoMostrado + ' | ' + (Convertir-Celda $error.Condicion) + ' | `' + (Convertir-Celda $error.Mensaje) + '` |')
+            Agregar-Linea ('| ' + $codigoMostrado + ' | `' + (Convertir-Celda $error.Mensaje) + '` |')
         }
     } else {
         Agregar-Linea 'No se identificaron errores específicos en el programa principal.'

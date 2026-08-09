@@ -1,6 +1,6 @@
 @echo off
 chcp 65001 >nul
-title Generador de ficha de servicio APIGLM
+title Generador de Documentacion de Servicio APIGLM
 %SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0GenerarDocumento.ps1"
 if errorlevel 1 goto error
 echo.

@@ -1,7 +1,7 @@
 ﻿# AnalizarServicio.ps1
 # Modulo de analisis de servicios APIGLM desde el XPZ.
 # Se importa por dot-source desde GenerarDocumento.ps1.
-# Contiene las funciones de acceso al XPZ y el analisis de la ficha tecnica.
+# Contiene las funciones de acceso al XPZ y el analisis de la documentacion tecnica.
 $ErrorActionPreference = 'Stop'
 
 Add-Type -AssemblyName System.IO.Compression.FileSystem
@@ -134,10 +134,12 @@ function Obtener-DelegacionUnica {
     .SYNOPSIS
     Localiza la delegacion unica del wrapper al programa principal.
     .DESCRIPTION
-    Recorre el Source del wrapper buscando llamadas a procedimientos y confirma cual
-    tiene la firma parm(in:&APIGLMRequestIn, out:&APIGLMResponse). Devuelve el
-    fullyQualifiedName del programa principal. Si no hay delegacion unica, lanza un
-    error que detiene el analisis sin generar el documento.
+    Recorre el Source del wrapper buscando llamadas a procedimientos. Primero busca
+    la firma completa parm(in:&APIGLMRequestIn, out:&APIGLMResponse). Si no la
+    encuentra, busca procedimientos con out:&APIGLMResponse que no mencionen
+    APIGLMRequestIn en ninguna direccion (para servicios sin parametros de entrada).
+    Devuelve el fullyQualifiedName del programa principal. Si no hay delegacion
+    unica, lanza un error que detiene el analisis sin generar el documento.
     #>
     [CmdletBinding()]
     param(
@@ -150,6 +152,15 @@ function Obtener-DelegacionUnica {
     foreach ($objeto in $Xml.SelectNodes('//Object')) {
         $nombreCompleto = $objeto.GetAttribute('fullyQualifiedName')
         $nombre = $objeto.GetAttribute('name')
+        $tieneCodigo = $false
+        foreach ($part in $objeto.SelectNodes('Part')) {
+            $sourceNode = $part.SelectSingleNode('Source')
+            if ($sourceNode -and -not [string]::IsNullOrWhiteSpace($sourceNode.InnerText)) {
+                $tieneCodigo = $true
+                break
+            }
+        }
+        if (-not $tieneCodigo) { continue }
         if ($nombreCompleto) {
             if (-not $porNombreCompleto.ContainsKey($nombreCompleto)) {
                 $porNombreCompleto[$nombreCompleto] = $objeto
@@ -178,8 +189,10 @@ function Obtener-DelegacionUnica {
     }
 
     $palabrasReservadas = @('if', 'for', 'while', 'do', 'case', 'switch', 'catch', 'return', 'new', 'format')
+    $infraestructura = @('ProcesarRequest', 'GenerarAPIGLMResponse', 'GenerarHttpResponse', 'GenerarHttpError', 'PHacerRollback', 'PHacerCommit', 'InsLogEventos', 'InsLogs')
     $patronLlamada = [regex]::new('\b([A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*)\s*\(')
-    $delegaciones = New-Object System.Collections.Generic.List[string]
+    $delegacionesTier1 = New-Object System.Collections.Generic.List[string]
+    $delegacionesTier2 = New-Object System.Collections.Generic.List[string]
     $vistos = @{}
     foreach ($coincidencia in $patronLlamada.Matches($source)) {
         $llamada = $coincidencia.Groups[1].Value
@@ -190,19 +203,38 @@ function Obtener-DelegacionUnica {
             if ($porNombreCompleto.ContainsKey($llamada)) { $objeto = $porNombreCompleto[$llamada] }
         } else {
             if ($porNombre.ContainsKey($llamada) -and $porNombre[$llamada].Count -eq 1) { $objeto = $porNombre[$llamada][0] }
+            elseif ($porNombre.ContainsKey($llamada)) {
+                $moduloWrapper = $Wrapper.GetAttribute('fullyQualifiedName')
+                $ultimoPunto = $moduloWrapper.LastIndexOf('.')
+                if ($ultimoPunto -gt 0) { $moduloWrapper = $moduloWrapper.Substring(0, $ultimoPunto) }
+                $candidatos = @($porNombre[$llamada] | Where-Object { $_.GetAttribute('fullyQualifiedName') -like "$moduloWrapper.*" })
+                if ($candidatos.Count -eq 1) { $objeto = $candidatos[0] }
+            }
         }
         if (-not $objeto) { continue }
         $nombreCompletoObjeto = $objeto.GetAttribute('fullyQualifiedName')
         if ($vistos.ContainsKey($nombreCompletoObjeto)) { continue }
         $vistos[$nombreCompletoObjeto] = $true
+        $nombreObjeto = $objeto.GetAttribute('name')
+        $ultimoSegmentoObjeto = $nombreObjeto.Split('.')[-1]
+        if ($infraestructura -contains $ultimoSegmentoObjeto) { continue }
         $parm = Obtener-ReglaParm -Objeto $objeto
-        if ($parm -and ($parm -match '(?i)in\s*:\s*&\s*APIGLMRequestIn') -and ($parm -match '(?i)out\s*:\s*&\s*APIGLMResponse')) {
-            $delegaciones.Add($nombreCompletoObjeto)
+        $tieneOut = $parm -and ($parm -match '(?i)out\s*:\s*&\s*APIGLMResponse')
+        if (-not $tieneOut) { continue }
+        $tieneIn = $parm -match '(?i)in\s*:\s*&\s*APIGLMRequestIn'
+        $mencionaRequestIn = $parm -match '(?i)APIGLMRequestIn'
+        if ($tieneIn) {
+            $delegacionesTier1.Add($nombreCompletoObjeto)
+        } elseif (-not $mencionaRequestIn) {
+            $delegacionesTier2.Add($nombreCompletoObjeto)
         }
     }
 
+    if ($delegacionesTier1.Count -eq 1) { $delegaciones = $delegacionesTier1 }
+    elseif ($delegacionesTier2.Count -eq 1) { $delegaciones = $delegacionesTier2 }
+    else { $delegaciones = @() }
     if ($delegaciones.Count -eq 0) {
-        throw ('No se identifico una delegacion unica (in:&APIGLMRequestIn, out:&APIGLMResponse) en el wrapper ' + $Wrapper.GetAttribute('fullyQualifiedName') + '. No se genera el documento.')
+        throw ('No se identifico una delegacion unica (out:&APIGLMResponse) en el wrapper ' + $Wrapper.GetAttribute('fullyQualifiedName') + '. No se genera el documento.')
     }
     if ($delegaciones.Count -gt 1) {
         throw ('Se identificaron varias delegaciones candidatas en el wrapper ' + $Wrapper.GetAttribute('fullyQualifiedName') + ': ' + ($delegaciones -join ', ') + '. No se genera el documento.')
@@ -869,9 +901,8 @@ function Resolver-Errores {
     Extrae los errores HTTP explicitos del programa principal (analisisXPZ.md seccion 6).
     .DESCRIPTION
     La unica evidencia admitida es una llamada a GenerarAPIGLMResponse dentro del
-    programa principal con codigo distinto de 200. Registra codigo, condicion que
-    conduce a la llamada y mensaje literal o patron. Ignora comentarios y lineas
-    de otras partes.
+    programa principal con codigo distinto de 200. Registra codigo y mensaje literal
+    o patron. Ignora comentarios y lineas de otras partes.
     #>
     [CmdletBinding()]
     param(
@@ -879,67 +910,18 @@ function Resolver-Errores {
     )
 
     $errores = New-Object System.Collections.Generic.List[object]
-    $pila = New-Object System.Collections.Generic.List[object]
     $patronLlamada = [regex]::new('GenerarAPIGLMResponse\s*\(\s*(HttpCode\.\w+)\s*,\s*(.*?)\s*,\s*((?:!?''''|&[A-Za-z_][A-Za-z0-9_]*(?:\.ToJson\(\))?|format\s*\([^)]*\)))\s*\)')
 
     foreach ($linea in [regex]::Split($Source, "`r?`n")) {
         $linea = $linea.Trim()
         if ($linea -eq '' -or $linea.StartsWith('//')) { continue }
 
-        if ($linea -match '^else\s+if\s+(.+)$') {
-            if ($pila.Count -gt 0) {
-                $pila[$pila.Count - 1].Condicion = ($Matches[1].Trim() -replace '\s*//.*$', '')
-                $pila[$pila.Count - 1].Rama = 'then'
-            }
-            continue
-        }
-        if ($linea -match '^else') {
-            if ($pila.Count -gt 0) { $pila[$pila.Count - 1].Rama = 'else' }
-            continue
-        }
-        if ($linea -match '^endif') {
-            if ($pila.Count -gt 0) { $pila.RemoveAt($pila.Count - 1) }
-            continue
-        }
-        if ($linea -match '^do\s+case') {
-            $pila.Add([pscustomobject]@{ Condicion = ''; Rama = 'then'; Tipo = 'case' })
-            continue
-        }
-        if ($linea -match '^case\s+(.+)$') {
-            if ($pila.Count -gt 0 -and $pila[$pila.Count - 1].Tipo -eq 'case') {
-                $pila[$pila.Count - 1].Condicion = ($Matches[1].Trim() -replace '\s*//.*$', '')
-                $pila[$pila.Count - 1].Rama = 'then'
-            }
-            continue
-        }
-        if ($linea -match '^otherwise') {
-            if ($pila.Count -gt 0 -and $pila[$pila.Count - 1].Tipo -eq 'case') { $pila[$pila.Count - 1].Rama = 'else' }
-            continue
-        }
-        if ($linea -match '^endcase') {
-            if ($pila.Count -gt 0 -and $pila[$pila.Count - 1].Tipo -eq 'case') { $pila.RemoveAt($pila.Count - 1) }
-            continue
-        }
-        if ($linea -match '^if\s+(.+)$') {
-            $pila.Add([pscustomobject]@{ Condicion = ($Matches[1].Trim() -replace '\s*//.*$', ''); Rama = 'then'; Tipo = 'if' })
-            continue
-        }
-
         $coincidencia = $patronLlamada.Match($linea)
         if ($coincidencia.Success) {
             $codigo = Mapear-CodigoHttp -NombreCodigo $coincidencia.Groups[1].Value
-            $condicion = ''
-            if ($pila.Count -gt 0) {
-                $superior = $pila[$pila.Count - 1]
-                if ($superior.Rama -eq 'else') {
-                    if ($superior.Condicion -match '^not\s+(.+)$') { $condicion = 'se cumple: ' + $Matches[1].Trim() }
-                    else { $condicion = 'no se cumple: ' + $superior.Condicion }
-                }
-                else { $condicion = $superior.Condicion }
-            }
             $mensaje = Normalizar-Mensaje -MensajeRaw $coincidencia.Groups[2].Value.Trim()
             if ($codigo -eq 200) { continue }
-            $errores.Add([pscustomobject]@{ Codigo = $codigo; Condicion = $condicion; Mensaje = $mensaje })
+            $errores.Add([pscustomobject]@{ Codigo = $codigo; Mensaje = $mensaje })
         }
     }
 

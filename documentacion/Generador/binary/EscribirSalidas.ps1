@@ -1,5 +1,5 @@
 ﻿# EscribirSalidas.ps1
-# Modulo de escritura de las salidas del generador de fichas APIGLM.
+# Modulo de escritura de las salidas del generador de documentacion APIGLM.
 # Escribe el documento markdown en documentacion/servicios/<wrapper>.md (UTF-8
 # sin BOM y finales LF) sin sobrescribir, y el informe de revision en
 # documentacion/Generador/assets/apiglm-doc-review.json.
@@ -136,7 +136,7 @@ function Escribir-Salidas {
     Escribe el documento markdown y el informe de revision del servicio.
     .DESCRIPTION
     Escribe el documento en <directorioSalida>/<wrapper en minusculas>.md con
-    UTF-8 sin BOM y finales LF. Si el archivo ya existe, aborta sin sobrescribir.
+    UTF-8 sin BOM y finales LF. Si el archivo ya existe, lo regenera.
     Escribe ademas apiglm-doc-review.json con los juicios no automatizables.
     #>
     [CmdletBinding()]
@@ -154,9 +154,6 @@ function Escribir-Salidas {
     $nombreWrapper = $Ficha.FqWrapper.Substring($ultimoPunto + 1).ToLowerInvariant()
     $rutaDocumento = Join-Path $DirectorioSalida ($nombreWrapper + '.md')
 
-    if (Test-Path -LiteralPath $rutaDocumento) {
-        throw ('El documento ya existe y no se sobrescribe: ' + $rutaDocumento)
-    }
     if (-not (Test-Path -LiteralPath $DirectorioSalida)) {
         New-Item -ItemType Directory -Path $DirectorioSalida -Force | Out-Null
     }

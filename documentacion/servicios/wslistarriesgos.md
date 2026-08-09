@@ -66,9 +66,9 @@ Colección: `NO`.
 
 ## Errores específicos
 
-| Código HTTP | Condición | Respuesta o mensaje |
-|---:|---|---|
-| 500 |  | `Ocurrio un error al recuperar los riesgos` |
+| Código HTTP | Respuesta o mensaje |
+|---:|---|
+| 500 | `Ocurrio un error al recuperar los riesgos` |
 
 ```json
 {
