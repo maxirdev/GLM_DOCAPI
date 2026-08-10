@@ -11,7 +11,7 @@ echo.
 
 echo Seleccione el modo de generacion en el menu interactivo.
 echo.
-%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0documentacion\Generador\binary\GenerarDocumento.ps1"
+%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0binary\GenerarDocumento.ps1"
 if errorlevel 1 goto error
 echo.
 echo Documentacion generada correctamente.

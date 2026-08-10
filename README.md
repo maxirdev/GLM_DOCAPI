@@ -55,7 +55,7 @@ Además del inventario, existe un pipeline en PowerShell 5.1 (sin dependencias e
 | 5 — Grafo de dependencias | Dado un endpoint, recorre el XPZ y construye un grafo de dependencias (SDTs, procedimientos llamados) desde el wrapper hasta su entrada/salida. Guarda `grafo-<wrapper>.json` en `assets/` y lo imprime en consola. |
 | 6 — Detectar cambios y regenerar modificados | Compara los checksums por objeto del XPZ actual contra `controlVersiones.json`. Si detecta servicios modificados, los lista, pide confirmación y regenera solo esos con barra de progreso. |
 
-En modos 2 y 3 se muestra barra de progreso global (`N/M` y porcentaje). Los archivos existentes se sobrescriben sin preguntar. Si hay errores, se genera `logErrores.txt` en `assets/`.
+En modos 2 y 3 se muestra barra de progreso global (`N/M` y porcentaje). Los archivos existentes se sobrescriben sin preguntar. Cada ejecución genera un `review.json` histórico y, cuando hay incidencias, un `errores.txt`. Si existe al menos un error también genera `diagnostico-ia.json` con la ubicación, la sentencia y el stack trace necesarios para analizarlo.
 
 ### Pipeline del generador
 
@@ -65,8 +65,9 @@ Cada documento se produce en tres etapas, implementadas como módulos PowerShell
 |---|---|
 | `AnalizarServicio.ps1` | Abre el XPZ como ZIP de solo lectura, localiza el wrapper por `fullyQualifiedName`, confirma que sea Procedure con `IsMain=True` y `CALL_PROTOCOL=HTTP`, detecta el programa principal delegado, resuelve método HTTP (GET por `QueryParams`, POST por `FromJson`), tipifica campos, expande SDTs, determina obligatoriedad, resuelve salida y errores HTTP, y construye el endpoint publicado. |
 | `RedactarDocumento.ps1` | Toma la documentación técnica en memoria y renderiza el markdown según `templateDoc.md`, respetando bloques canónicos y reemplazando marcadores con datos o pendientes. |
-| `EscribirSalidas.ps1` | Escribe el `.md` en `servicios/<wrapper>.md` (UTF-8 sin BOM, LF), genera `apiglm-doc-review.json` con juicios no automatizables, y actualiza `controlVersiones.json` con la nueva versión del servicio. |
+| `EscribirSalidas.ps1` | Escribe el `.md` en `servicios/<wrapper>.md` (UTF-8 sin BOM, LF). |
 | `GenerarDocumento.ps1` | Orquestador: carga configuración, lee inventario, despliega menú, encadena los tres módulos anteriores. |
+| `DiagnosticoIA.ps1` | Captura excepciones del pipeline en un JSON estructurado para análisis técnico, con rutas relativas al repositorio. |
 
 ### Detección de cambios entre versiones del XPZ
 
@@ -112,17 +113,15 @@ El resultado es un JSON (`grafo-<wrapper>.json`) con nodos (objetos referenciado
 | `documentacion/Endpoints/web/APIServicios.html` | Visor estático generado (ignorado). |
 | `documentacion/Endpoints/web/style.css` | Estilos del visor (claro/oscuro). |
 | `documentacion/Endpoints/web/app.js` | Lógica del visor: renderizado de grilla, filtro en vivo, toggle de tema. |
-| `documentacion/Generador/binary/AnalizarServicio.ps1` | Módulo de análisis: abre XPZ, resuelve wrapper, método HTTP, entrada/salida, tipos, obligatoriedad, endpoint. |
-| `documentacion/Generador/binary/RedactarDocumento.ps1` | Módulo de redacción: documentación técnica → markdown según template. |
-| `documentacion/Generador/binary/EscribirSalidas.ps1` | Módulo de escritura: guarda `.md`, `apiglm-doc-review.json`, actualiza `controlVersiones.json`. |
-| `documentacion/Generador/binary/GenerarDocumento.ps1` | Orquestador del generador: menú interactivo de 6 opciones, pipeline análisis → redacción → escritura. |
-| `documentacion/Generador/binary/ObtenerDocumento.cmd` | Atajo para invocar el generador. |
-| `documentacion/Generador/binary/DetectarCambios.ps1` | Compara checksums del XPZ contra `controlVersiones.json`, lista servicios modificados y regenera bajo confirmación. |
-| `documentacion/Generador/binary/GenerarGrafoDependencias.ps1` | Construye grafo de dependencias (SDTs, procedimientos) desde un wrapper usando `parentGuid` y referencias en Source. |
-| `documentacion/Generador/assets/apiglm-doc-review.json` | Informe de revisión con juicios no automatizables (generado, ignorado). |
-| `documentacion/Generador/assets/controlVersiones.json` | Registro maestro de versiones por servicio: `fullyQualifiedName`, `endpoint`, `fecha`, `version`, `checksum`. Se actualiza en cada generación. |
-| `documentacion/Generador/assets/grafo-<wrapper>.json` | Grafo de dependencias de un servicio (generado, ignorado). |
-| `documentacion/Generador/assets/logErrores.txt` | Log de errores de generación en lote (generado si hay fallos, ignorado). |
+| `binary/AnalizarServicio.ps1` | Módulo de análisis: abre XPZ, resuelve wrapper, método HTTP, entrada/salida, tipos, obligatoriedad, endpoint. |
+| `binary/RedactarDocumento.ps1` | Módulo de redacción: documentación técnica → markdown según template. |
+| `binary/EscribirSalidas.ps1` | Módulo de escritura: guarda el `.md`. |
+| `binary/DiagnosticoIA.ps1` | Módulo común de diagnóstico de excepciones para el generador, el inventario y el visor. |
+| `binary/GenerarDocumento.ps1` | Orquestador del generador: menú interactivo de 6 opciones, pipeline análisis → redacción → escritura. |
+| `binary/ObtenerDocumento.cmd` | Atajo para invocar el generador. |
+| `Logs/yyyyMMdd-HHmmss-review.json` | Resultado agregado de todos los servicios seleccionados en una ejecución. |
+| `Logs/yyyyMMdd-HHmmss-errores.txt` | Errores, warnings y pendientes legibles, generado solo cuando hay incidencias. |
+| `Logs/yyyyMMdd-HHmmss-diagnostico-ia.json` | Excepciones estructuradas con fase, causa interna, ubicación, sentencia y stack trace; se genera solo cuando hay errores. |
 
 ## Especificaciones (specs)
 
@@ -203,7 +202,8 @@ El endpoint publicado se confirma durante el análisis individual. Se escribe en
 2. Ejecutar `GenerarDocumentacion.cmd` para regenerar el inventario desde el XPZ actual.
 3. Ejecutar `ObtenerDocumento.cmd` y elegir un modo en el menú interactivo (opciones 1, 2 o 3).
 4. El generador ejecuta automáticamente `analisisXPZ.md` → `reglasEditoriales.md` → `templateDoc.md` y escribe el `.md` en `servicios/`.
-5. Revisar `apiglm-doc-review.json` para los juicios no automatizables (obligatoriedad no resuelta, descripciones pendientes).
+5. Revisar `Logs/*-errores.txt` y `*-review.json` para los warnings, errores y pendientes de la ejecución.
+6. Ante un error, compartir el archivo `Logs/*-diagnostico-ia.json` más reciente para localizar rápidamente la fase y la línea que fallaron.
 
 Para regenerar servicios tras un cambio de XPZ, usar la opción 6 del menú: detecta automáticamente qué servicios cambiaron y los regenera.
 

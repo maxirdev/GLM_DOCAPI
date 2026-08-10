@@ -67,21 +67,26 @@ function Construir-Indices {
     .SYNOPSIS
     Construye los indices de objetos del XPZ para reutilizar en el analisis.
     .DESCRIPTION
-    Recorre todos los Object del XML una sola vez y construye tres indices:
+    Recorre todos los Object del XML una sola vez y construye cinco indices:
     PorFqn (unico por fullyQualifiedName, tipo Procedure preferido),
-    PorNombre (todos los objetos por nombre) y PorNombreCodigo (solo objetos
-    con Source no vacio, para delegaciones).
-    Devuelve un objeto con las tres propiedades.
+    PorNombre (todos los objetos por nombre), PorNombreCodigo (solo objetos
+    con Source no vacio, para delegaciones), PorNombreDominio (solo objetos de
+    tipo Domain, para resolver idBasedOn sin ambiguedad) y PorNombreAtributo
+    (Items, Variables y elementos Attribute con evidencia de tipo, para resolver
+    referencias de atributo). Devuelve un objeto con las cinco propiedades.
     #>
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)][System.Xml.XmlDocument]$Xml,
-        [Parameter(Mandatory = $false)][string]$ProcedureTypeGuid = '84a12160-f59b-4ad7-a683-ea4481ac23e9'
+        [Parameter(Mandatory = $false)][string]$ProcedureTypeGuid = '84a12160-f59b-4ad7-a683-ea4481ac23e9',
+        [Parameter(Mandatory = $false)][string]$GuidTipoDominio = '00972a17-9975-449e-aab1-d26165d51393'
     )
 
     $porFqn = @{}
     $porNombre = @{}
     $porNombreCodigo = @{}
+    $porNombreDominio = @{}
+    $porNombreAtributo = @{}
 
     foreach ($objeto in $Xml.SelectNodes('//Object')) {
         $fqn = $objeto.GetAttribute('fullyQualifiedName')
@@ -102,6 +107,13 @@ function Construir-Indices {
             }
             $porNombre[$nombre].Add($objeto)
 
+            if ($objeto.GetAttribute('type') -eq $GuidTipoDominio) {
+                if (-not $porNombreDominio.ContainsKey($nombre)) {
+                    $porNombreDominio[$nombre] = New-Object System.Collections.Generic.List[object]
+                }
+                $porNombreDominio[$nombre].Add($objeto)
+            }
+
             $tieneCodigo = $false
             foreach ($part in $objeto.SelectNodes('Part')) {
                 $sourceNode = $part.SelectSingleNode('Source')
@@ -119,10 +131,32 @@ function Construir-Indices {
         }
     }
 
+    foreach ($nodo in $Xml.SelectNodes('//Item | //Variable | //Attribute')) {
+        $nombre = $nodo.GetAttribute('name')
+        if (-not $nombre) { continue }
+        $esAtributo = ($nodo.LocalName -eq 'Attribute')
+        $tipoCustom = Obtener-Propiedad -Nodo $nodo -Nombre 'ATTCUSTOMTYPE'
+        $idBasedOn = Obtener-Propiedad -Nodo $nodo -Nombre 'idBasedOn'
+        $esAutorreferencia = ($idBasedOn -eq ('Attribute:' + $nombre))
+        if ($esAtributo) {
+            $longitudAtributo = Obtener-Propiedad -Nodo $nodo -Nombre 'Length'
+            $decimalesAtributo = Obtener-Propiedad -Nodo $nodo -Nombre 'Decimals'
+            if (-not $tipoCustom -and -not $idBasedOn -and -not $longitudAtributo -and -not $decimalesAtributo) { continue }
+        } elseif (-not $tipoCustom -and (-not $idBasedOn -or $esAutorreferencia)) {
+            continue
+        }
+        if (-not $porNombreAtributo.ContainsKey($nombre)) {
+            $porNombreAtributo[$nombre] = New-Object System.Collections.Generic.List[object]
+        }
+        $porNombreAtributo[$nombre].Add($nodo)
+    }
+
     return [pscustomobject]@{
         PorFqn = $porFqn
         PorNombre = $porNombre
         PorNombreCodigo = $porNombreCodigo
+        PorNombreDominio = $porNombreDominio
+        PorNombreAtributo = $porNombreAtributo
     }
 }
 
@@ -323,7 +357,7 @@ function Obtener-DelegacionUnica {
     elseif ($delegacionesTier2.Count -eq 1) { $delegaciones = $delegacionesTier2 }
     else { $delegaciones = @() }
     if ($delegaciones.Count -eq 0) {
-        throw ('No se identifico una delegacion unica (out:&APIGLMResponse) en el wrapper ' + $Wrapper.GetAttribute('fullyQualifiedName') + '. No se genera el documento.')
+        return $null
     }
     if ($delegaciones.Count -gt 1) {
         throw ('Se identificaron varias delegaciones candidatas en el wrapper ' + $Wrapper.GetAttribute('fullyQualifiedName') + ': ' + ($delegaciones -join ', ') + '. No se genera el documento.')
@@ -406,11 +440,12 @@ function Obtener-Sdt {
 function Obtener-HijosSdt {
     <#
     .SYNOPSIS
-    Devuelve los campos directos del item raiz de un SDT.
+    Devuelve los campos directos del item raiz de un SDT o de un Level inline.
     .DESCRIPTION
-    En el XML cada estructura se representa como un contenedor (atributo Name) que
-    contiene el item real (atributo name) y sus campos. Se excluye el item raiz,
-    identificado porque su nombre coincide con el nombre del SDT.
+    Para Object (SDT externo): navega Part -> contenedor -> hijos (Item y Level),
+    excluyendo el item raiz y los nodos LevelInfo/Properties.
+    Para Level (nivel inline): devuelve directamente los hijos Item y Level,
+    excluyendo LevelInfo y Properties.
     #>
     [CmdletBinding()]
     param(
@@ -418,15 +453,35 @@ function Obtener-HijosSdt {
     )
 
     $nombreSdt = $Sdt.GetAttribute('name')
-    foreach ($part in $Sdt.SelectNodes('Part')) {
-        $hijos = @($part.ChildNodes | Where-Object { $_.NodeType -eq 'Element' -and $_.Name -ne 'Properties' })
-        if ($hijos.Count -eq 0) { continue }
-        $contenedor = $hijos[0]
-        $campos = @($contenedor.ChildNodes | Where-Object {
-            $_.NodeType -eq 'Element' -and $_.GetAttribute('name') -and $_.GetAttribute('name') -ne $nombreSdt
-        })
-        if ($campos.Count -gt 0) { return @($campos) }
+    if (-not $nombreSdt) { $nombreSdt = $Sdt.GetAttribute('Name') }
+
+    $nodos = @()
+
+    if ($Sdt.LocalName -eq 'Object') {
+        foreach ($part in $Sdt.SelectNodes('Part')) {
+            $hijos = @($part.ChildNodes | Where-Object { $_.NodeType -eq 'Element' -and $_.LocalName -ne 'Properties' })
+            if ($hijos.Count -eq 0) { continue }
+            $contenedor = $hijos[0]
+            $campos = @($contenedor.ChildNodes | Where-Object {
+                $_.NodeType -eq 'Element' -and $_.LocalName -ne 'Properties' -and $_.LocalName -ne 'LevelInfo' -and (
+                    ($_.LocalName -eq 'Item' -and $_.GetAttribute('name') -and $_.GetAttribute('name') -ne $nombreSdt) -or
+                    ($_.LocalName -eq 'Level' -and $_.GetAttribute('Name') -and $_.GetAttribute('Name') -ne $nombreSdt)
+                )
+            })
+            if ($campos.Count -gt 0) { $nodos = @($campos) }
+        }
+        return $nodos
     }
+
+    if ($Sdt.LocalName -eq 'Level') {
+        return @($Sdt.ChildNodes | Where-Object {
+            $_.NodeType -eq 'Element' -and $_.LocalName -ne 'Properties' -and $_.LocalName -ne 'LevelInfo' -and (
+                ($_.LocalName -eq 'Item' -and $_.GetAttribute('name')) -or
+                ($_.LocalName -eq 'Level' -and $_.GetAttribute('Name'))
+            )
+        })
+    }
+
     return @()
 }
 
@@ -438,13 +493,21 @@ function Resolver-Metodo {
     POST cuando el programa principal deserializa APIGLMRequestIn.Body con FromJson;
     GET cuando usa QueryParams o no recibe parametros funcionales.
     Si combina ambas fuentes, lanza un error que detiene el analisis.
+    Reconoce llamadas FromJson multilinea.
     #>
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)][string]$Source
     )
 
-    $esPost = $Source -match '(?i)&[A-Za-z_][A-Za-z0-9_]*\s*\.FromJson\s*\(\s*&APIGLMRequestIn\.Body'
+    $esPost = $false
+    $spansFromJson = Obtener-SpansLlamada -Source $Source -PatronNombre '&[A-Za-z_][A-Za-z0-9_]*\s*\.FromJson'
+    foreach ($span in $spansFromJson) {
+        if ($span.Texto -match '(?i)&APIGLMRequestIn\.Body') {
+            $esPost = $true
+            break
+        }
+    }
     $esGet = $Source -match '(?i)&APIGLMRequestIn\.QueryParams'
     if ($esPost -and $esGet) {
         throw 'El programa principal combina QueryParams y FromJson sobre Body; el metodo no puede resolverse. No se genera el documento.'
@@ -495,6 +558,7 @@ function Resolver-EntradaPost {
     .DESCRIPTION
     Identifica la variable destino de FromJson sobre APIGLMRequestIn.Body, localiza su SDT
     completo en el XPZ y lo devuelve junto con sus campos directos y nombres JSON.
+    Reconoce llamadas FromJson multilinea.
     #>
     [CmdletBinding()]
     param(
@@ -504,12 +568,22 @@ function Resolver-EntradaPost {
         [Parameter(Mandatory = $false)]$Indice
     )
 
-    $patron = [regex]::new('&([A-Za-z_][A-Za-z0-9_]*)\s*\.FromJson\s*\(\s*&APIGLMRequestIn\.Body')
-    $coincidencia = $patron.Match($Source)
-    if (-not $coincidencia.Success) {
+    $spanBody = $null
+    $spansFromJson = Obtener-SpansLlamada -Source $Source -PatronNombre '&[A-Za-z_][A-Za-z0-9_]*\s*\.FromJson'
+    foreach ($span in $spansFromJson) {
+        if ($span.Texto -match '(?i)&APIGLMRequestIn\.Body') {
+            $spanBody = $span
+            break
+        }
+    }
+    if (-not $spanBody) {
         throw 'El programa principal no deserializa APIGLMRequestIn.Body mediante FromJson. No se genera el documento.'
     }
-    $variableSdt = $coincidencia.Groups[1].Value
+    $coincidenciaVariable = [regex]::Match($spanBody.Texto, '&([A-Za-z_][A-Za-z0-9_]*)\s*\.FromJson')
+    if (-not $coincidenciaVariable.Success) {
+        throw 'No se identifico la variable destino de FromJson en el programa principal.'
+    }
+    $variableSdt = $coincidenciaVariable.Groups[1].Value
     $variable = Obtener-Variable -ProgramaPrincipal $ProgramaPrincipal -Nombre $variableSdt
     if (-not $variable) {
         throw ('No se encontro la variable ' + $variableSdt + ' en el programa principal.')
@@ -539,6 +613,81 @@ function Resolver-EntradaPost {
     }
 }
 
+function Obtener-Referencia {
+    <#
+    .SYNOPSIS
+    Resuelve una referencia idBasedOn de dominio o atributo por nombre y modulo.
+    .DESCRIPTION
+    Separa el sufijo de modulo de la referencia ('Nombre, Modulo') y consulta el
+    indice de dominios o de atributos segun el tipo. Para atributos, prioriza el
+    elemento Attribute de nivel superior (la definicion canonica del atributo)
+    cuando existe unico; si hay varios candidatos, filtra por modulo y, en el caso
+    de atributos, por los que declaran ATTCUSTOMTYPE. Para dominios con homonimos
+    y referencia sin modulo, prioriza el dominio de la raiz (fullyQualifiedName
+    igual al nombre de la referencia); cuando se necesita un dominio de otro modulo,
+    la referencia lo califica.
+    Devuelve el nodo unico o $null cuando la referencia no puede resolverse
+    sin ambiguedad.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$Tipo,
+        [Parameter(Mandatory = $true)][string]$Nombre,
+        [Parameter(Mandatory = $false)][string]$Modulo = '',
+        [Parameter(Mandatory = $false)]$Indice,
+        [Parameter(Mandatory = $false)][System.Xml.XmlDocument]$Xml
+    )
+
+    $indiceNombres = $null
+    if ($Tipo -eq 'Domain' -and $Indice -and $Indice.PorNombreDominio) {
+        $indiceNombres = $Indice.PorNombreDominio
+    } elseif ($Tipo -eq 'Attribute' -and $Indice -and $Indice.PorNombreAtributo) {
+        $indiceNombres = $Indice.PorNombreAtributo
+    }
+    if (-not $indiceNombres -and $Xml) {
+        $indiceNombres = @{}
+        if ($Tipo -eq 'Domain') {
+            foreach ($objeto in $Xml.SelectNodes("//Object[@name='" + $Nombre + "']")) {
+                if ($objeto.GetAttribute('type') -ne '00972a17-9975-449e-aab1-d26165d51393') { continue }
+                if (-not $indiceNombres.ContainsKey($Nombre)) {
+                    $indiceNombres[$Nombre] = New-Object System.Collections.Generic.List[object]
+                }
+                $indiceNombres[$Nombre].Add($objeto)
+            }
+        }
+    }
+    if (-not $indiceNombres -or -not $indiceNombres.ContainsKey($Nombre)) { return $null }
+
+    $candidatos = [array]$indiceNombres[$Nombre]
+    if ($candidatos.Count -eq 0) { return $null }
+    if ($candidatos.Count -eq 1) { return $candidatos[0] }
+
+    if ($Tipo -eq 'Attribute') {
+        $atributos = @($candidatos | Where-Object { $_.LocalName -eq 'Attribute' })
+        if ($atributos.Count -eq 1) { return $atributos[0] }
+    }
+
+    if ($Tipo -eq 'Domain' -and -not $Modulo) {
+        $deRaiz = @($candidatos | Where-Object { $_.GetAttribute('fullyQualifiedName') -eq $Nombre })
+        if ($deRaiz.Count -eq 1) { return $deRaiz[0] }
+    }
+
+    if ($Modulo) {
+        $porModulo = @($candidatos | Where-Object {
+            $nombreCompleto = $_.GetAttribute('fullyQualifiedName')
+            $nombreCompleto -and ($nombreCompleto -eq $Modulo -or $nombreCompleto.StartsWith($Modulo + '.'))
+        })
+        if ($porModulo.Count -eq 1) { return $porModulo[0] }
+    }
+
+    if ($Tipo -eq 'Attribute') {
+        $conTipo = @($candidatos | Where-Object { Obtener-Propiedad -Nodo $_ -Nombre 'ATTCUSTOMTYPE' })
+        if ($conTipo.Count -eq 1) { return $conTipo[0] }
+    }
+
+    return $null
+}
+
 function Obtener-DatosTipo {
     <#
     .SYNOPSIS
@@ -546,7 +695,10 @@ function Obtener-DatosTipo {
     .DESCRIPTION
     Sigue la cadena ATTCUSTOMTYPE / idBasedOn (Domain o Attribute) hasta obtener
     el tipo base (bas:X), la estructura (sdt:Nombre) o marcar el tipo como no resuelto.
-    No inferir el tipo por el nombre del campo.
+    Cuando la cadena llega a un nodo hoja sin ATTCUSTOMTYPE ni idBasedOn, mapea el tipo
+    con los datos presentes en el XPZ: Decimals o Length/AttMaxLen confirman bas:Numeric
+    (default de GeneXus). Solo cuando el nodo no expone ningun dato de tipo (sin bas:,
+    sin idBasedOn, sin Length ni Decimals) queda marcado como no resuelto.
     #>
     [CmdletBinding()]
     param(
@@ -568,12 +720,13 @@ function Obtener-DatosTipo {
     $noResuelto = $false
 
     while ($nodoActual) {
-        $nombreCompleto = $nodoActual.GetAttribute('fullyQualifiedName')
-        if ($nombreCompleto -and $visitados.ContainsKey($nombreCompleto)) {
+        $identificador = $nodoActual.GetAttribute('guid')
+        if (-not $identificador) { $identificador = $nodoActual.GetAttribute('fullyQualifiedName') }
+        if ($identificador -and $visitados.ContainsKey($identificador)) {
             $noResuelto = $true
             break
         }
-        if ($nombreCompleto) { $visitados[$nombreCompleto] = $true }
+        if ($identificador) { $visitados[$identificador] = $true }
 
         if (-not $longitud) { $longitud = Obtener-Propiedad -Nodo $nodoActual -Nombre 'Length' }
         if (-not $longitudMaxima) { $longitudMaxima = Obtener-Propiedad -Nodo $nodoActual -Nombre 'AttMaxLen' }
@@ -603,45 +756,44 @@ function Obtener-DatosTipo {
             break
         }
 
-        $imagen = Obtener-Propiedad -Nodo $nodoActual -Nombre 'ATT_PICTURE'
-        if ($imagen) {
-            if ($imagen.Contains('@')) { $baseTipo = 'VarChar' } else { $baseTipo = 'Numeric' }
-            break
-        }
-
         $partida = [regex]::Match($idBasedOn, '^Domain:(.+)$')
         if ($partida.Success) {
-            $nombreDomain = $partida.Groups[1].Value.Trim()
-            $objetos = @()
-            if ($Indice -and $Indice.PorNombre -and $Indice.PorNombre.ContainsKey($nombreDomain)) {
-                $objetos = [array]$Indice.PorNombre[$nombreDomain]
-            } else {
-                $objetos = @($Xml.SelectNodes("//Object[@name='" + $nombreDomain + "']"))
+            $referencia = $partida.Groups[1].Value.Trim()
+            $nombreReferencia = $referencia
+            $moduloReferencia = ''
+            if ($referencia -match ',') {
+                $partes = $referencia.Split(',')
+                $nombreReferencia = $partes[0].Trim()
+                $moduloReferencia = $partes[1].Trim()
             }
-            if ($objetos.Count -eq 1) { $nodoActual = $objetos[0]; continue }
+            $dominio = Obtener-Referencia -Tipo 'Domain' -Nombre $nombreReferencia -Modulo $moduloReferencia -Indice $Indice -Xml $Xml
+            if ($dominio) { $nodoActual = $dominio; continue }
             $noResuelto = $true
             break
         }
 
         $partida = [regex]::Match($idBasedOn, '^Attribute:(.+)$')
         if ($partida.Success) {
-            $nombreAttribute = $partida.Groups[1].Value.Trim()
-            $objetos = @()
-            if ($Indice -and $Indice.PorNombre -and $Indice.PorNombre.ContainsKey($nombreAttribute)) {
-                $objetos = [array]$Indice.PorNombre[$nombreAttribute]
-            } else {
-                $objetos = @($Xml.SelectNodes("//Object[@name='" + $nombreAttribute + "']"))
+            $referencia = $partida.Groups[1].Value.Trim()
+            $nombreReferencia = $referencia
+            $moduloReferencia = ''
+            if ($referencia -match ',') {
+                $partes = $referencia.Split(',')
+                $nombreReferencia = $partes[0].Trim()
+                $moduloReferencia = $partes[1].Trim()
             }
-            if ($objetos.Count -eq 1) { $nodoActual = $objetos[0]; continue }
+            $atributo = Obtener-Referencia -Tipo 'Attribute' -Nombre $nombreReferencia -Modulo $moduloReferencia -Indice $Indice -Xml $Xml
+            if ($atributo) { $nodoActual = $atributo; continue }
             $noResuelto = $true
             break
         }
 
-        if ($longitud -or $longitudMaxima) {
+        $tieneDecimales = ([string]$decimales -ne '')
+        $tieneLongitud = (([string]$longitud -ne '') -or ([string]$longitudMaxima -ne ''))
+        if ($tieneDecimales -or $tieneLongitud) {
             $baseTipo = 'Numeric'
             break
         }
-
         $noResuelto = $true
         break
     }
@@ -664,7 +816,7 @@ function Convertir-TipoCanonico {
     .SYNOPSIS
     Convierte la informacion de tipo resuelta a la tipografia canonica (analisisXPZ.md seccion 3).
     .DESCRIPTION
-    Tipos permitidos: Integer, Decimal, String, Boolean, Date (YYYY-MM-DD), DateTime,
+    Tipos permitidos: Integer, Decimal, String, LongVarchar, Boolean, Date (YYYY-MM-DD), DateTime,
     Base64, Estructura <campo>, Coleccion de Estructura <campo> y Coleccion JSON.
     Devuelve una cadena vacia cuando el tipo no puede representarse de forma canonica.
     #>
@@ -695,11 +847,12 @@ function Convertir-TipoCanonico {
         if ($longitud) { return 'Integer (' + $longitud + ')' }
         return 'Integer'
     }
-    if ($base -in @('Character', 'VarChar', 'LongVarChar')) {
+    if ($base -in @('Character', 'VarChar')) {
         $dimensionConfirmada = ($longitud -and (-not $longitudMaxima -or $longitud -eq $longitudMaxima))
         if ($dimensionConfirmada) { return 'String (' + $longitud + ')' }
         return 'String'
     }
+    if ($base -eq 'LongVarChar') { return 'LongVarchar' }
     if ($base -eq 'Boolean') { return 'Boolean' }
     if ($base -eq 'Date') { return 'Date (YYYY-MM-DD)' }
     if ($base -eq 'DateTime') { return 'DateTime' }
@@ -759,11 +912,12 @@ function Obtener-DescripcionCampo {
 function Resolver-Campo {
     <#
     .SYNOPSIS
-    Resuelve un campo de entrada (item de SDT) con su tipo canonico y descripcion.
+    Resuelve un campo de entrada (item de SDT o Level inline) con su tipo canonico y descripcion.
     .DESCRIPTION
     Devuelve un objeto con Campo, Tipo, Descripcion y los datos de estructura para
-    la expansion posterior. Cuando el tipo no puede confirmarse, se registra el
-    pendiente con la evidencia necesaria.
+    la expansion posterior. Cuando el tipo no puede confirmarse, lanza un error que
+    detiene la generacion del documento con el servicio y el campo afectados.
+    Los nodos Level representan estructuras inline anidadas directamente en el SDT padre.
     #>
     [CmdletBinding()]
     param(
@@ -775,15 +929,38 @@ function Resolver-Campo {
     $nombre = $Item.GetAttribute('name')
     if (-not $nombre) { $nombre = $Item.GetAttribute('Name') }
 
+    if ($Item.LocalName -eq 'Level') {
+        $levelInfo = $Item.SelectSingleNode('LevelInfo')
+        $esColeccion = $false
+        if ($levelInfo) {
+            $esColeccion = (Obtener-Propiedad -Nodo $levelInfo -Nombre 'AttCollection') -eq 'True'
+        }
+        $tipo = if ($esColeccion) { 'Colección de Estructura ' + $nombre } else { 'Estructura ' + $nombre }
+        $descripcion = $Item.GetAttribute('description')
+        if (-not $descripcion -and $levelInfo) { $descripcion = $levelInfo.GetAttribute('description') }
+        if (-not $descripcion) { $descripcion = $nombre }
+        return [pscustomobject]@{
+            Campo = $nombre
+            Tipo = $tipo
+            Descripcion = $descripcion
+            EsEstructura = $true
+            EsColeccion = $esColeccion
+            NombreSdt = $nombre
+            ModuloSdt = ''
+            EsInline = $true
+            NodoInline = $Item
+        }
+    }
+
     $datosTipo = Obtener-DatosTipo -Xml $Xml -Nodo $Item -Indice $Indice
     $tipo = Convertir-TipoCanonico -DatosTipo $datosTipo -NombreCampo $nombre
     if (-not $tipo) {
-        $tipo = 'PENDIENTE DE CONFIRMACIÓN: tipo del campo ' + $nombre + '. Evidencia requerida: respuesta real sanitizada o configuración desplegada.'
+        $tipo = 'PENDIENTE DE CONFIRMACIÓN: tipo del campo ' + $nombre + '.'
     }
 
     $descripcion = Obtener-DescripcionCampo -Xml $Xml -Item $Item -Indice $Indice
     if (-not $descripcion) {
-        $descripcion = 'PENDIENTE DE CONFIRMACIÓN: descripcion del campo ' + $nombre + '. Evidencia requerida: respuesta real sanitizada o configuración desplegada.'
+        $descripcion = 'PENDIENTE DE CONFIRMACIÓN: descripcion del campo ' + $nombre + '.'
     }
 
     return [pscustomobject]@{
@@ -800,37 +977,87 @@ function Resolver-Campo {
 function Expandir-EstructuraSdt {
     <#
     .SYNOPSIS
-    Expande un SDT de entrada en filas y tablas independientes por ruta JSON.
+    Expande un SDT en filas y tablas independientes por ruta JSON.
     .DESCRIPTION
     Mantiene cada estructura en la tabla que la contiene y crea una tabla aparte por
-    cada ruta JSON. Devuelve las filas de la tabla actual y las tablas de estructuras.
+    cada ruta JSON, indicando si la estructura es coleccion. Recorre los SDT anidados
+    de forma recursiva registrando los GUID visitados para detectar ciclos, y reporta
+    los SDT referenciados que no existen. Devuelve las filas de la tabla actual, las
+    tablas de estructuras, las referencias faltantes y los ciclos detectados.
     #>
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)][System.Xml.XmlDocument]$Xml,
         [Parameter(Mandatory = $true)][System.Xml.XmlNode]$Sdt,
         [Parameter(Mandatory = $false)][string]$RutaJson = '',
-        [Parameter(Mandatory = $false)]$Indice
+        [Parameter(Mandatory = $false)]$Indice,
+        [Parameter(Mandatory = $false)][System.Collections.Generic.HashSet[string]]$Ancestros = $null
     )
+
+    if (-not $Ancestros) {
+        $Ancestros = New-Object 'System.Collections.Generic.HashSet[string]'
+        $guidRaiz = $Sdt.GetAttribute('guid')
+        if ($guidRaiz) { [void]$Ancestros.Add($guidRaiz) }
+    }
 
     $campos = Obtener-HijosSdt -Sdt $Sdt
     $filas = New-Object System.Collections.Generic.List[object]
     $tablas = New-Object System.Collections.Generic.List[object]
+    $faltantes = New-Object System.Collections.Generic.List[object]
+    $ciclos = New-Object System.Collections.Generic.List[object]
 
     foreach ($campo in $campos) {
         $resuelto = Resolver-Campo -Xml $Xml -Item $campo -Indice $Indice
-        $resuelto | Add-Member -MemberType NoteProperty -Name 'RutaJson' -Value $(if ($RutaJson) { $RutaJson + '.' + $resuelto.Campo } else { $resuelto.Campo })
+        $rutaCampo = $(if ($RutaJson) { $RutaJson + '.' + $resuelto.Campo } else { $resuelto.Campo })
+        $resuelto | Add-Member -MemberType NoteProperty -Name 'RutaJson' -Value $rutaCampo -Force
         $filas.Add($resuelto)
-        if ($resuelto.EsEstructura) {
+        if (-not $resuelto.EsEstructura) { continue }
+
+        if ($resuelto.EsInline) {
+            $nodoHijo = $resuelto.NodoInline
+            $guidHijo = $nodoHijo.GetAttribute('guid')
+            if ($guidHijo -and $Ancestros.Contains($guidHijo)) {
+                $ciclos.Add([pscustomobject]@{ NombreSdt = $resuelto.NombreSdt; RutaJson = $rutaCampo })
+                continue
+            }
+            $nuevosAncestros = New-Object 'System.Collections.Generic.HashSet[string]'
+            foreach ($ancestro in $Ancestros) { [void]$nuevosAncestros.Add($ancestro) }
+            if ($guidHijo) { [void]$nuevosAncestros.Add($guidHijo) }
+
+            $recursivo = Expandir-EstructuraSdt -Xml $Xml -Sdt $nodoHijo -RutaJson $rutaCampo -Indice $Indice -Ancestros $nuevosAncestros
+        } else {
             $sdtHijo = Obtener-Sdt -Xml $Xml -NombreSdt $resuelto.NombreSdt -Modulo $resuelto.ModuloSdt -Indice $Indice
-            if (-not $sdtHijo) { continue }
-            $recursivo = Expandir-EstructuraSdt -Xml $Xml -Sdt $sdtHijo -RutaJson $resuelto.RutaJson -Indice $Indice
-            $tablas.Add([pscustomobject]@{ Ruta = $resuelto.RutaJson; Filas = $recursivo.Filas })
-            foreach ($tabla in $recursivo.Tablas) { $tablas.Add($tabla) }
+            if (-not $sdtHijo) {
+                $faltantes.Add([pscustomobject]@{ NombreSdt = $resuelto.NombreSdt; RutaJson = $rutaCampo })
+                continue
+            }
+            $guidHijo = $sdtHijo.GetAttribute('guid')
+            if ($guidHijo -and $Ancestros.Contains($guidHijo)) {
+                $ciclos.Add([pscustomobject]@{ NombreSdt = $resuelto.NombreSdt; RutaJson = $rutaCampo })
+                continue
+            }
+            $nuevosAncestros = New-Object 'System.Collections.Generic.HashSet[string]'
+            foreach ($ancestro in $Ancestros) { [void]$nuevosAncestros.Add($ancestro) }
+            if ($guidHijo) { [void]$nuevosAncestros.Add($guidHijo) }
+
+            $recursivo = Expandir-EstructuraSdt -Xml $Xml -Sdt $sdtHijo -RutaJson $rutaCampo -Indice $Indice -Ancestros $nuevosAncestros
         }
+        $tablas.Add([pscustomobject]@{
+            Ruta = $rutaCampo
+            EsColeccion = $resuelto.EsColeccion
+            Filas = $recursivo.Filas
+        })
+        foreach ($tabla in $recursivo.Tablas) { $tablas.Add($tabla) }
+        foreach ($faltante in $recursivo.Faltantes) { $faltantes.Add($faltante) }
+        foreach ($ciclo in $recursivo.Ciclos) { $ciclos.Add($ciclo) }
     }
 
-    return [pscustomobject]@{ Filas = $filas.ToArray(); Tablas = $tablas.ToArray() }
+    return [pscustomobject]@{
+        Filas = $filas.ToArray()
+        Tablas = $tablas.ToArray()
+        Faltantes = $faltantes.ToArray()
+        Ciclos = $ciclos.ToArray()
+    }
 }
 
 function Resolver-EntradaGetTipos {
@@ -839,7 +1066,8 @@ function Resolver-EntradaGetTipos {
     Resuelve tipos y descripciones de las posiciones GET desde el Source y las variables.
     .DESCRIPTION
     Usa las conversiones explicitas del parser (.ToNumeric, .ToString) y, en su defecto,
-    la definicion de la variable. Conserva el orden y las posiciones exactas.
+    la definicion de la variable. Si el tipo no puede confirmarse, lanza un error que
+    detiene la generacion del documento. Conserva el orden y las posiciones exactas.
     #>
     [CmdletBinding()]
     param(
@@ -873,13 +1101,13 @@ function Resolver-EntradaGetTipos {
             $tipo = Convertir-TipoCanonico -DatosTipo $datos -NombreCampo $variable
         }
         if (-not $tipo) {
-            $tipo = 'PENDIENTE DE CONFIRMACIÓN: tipo del campo ' + $variable + '. Evidencia requerida: respuesta real sanitizada o configuración desplegada.'
+            $tipo = 'PENDIENTE DE CONFIRMACIÓN: tipo del campo ' + $variable + '.'
         }
 
         $descripcion = ''
         if ($variableNodo) { $descripcion = Obtener-DescripcionCampo -Xml $Xml -Item $variableNodo -Indice $Indice }
         if (-not $descripcion) {
-            $descripcion = 'PENDIENTE DE CONFIRMACIÓN: descripcion del campo ' + $variable + '. Evidencia requerida: respuesta real sanitizada o configuración desplegada.'
+            $descripcion = 'PENDIENTE DE CONFIRMACIÓN: descripcion del campo ' + $variable + '.'
         }
 
         $entrada.Add([pscustomobject]@{
@@ -892,28 +1120,90 @@ function Resolver-EntradaGetTipos {
     return $entrada.ToArray()
 }
 
+function Obtener-Iteradores {
+    <#
+    .SYNOPSIS
+    Detecta las variables iteradoras For...in del Source.
+    .DESCRIPTION
+    Busca patrones 'For &varIter in &ruta.Coleccion' y devuelve un diccionario
+    que mapea cada variable iteradora a la ruta de la coleccion sin el prefijo &.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$Source
+    )
+
+    $iteradores = @{}
+    $patron = [regex]::new('For\s+&([A-Za-z_][A-Za-z0-9_]*)\s+[Ii][Nn]\s+&([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)')
+    foreach ($coincidencia in $patron.Matches($Source)) {
+        $varIter = $coincidencia.Groups[1].Value
+        $rutaColeccion = $coincidencia.Groups[2].Value
+        $iteradores[$varIter] = $rutaColeccion
+    }
+    return $iteradores
+}
+
 function Resolver-Obligatorio {
     <#
     .SYNOPSIS
     Calcula la columna Obligatorio segun analisisXPZ.md seccion 4.
     .DESCRIPTION
-    El campo se marca SI cuando su nombre aparece referenciado en el Source del
-    programa principal (where, asignacion, parametro o condicion) o en una
-    comprobacion explicita de campo vacio o invalido; NO cuando no aparece.
+    El campo se marca SI cuando aparece referenciado en el Source del programa
+    principal (where, asignacion, parametro o condicion) o en una comprobacion
+    explicita de campo vacio o invalido; NO cuando no aparece. En POST la referencia
+    se limita al campo como miembro de la variable SDT deserializada
+    (VariableSdt.RutaJson), de modo que los campos homonimos no comparten
+    obligatoriedad accidentalmente. En GET se limita a la variable con prefijo &.
     Se limita al programa principal, sin recorrer procedimientos en cascada,
     y se ignoran las lineas de comentario.
     #>
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)][string]$Source,
-        [Parameter(Mandatory = $true)][string]$Campo
+        [Parameter(Mandatory = $true)][object]$Fila,
+        [Parameter(Mandatory = $false)][string]$VariableSdt = ''
     )
 
     $lineas = [regex]::Split($Source, "`r?`n")
     $codigo = @($lineas | Where-Object { $_ -notmatch '^\s*//' }) -join "`n"
-    if ($codigo -match ('\b' + [regex]::Escape($Campo) + '\b')) {
+
+    $patron = ''
+    if ($VariableSdt) {
+        $campo = $Fila.Campo
+        $ruta = $campo
+        if ($Fila.PSObject.Properties['RutaJson'] -and $Fila.RutaJson) { $ruta = $Fila.RutaJson }
+        $segmentos = @(($ruta -split '\.') | ForEach-Object { [regex]::Escape($_) })
+        $patron = '&\s*' + [regex]::Escape($VariableSdt) + '\s*\.\s*' + ($segmentos -join '\s*\.\s*') + '\b'
+    } else {
+        $patron = '&\s*' + [regex]::Escape($Fila.Campo) + '\b'
+    }
+
+    if ($codigo -match $patron) {
         return 'SI'
     }
+
+    if ($VariableSdt -and $Fila.PSObject.Properties['RutaJson'] -and $Fila.RutaJson) {
+        $iteradores = Obtener-Iteradores -Source $Source
+        $segmentosRuta = @($Fila.RutaJson -split '\.')
+        if ($segmentosRuta.Count -ge 2) {
+            $coleccionBuscar = $VariableSdt + '.' + $segmentosRuta[0]
+            $varIter = ''
+            foreach ($clave in $iteradores.Keys) {
+                if ($iteradores[$clave] -eq $coleccionBuscar) {
+                    $varIter = $clave
+                    break
+                }
+            }
+            if ($varIter) {
+                $restoSegmentos = $segmentosRuta[1..($segmentosRuta.Count - 1)] | ForEach-Object { [regex]::Escape($_) }
+                $patronIter = '&\s*' + [regex]::Escape($varIter) + '\s*\.\s*' + ($restoSegmentos -join '\s*\.\s*') + '\b'
+                if ($codigo -match $patronIter) {
+                    return 'SI'
+                }
+            }
+        }
+    }
+
     return 'NO'
 }
 
@@ -925,10 +1215,11 @@ function Agregar-Obligatorio {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)][string]$Source,
-        [Parameter(Mandatory = $true)][object]$Fila
+        [Parameter(Mandatory = $true)][object]$Fila,
+        [Parameter(Mandatory = $false)][string]$VariableSdt = ''
     )
 
-    $Fila | Add-Member -MemberType NoteProperty -Name 'Obligatorio' -Value (Resolver-Obligatorio -Source $Source -Campo $Fila.Campo) -Force
+    $Fila | Add-Member -MemberType NoteProperty -Name 'Obligatorio' -Value (Resolver-Obligatorio -Source $Source -Fila $Fila -VariableSdt $VariableSdt) -Force
 }
 
 function Aplicar-Obligatorio {
@@ -938,18 +1229,183 @@ function Aplicar-Obligatorio {
     .DESCRIPTION
     Recibe las filas de la tabla principal y las tablas de estructuras expandidas,
     o una lista de filas (caso GET), y agrega la propiedad Obligatorio a cada una.
+    En POST, VariableSdt restringe la referencia al miembro del SDT deserializado.
     #>
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)][string]$Source,
         [Parameter(Mandatory = $false)][object[]]$Filas = @(),
-        [Parameter(Mandatory = $false)][object[]]$Tablas = @()
+        [Parameter(Mandatory = $false)][object[]]$Tablas = @(),
+        [Parameter(Mandatory = $false)][string]$VariableSdt = ''
     )
 
-    foreach ($fila in $Filas) { Agregar-Obligatorio -Source $Source -Fila $fila }
+    foreach ($fila in $Filas) { Agregar-Obligatorio -Source $Source -Fila $fila -VariableSdt $VariableSdt }
     foreach ($tabla in $Tablas) {
-        foreach ($fila in $tabla.Filas) { Agregar-Obligatorio -Source $Source -Fila $fila }
+        foreach ($fila in $tabla.Filas) { Agregar-Obligatorio -Source $Source -Fila $fila -VariableSdt $VariableSdt }
     }
+}
+
+function Construir-MarcasEspeciales {
+    <#
+    .SYNOPSIS
+    Clasifica cada caracter del Source como codigo, literal o comentario.
+    .DESCRIPTION
+    Devuelve un arreglo de enteros con la misma longitud del Source: 0 para codigo,
+    1 para literal de cadena, 2 para comentario de linea, 3 para comentario de bloque
+    y 4 para seccion java. Permite balancear parentesis ignorando los que aparecen
+    dentro de literales o comentarios.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$Source
+    )
+
+    $longitud = $Source.Length
+    $marcas = New-Object 'int[]' $longitud
+    $posicion = 0
+    while ($posicion -lt $longitud) {
+        $caracter = $Source[$posicion]
+
+        if ($caracter -eq "'") {
+            $inicio = $posicion
+            $posicion++
+            while ($posicion -lt $longitud -and $Source[$posicion] -ne "'") { $posicion++ }
+            for ($indice = $inicio; $indice -le $posicion -and $indice -lt $longitud; $indice++) { $marcas[$indice] = 1 }
+            $posicion++
+            continue
+        }
+
+        if ($caracter -eq '/' -and $posicion + 1 -lt $longitud -and $Source[$posicion + 1] -eq '/') {
+            $inicio = $posicion
+            while ($posicion -lt $longitud -and $Source[$posicion] -ne "`n") { $posicion++ }
+            for ($indice = $inicio; $indice -lt $posicion; $indice++) { $marcas[$indice] = 2 }
+            continue
+        }
+
+        if ($caracter -eq '/' -and $posicion + 1 -lt $longitud -and $Source[$posicion + 1] -eq '*') {
+            $inicio = $posicion
+            $posicion += 2
+            while ($posicion + 1 -lt $longitud -and -not ($Source[$posicion] -eq '*' -and $Source[$posicion + 1] -eq '/')) { $posicion++ }
+            $posicion = [Math]::Min($posicion + 2, $longitud)
+            for ($indice = $inicio; $indice -lt $posicion; $indice++) { $marcas[$indice] = 3 }
+            continue
+        }
+
+        if ($caracter -eq '[' -and $posicion + 1 -lt $longitud -and $Source[$posicion + 1] -eq '!') {
+            $inicio = $posicion
+            $posicion += 2
+            while ($posicion + 1 -lt $longitud -and -not ($Source[$posicion] -eq '!' -and $Source[$posicion + 1] -eq ']')) { $posicion++ }
+            $posicion = [Math]::Min($posicion + 2, $longitud)
+            for ($indice = $inicio; $indice -lt $posicion; $indice++) { $marcas[$indice] = 4 }
+            continue
+        }
+
+        $posicion++
+    }
+
+    return $marcas
+}
+
+function Obtener-SpansLlamada {
+    <#
+    .SYNOPSIS
+    Extrae los spans completos de llamadas que abren parentesis en el Source.
+    .DESCRIPTION
+    Localiza cada aparicion del patron de nombre seguida de un parentesis de apertura
+    y devuelve el span completo desde el inicio del nombre hasta el parentesis de
+    cierre balanceado. Cruza lineas continuadas y omite los parentesis que aparecen
+    dentro de literales, comentarios o secciones java.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$Source,
+        [Parameter(Mandatory = $true)][string]$PatronNombre
+    )
+
+    $marcas = Construir-MarcasEspeciales -Source $Source
+    $resultados = New-Object System.Collections.Generic.List[object]
+    $patron = [regex]::new($PatronNombre + '\s*\(')
+
+    foreach ($coincidencia in $patron.Matches($Source)) {
+        if ($marcas[$coincidencia.Index] -ne 0) { continue }
+        $inicio = $coincidencia.Index
+        $posicion = $coincidencia.Index + $coincidencia.Length
+        $nivel = 1
+        $cierre = -1
+        while ($posicion -lt $Source.Length) {
+            if ($marcas[$posicion] -eq 0) {
+                $caracter = $Source[$posicion]
+                if ($caracter -eq '(') { $nivel++ }
+                elseif ($caracter -eq ')') {
+                    $nivel--
+                    if ($nivel -eq 0) { $cierre = $posicion; break }
+                }
+            }
+            $posicion++
+        }
+        if ($cierre -lt 0) { continue }
+        $resultados.Add([pscustomobject]@{
+            Inicio = $inicio
+            Fin = $cierre
+            Texto = $Source.Substring($inicio, $cierre - $inicio + 1)
+            LineaInicio = ([regex]::Matches($Source.Substring(0, $inicio), "`n")).Count + 1
+            LineaFin = ([regex]::Matches($Source.Substring(0, $cierre), "`n")).Count + 1
+        })
+    }
+
+    return $resultados.ToArray()
+}
+
+function Obtener-InteriorLlamada {
+    <#
+    .SYNOPSIS
+    Devuelve el texto entre los parentesis exteriores de un span de llamada.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][object]$Span
+    )
+
+    $texto = $Span.Texto
+    $apertura = $texto.IndexOf('(')
+    $cierre = $texto.LastIndexOf(')')
+    if ($apertura -lt 0 -or $cierre -le $apertura) { return '' }
+    return $texto.Substring($apertura + 1, $cierre - $apertura - 1)
+}
+
+function Obtener-ArgumentosLlamada {
+    <#
+    .SYNOPSIS
+    Divide el interior de una llamada en argumentos de nivel superior.
+    .DESCRIPTION
+    Recibe el texto entre los parentesis exteriores de una llamada y lo separa por
+    comas que estan fuera de literales y de parentesis anidados. Devuelve un arreglo
+    de cadenas con los argumentos en orden.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$Interior
+    )
+
+    $argumentos = New-Object System.Collections.Generic.List[string]
+    $marcas = Construir-MarcasEspeciales -Source $Interior
+    $nivel = 0
+    $inicio = 0
+    $posicion = 0
+    while ($posicion -lt $Interior.Length) {
+        if ($marcas[$posicion] -eq 0) {
+            $caracter = $Interior[$posicion]
+            if ($caracter -eq '(') { $nivel++ }
+            elseif ($caracter -eq ')') { $nivel-- }
+            elseif ($caracter -eq ',' -and $nivel -eq 0) {
+                $argumentos.Add($Interior.Substring($inicio, $posicion - $inicio).Trim())
+                $inicio = $posicion + 1
+            }
+        }
+        $posicion++
+    }
+    $argumentos.Add($Interior.Substring($inicio).Trim())
+    return $argumentos.ToArray()
 }
 
 function Mapear-CodigoHttp {
@@ -1012,7 +1468,7 @@ function Normalizar-Mensaje {
         foreach ($variable in $variables) { $plantilla += '<' + $variable + '>' }
         return $plantilla
     }
-    return 'PENDIENTE DE CONFIRMACIÓN: mensaje del error. Evidencia requerida: respuesta real sanitizada.'
+    return 'PENDIENTE DE CONFIRMACIÓN: mensaje del error.'
 }
 
 function Resolver-Errores {
@@ -1022,7 +1478,7 @@ function Resolver-Errores {
     .DESCRIPTION
     La unica evidencia admitida es una llamada a GenerarAPIGLMResponse dentro del
     programa principal con codigo distinto de 200. Registra codigo y mensaje literal
-    o patron. Ignora comentarios y lineas de otras partes.
+    o patron. Ignora comentarios y llamadas multilinea balanceadas por parentesis.
     #>
     [CmdletBinding()]
     param(
@@ -1030,19 +1486,17 @@ function Resolver-Errores {
     )
 
     $errores = New-Object System.Collections.Generic.List[object]
-    $patronLlamada = [regex]::new('GenerarAPIGLMResponse\s*\(\s*(HttpCode\.\w+)\s*,\s*(.*?)\s*,\s*((?:!?''''|&[A-Za-z_][A-Za-z0-9_]*(?:\.ToJson\(\))?|format\s*\([^)]*\)))\s*\)')
-
-    foreach ($linea in [regex]::Split($Source, "`r?`n")) {
-        $linea = $linea.Trim()
-        if ($linea -eq '' -or $linea.StartsWith('//')) { continue }
-
-        $coincidencia = $patronLlamada.Match($linea)
-        if ($coincidencia.Success) {
-            $codigo = Mapear-CodigoHttp -NombreCodigo $coincidencia.Groups[1].Value
-            $mensaje = Normalizar-Mensaje -MensajeRaw $coincidencia.Groups[2].Value.Trim()
-            if ($codigo -eq 200) { continue }
-            $errores.Add([pscustomobject]@{ Codigo = $codigo; Mensaje = $mensaje })
-        }
+    $spans = Obtener-SpansLlamada -Source $Source -PatronNombre 'GenerarAPIGLMResponse'
+    foreach ($span in $spans) {
+        $interior = Obtener-InteriorLlamada -Span $span
+        $argumentos = Obtener-ArgumentosLlamada -Interior $interior
+        if ($argumentos.Count -lt 3) { continue }
+        $nombreCodigo = $argumentos[0].Trim()
+        if ($nombreCodigo -notmatch '^HttpCode\.\w+$') { continue }
+        $codigo = Mapear-CodigoHttp -NombreCodigo $nombreCodigo
+        if ($codigo -eq 200) { continue }
+        $mensaje = Normalizar-Mensaje -MensajeRaw $argumentos[1].Trim()
+        $errores.Add([pscustomobject]@{ Codigo = $codigo; Mensaje = $mensaje })
     }
 
     return $errores.ToArray()
@@ -1055,7 +1509,8 @@ function Resolver-Salida {
     .DESCRIPTION
     Sigue la construccion de la respuesta exitosa en el programa principal,
     confirma el payload, si es una coleccion y los campos expuestos con sus
-    tipos y descripciones canonicos.
+    tipos y descripciones canonicos. Expande los SDT anidados de salida por
+    ruta JSON. Reconoce respuestas HttpCode.OK multilinea.
     #>
     [CmdletBinding()]
     param(
@@ -1065,22 +1520,49 @@ function Resolver-Salida {
         [Parameter(Mandatory = $false)]$Indice
     )
 
-    $patron = [regex]::new('GenerarAPIGLMResponse\s*\(\s*HttpCode\.OK\s*,\s*(.*?)\s*,\s*&([A-Za-z_][A-Za-z0-9_]*)\.ToJson\(\)')
-    $coincidencias = $patron.Matches($Source)
-    if ($coincidencias.Count -eq 0) {
+    $variable = $null
+    $spans = Obtener-SpansLlamada -Source $Source -PatronNombre 'GenerarAPIGLMResponse'
+    foreach ($span in $spans) {
+        $interior = Obtener-InteriorLlamada -Span $span
+        $argumentos = Obtener-ArgumentosLlamada -Interior $interior
+        if ($argumentos.Count -lt 3) { continue }
+        if ($argumentos[0].Trim() -notmatch '^HttpCode\.OK$') { continue }
+        $coincidenciaVariable = [regex]::Match($argumentos[2], '&([A-Za-z_][A-Za-z0-9_]*)\s*\.ToJson\s*\(\s*\)')
+        if (-not $coincidenciaVariable.Success) { continue }
+        $variable = $coincidenciaVariable.Groups[1].Value
+    }
+    if (-not $variable) {
+        if ($Source -match 'HttpResponse\.AddFile') {
+            return [pscustomobject]@{
+                SalidaColeccion = $false
+                Salida = @()
+                EstructurasSalida = @()
+                Faltantes = @()
+                Ciclos = @()
+                NoResuelta = $false
+                TipoContenidoSalida = 'application/octet-stream'
+            }
+        }
         return [pscustomobject]@{
             SalidaColeccion = $false
             Salida = @()
+            EstructurasSalida = @()
+            Faltantes = @()
+            Ciclos = @()
             NoResuelta = $true
+            TipoContenidoSalida = 'application/json'
         }
     }
-    $variable = $coincidencias[$coincidencias.Count - 1].Groups[2].Value
     $variableNodo = Obtener-Variable -ProgramaPrincipal $ProgramaPrincipal -Nombre $variable
     if (-not $variableNodo) {
         return [pscustomobject]@{
             SalidaColeccion = $false
             Salida = @()
+            EstructurasSalida = @()
+            Faltantes = @()
+            Ciclos = @()
             NoResuelta = $true
+            TipoContenidoSalida = 'application/json'
         }
     }
     $datosTipo = Obtener-DatosTipo -Xml $Xml -Nodo $variableNodo -Indice $Indice
@@ -1088,7 +1570,11 @@ function Resolver-Salida {
         return [pscustomobject]@{
             SalidaColeccion = $datosTipo.EsColeccion
             Salida = @()
+            EstructurasSalida = @()
+            Faltantes = @()
+            Ciclos = @()
             NoResuelta = $true
+            TipoContenidoSalida = 'application/json'
         }
     }
     $sdt = Obtener-Sdt -Xml $Xml -NombreSdt $datosTipo.NombreSdt -Modulo $datosTipo.ModuloSdt -Indice $Indice
@@ -1096,25 +1582,48 @@ function Resolver-Salida {
         return [pscustomobject]@{
             SalidaColeccion = $datosTipo.EsColeccion
             Salida = @()
+            EstructurasSalida = @()
+            Faltantes = @()
+            Ciclos = @()
             NoResuelta = $true
+            TipoContenidoSalida = 'application/json'
         }
     }
 
-    $campos = Obtener-HijosSdt -Sdt $sdt
+    $expandido = Expandir-EstructuraSdt -Xml $Xml -Sdt $sdt -Indice $Indice
     $salida = New-Object System.Collections.Generic.List[object]
-    foreach ($campo in $campos) {
-        $resuelto = Resolver-Campo -Xml $Xml -Item $campo -Indice $Indice
+    foreach ($fila in $expandido.Filas) {
         $salida.Add([pscustomobject]@{
-            Campo = $resuelto.Campo
-            Tipo = $resuelto.Tipo
-            Descripcion = $resuelto.Descripcion
+            Campo = $fila.Campo
+            Tipo = $fila.Tipo
+            Descripcion = $fila.Descripcion
+        })
+    }
+    $estructurasSalida = New-Object System.Collections.Generic.List[object]
+    foreach ($tabla in $expandido.Tablas) {
+        $hijos = New-Object System.Collections.Generic.List[object]
+        foreach ($fila in $tabla.Filas) {
+            $hijos.Add([pscustomobject]@{
+                Campo = $fila.Campo
+                Tipo = $fila.Tipo
+                Descripcion = $fila.Descripcion
+            })
+        }
+        $estructurasSalida.Add([pscustomobject]@{
+            RutaJson = $tabla.Ruta
+            EsColeccion = $tabla.EsColeccion
+            Hijos = $hijos.ToArray()
         })
     }
 
     return [pscustomobject]@{
         SalidaColeccion = $datosTipo.EsColeccion
         Salida = $salida.ToArray()
+        EstructurasSalida = $estructurasSalida.ToArray()
+        Faltantes = $expandido.Faltantes
+        Ciclos = $expandido.Ciclos
         NoResuelta = $false
+        TipoContenidoSalida = 'application/json'
     }
 }
 
@@ -1165,6 +1674,61 @@ function Obtener-Source {
     throw ('El programa principal ' + $ProgramaPrincipal.GetAttribute('fullyQualifiedName') + ' no tiene un Source no vacio.')
 }
 
+function Construir-MensajeEstructura {
+    <#
+    .SYNOPSIS
+    Construye el mensaje de error cuando falta un SDT o existe un ciclo.
+    .DESCRIPTION
+    Registra el nombre del SDT faltante y la ruta JSON de cada estructura con
+    problema, segun el contexto indicado (entrada o salida).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)][object[]]$Faltantes = @(),
+        [Parameter(Mandatory = $false)][object[]]$Ciclos = @(),
+        [Parameter(Mandatory = $false)][string]$Contexto = ''
+    )
+
+    $detalles = New-Object System.Collections.Generic.List[string]
+    foreach ($faltante in $Faltantes) {
+        $detalles.Add('SDT faltante ' + $faltante.NombreSdt + ' en la ruta ' + $faltante.RutaJson)
+    }
+    foreach ($ciclo in $Ciclos) {
+        $detalles.Add('ciclo SDT en la ruta ' + $ciclo.RutaJson)
+    }
+    if ($detalles.Count -eq 0) { return '' }
+    return 'No se puede confirmar la estructura ' + $Contexto + ': ' + ($detalles -join '; ') + '. No se genera el documento.'
+}
+
+function Confirmar-LogicaREST {
+    <#
+    .SYNOPSIS
+    Confirma que el Source del wrapper contiene logica REST reconocible.
+    .DESCRIPTION
+    Busca patrones de API REST en el Source: APIGLMRequestIn.QueryParams (GET),
+    APIGLMRequestIn.Body (POST), GenerarAPIGLMResponse o HttpResponse.AddFile.
+    Si el Source no contiene ninguno de estos patrones, el wrapper no responde
+    a una estructura API REST y debe marcarse como error.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$Source
+    )
+
+    $patronesREST = @(
+        'APIGLMRequestIn\.QueryParams',
+        'APIGLMRequestIn\.Body',
+        'GenerarAPIGLMResponse',
+        'HttpResponse\.AddFile',
+        'HttpResponse\.AddString',
+        'GenerarHttpResponse'
+    )
+    foreach ($patron in $patronesREST) {
+        if ($Source -match $patron) { return $true }
+    }
+    return $false
+}
+
 function Analizar-Servicio {
     <#
     .SYNOPSIS
@@ -1190,25 +1754,43 @@ function Analizar-Servicio {
     Confirmar-Wrapper -Objeto $wrapper | Out-Null
 
     $nombreMain = Obtener-DelegacionUnica -Xml $Xml -Wrapper $wrapper -Indice $Indice
-    $programaPrincipal = Obtener-Objeto -Xml $Xml -NombreCompleto $nombreMain -Indice $Indice
-    if (-not $programaPrincipal) {
-        throw ('No se encontro el programa principal ' + $nombreMain + ' en el XPZ.')
+    if ($nombreMain) {
+        $programaPrincipal = Obtener-Objeto -Xml $Xml -NombreCompleto $nombreMain -Indice $Indice
+        if (-not $programaPrincipal) {
+            throw ('No se encontro el programa principal ' + $nombreMain + ' en el XPZ.')
+        }
+    } else {
+        $wrapperSource = Obtener-Source -ProgramaPrincipal $wrapper
+        if (-not (Confirmar-LogicaREST -Source $wrapperSource)) {
+            throw ('El wrapper ' + $NombreCompletoWrapper + ' no tiene estructura API REST y no delega en un programa principal. No se genera el documento.')
+        }
+        $programaPrincipal = $wrapper
     }
     $source = Obtener-Source -ProgramaPrincipal $programaPrincipal
     $metodo = Resolver-Metodo -Source $source
 
+    $pendientes = New-Object System.Collections.Generic.List[string]
+
     $entrada = @()
     $estructuras = @()
+    $faltantesEntrada = @()
+    $ciclosEntrada = @()
     if ($metodo -eq 'POST') {
         $entradaPost = Resolver-EntradaPost -Xml $Xml -ProgramaPrincipal $programaPrincipal -Source $source -Indice $Indice
         $expandido = Expandir-EstructuraSdt -Xml $Xml -Sdt $entradaPost.Sdt -Indice $Indice
-        Aplicar-Obligatorio -Source $source -Filas @($expandido.Filas) -Tablas @($expandido.Tablas)
+        $faltantesEntrada = @($expandido.Faltantes)
+        $ciclosEntrada = @($expandido.Ciclos)
+        if ($faltantesEntrada.Count -gt 0 -or $ciclosEntrada.Count -gt 0) {
+            throw (Construir-MensajeEstructura -Faltantes $faltantesEntrada -Ciclos $ciclosEntrada -Contexto 'de la entrada')
+        }
+        Aplicar-Obligatorio -Source $source -Filas @($expandido.Filas) -Tablas @($expandido.Tablas) -VariableSdt $entradaPost.VariableSdt
         $entrada = @($expandido.Filas | ForEach-Object {
             [pscustomobject]@{ Orden = 0; Campo = $_.Campo; Tipo = $_.Tipo; Obligatorio = $_.Obligatorio; Descripcion = $_.Descripcion }
         })
         $estructuras = @($expandido.Tablas | ForEach-Object {
             [pscustomobject]@{
                 RutaJson = $_.Ruta
+                EsColeccion = $_.EsColeccion
                 Hijos = @($_.Filas | ForEach-Object {
                     [pscustomobject]@{ Campo = $_.Campo; Tipo = $_.Tipo; Obligatorio = $_.Obligatorio; Descripcion = $_.Descripcion }
                 })
@@ -1224,12 +1806,11 @@ function Analizar-Servicio {
     }
 
     $salida = Resolver-Salida -Xml $Xml -ProgramaPrincipal $programaPrincipal -Source $source -Indice $Indice
+    if (@($salida.Faltantes).Count -gt 0 -or @($salida.Ciclos).Count -gt 0) {
+        throw (Construir-MensajeEstructura -Faltantes @($salida.Faltantes) -Ciclos @($salida.Ciclos) -Contexto 'de la salida')
+    }
     if ($salida.NoResuelta) {
-        $salida.Salida = @([pscustomobject]@{
-            Campo = ''
-            Tipo = 'PENDIENTE DE CONFIRMACIÓN: salida del servicio. Evidencia requerida: respuesta real sanitizada o configuración desplegada.'
-            Descripcion = ''
-        })
+        $pendientes.Add('PENDIENTE DE CONFIRMACIÓN: estructura de salida.')
     }
     $errores = Resolver-Errores -Source $source
     $endpoint = Resolver-Endpoint -NombreCompletoWrapper $NombreCompletoWrapper -PackageName $PackageName
@@ -1237,18 +1818,23 @@ function Analizar-Servicio {
     $nombreFuncional = $wrapper.GetAttribute('description')
     $descripcion = $nombreFuncional
     if (-not $nombreFuncional) {
-        $pendienteDescripcion = 'PENDIENTE DE CONFIRMACIÓN: descripción funcional del servicio. Evidencia requerida: configuración desplegada o respuesta real sanitizada.'
+        $pendienteDescripcion = 'PENDIENTE DE CONFIRMACIÓN: descripción funcional del servicio.'
         $nombreFuncional = $pendienteDescripcion
         $descripcion = $pendienteDescripcion
     }
 
-    $pendientes = New-Object System.Collections.Generic.List[string]
     if ($endpoint -match '^PENDIENTE') { $pendientes.Add($endpoint) }
     foreach ($campo in $entrada) {
         if ($campo.Tipo -match '^PENDIENTE') { $pendientes.Add($campo.Tipo) }
         if ($campo.Descripcion -match '^PENDIENTE') { $pendientes.Add($campo.Descripcion) }
     }
     foreach ($estructura in $estructuras) {
+        foreach ($hijo in $estructura.Hijos) {
+            if ($hijo.Tipo -match '^PENDIENTE') { $pendientes.Add($hijo.Tipo) }
+            if ($hijo.Descripcion -match '^PENDIENTE') { $pendientes.Add($hijo.Descripcion) }
+        }
+    }
+    foreach ($estructura in $salida.EstructurasSalida) {
         foreach ($hijo in $estructura.Hijos) {
             if ($hijo.Tipo -match '^PENDIENTE') { $pendientes.Add($hijo.Tipo) }
             if ($hijo.Descripcion -match '^PENDIENTE') { $pendientes.Add($hijo.Descripcion) }
@@ -1261,16 +1847,20 @@ function Analizar-Servicio {
 
     return [pscustomobject]@{
         FqWrapper = $NombreCompletoWrapper
-        ProgramaPrincipal = $nombreMain
+        ProgramaPrincipal = $(if ($nombreMain) { $nombreMain } else { $NombreCompletoWrapper })
         MetodoHttp = $metodo
         EndpointPublicado = $endpoint
         NombreFuncional = $nombreFuncional
         Descripcion = $descripcion
         Entrada = $entrada
         Estructuras = $estructuras
+        EstructurasSalida = $salida.EstructurasSalida
         SalidaColeccion = $salida.SalidaColeccion
         Salida = $salida.Salida
+        TipoContenidoSalida = $salida.TipoContenidoSalida
         Errores = $errores
         Pendientes = $pendientes.ToArray()
+        FaltantesEntrada = $faltantesEntrada
+        CiclosEntrada = $ciclosEntrada
     }
 }

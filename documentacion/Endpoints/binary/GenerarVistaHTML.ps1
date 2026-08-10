@@ -11,13 +11,12 @@ $JsonPath = Join-Path $InputDirectory 'endpoints.json'
 $HtmlPath = Join-Path (Join-Path $PSScriptRoot '..\web') 'APIServicios.html'
 if ($OutputPath) { $HtmlPath = $OutputPath }
 if (-not $ConfigPath) { $ConfigPath = Join-Path $PSScriptRoot '..\..\..\configuracion.json' }
-. (Join-Path $PSScriptRoot '..\..\Generador\binary\CargarConfiguracion.ps1')
 $Cliente = ''
-try {
-    $configuracion = Cargar-Configuracion -ConfigPath $ConfigPath
-    $Cliente = $configuracion.Cliente
-} catch { }
 $StartTime = Get-Date
+$RaizRepositorio = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..\..'))
+$DirectorioLogs = Join-Path $PSScriptRoot '..\..\..\Logs'
+$faseActual = 'inicio'
+. (Join-Path $PSScriptRoot '..\..\..\binary\DiagnosticoIA.ps1')
 
 if (-not [Console]::IsOutputRedirected) {
     try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch { }
@@ -47,6 +46,14 @@ try {
     Write-Host ("  " + (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')) -ForegroundColor Cyan
     Write-Host '==============================================================' -ForegroundColor Cyan
 
+    $faseActual = 'carga-configuracion'
+    . (Join-Path $PSScriptRoot '..\..\..\binary\CargarConfiguracion.ps1')
+    try {
+        $configuracion = Cargar-Configuracion -ConfigPath $ConfigPath
+        $Cliente = $configuracion.Cliente
+    } catch { }
+
+    $faseActual = 'lectura-inventario'
     Write-Step 1 'Leyendo endpoints.json...'
     if (-not (Test-Path -LiteralPath $JsonPath)) {
         throw ("No se encontró el inventario en: " + $JsonPath + ". Ejecute primero GenerarListaEndpoints.ps1 o generelo desde el XPZ.")
@@ -58,6 +65,7 @@ try {
     $jsonModified = $jsonModified -replace "`r`n", "`n"
     Write-Host ("  Leídos " + $jsonText.Length + " caracteres desde " + [System.IO.Path]::GetFileName($JsonPath)) -ForegroundColor DarkGray
 
+    $faseActual = 'generacion-html'
     Write-Step 2 'Incrustando los datos en APIServicios.html...'
     $embedded = $jsonModified -replace '</script', '<\/script'
     $sb = New-Object System.Text.StringBuilder
@@ -108,6 +116,7 @@ try {
     [System.IO.File]::WriteAllText($HtmlPath, $html, (New-Object System.Text.UTF8Encoding($false)))
     Write-Host ("  Escritos " + $html.Length + " caracteres en " + $HtmlPath) -ForegroundColor DarkGray
 
+    $faseActual = 'verificacion-html'
     Write-Step 3 'Verificación final'
     if (-not (Test-Path -LiteralPath $HtmlPath)) {
         throw ("No se pudo escribir el archivo: " + $HtmlPath)
@@ -121,8 +130,15 @@ try {
     Write-Host ''
     Write-Host ('Abra APIServicios.html con doble clic para visualizar el listado.') -ForegroundColor DarkGray
 } catch {
+    $diagnosticoIA = New-DiagnosticoIAError -ErrorRecord $_ -Componente 'GenerarVistaHTML' -Fase $faseActual -RaizRepositorio $RaizRepositorio
     Write-Host ''
     Write-Host ("ERROR: " + $_.Exception.Message) -ForegroundColor Red
+    try {
+        $rutaDiagnosticoIA = Write-DiagnosticoIA -Errores @($diagnosticoIA) -Pipeline 'visor-endpoints' -Inicio $StartTime -DirectorioLogs $DirectorioLogs -RaizRepositorio $RaizRepositorio
+        Write-Host ("Diagnostico IA: " + $rutaDiagnosticoIA) -ForegroundColor DarkGray
+    } catch {
+        Write-Host ("No se pudo escribir el diagnostico IA: " + $_.Exception.Message) -ForegroundColor DarkGray
+    }
     exit 1
 } finally {
     Write-Host ''

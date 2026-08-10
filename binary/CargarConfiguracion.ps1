@@ -19,7 +19,7 @@ function Cargar-Configuracion {
         [Parameter(Mandatory = $false)][string]$XpzPath
     )
 
-    $raizRepositorio = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..')).Path
+    $raizRepositorio = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 
     if (-not $ConfigPath) {
         $ConfigPath = Join-Path $raizRepositorio 'configuracion.json'
