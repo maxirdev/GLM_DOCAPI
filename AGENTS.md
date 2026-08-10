@@ -11,7 +11,14 @@ Repositorio de documentación (sin código, sin build, sin tests). Produce docum
 
 Ambas carpetas están en `.gitignore`: son referencias locales, no parte del producto.
 
-## Estructura de trabajo (`documentacion/`, commiteada)
+## Estructura de trabajo
+
+En la raíz del repo:
+
+- `binary/` — scripts del generador: `GenerarDocumento.ps1` (orquestador), `AnalizarServicio.ps1`, `RedactarDocumento.ps1`, `EscribirSalidas.ps1`, `CargarConfiguracion.ps1`, `DiagnosticoIA.ps1` y `ObtenerDocumento.cmd`.
+- `Logs/*-diagnostico-ia.json` — diagnóstico estructurado de excepciones con fase, ruta relativa, sentencia y stack trace. Se genera solo ante errores; revisar primero el más reciente al investigar fallos del pipeline.
+
+En `documentacion/` (commiteada):
 
 - `analisisXPZ.md` — fuente normativa #1: cómo construir la documentación técnica desde el XPZ.
 - `reglasEditoriales.md` — fuente normativa #2: presentación del documento final.
@@ -33,7 +40,8 @@ Orden obligatorio por servicio: analisisXPZ → reglasEditoriales → templateDo
 - Inventario: solo llamadas `WS...` activas en `APIGLMMain` (una línea que comienza con `//` es una llamada inactiva). Confirmar que el objeto sea Procedure, `IsMain=True` y `CALL_PROTOCOL=HTTP`. Conservar el `fullyQualifiedName` literal, p. ej. `APIGLM.Cotizacion.WSObtenerDatosProductor`.
 - Endpoint publicado ≠ nombre GeneXus: se documenta el nombre completo en minúsculas (package + módulo + procedimiento) y, para procedures HTTP `Main`, se antepone `a` (`wslistarsolicitudes` → `...apiglm...awslistarsolicitudes`). El `packagename` es una constante única por XPZ definida en `configuracion.json` (raíz del repo), por ejemplo `ar.com.glmsa.seguros.comercial.` para LPS_COM.xpz o `glmsuit.comercial.` para Trunk.xpz; no se confirma desde el XPZ. No construir host ni base URL.
 - Entrada: solo dos patrones — GET por posiciones de `APIGLMRequestIn.QueryParams`; POST por `FromJson` desde `APIGLMRequestIn.Body`.
-- Tipos canónicos únicos: `Integer (<longitud>)`, `Decimal (<longitud>, <decimales>)`, `String (<longitud>)`, `Boolean`, `Date (YYYY-MM-DD)`, `DateTime`, `Base64`, `Estructura <attr>`, `Colección de Estructura <attr>`, `Colección JSON`. No usar `Texto`, `Numérico`, `Objeto JSON`, etc.
+- Tipos canónicos únicos: `Integer (<longitud>)`, `Decimal (<longitud>, <decimales>)`, `String (<longitud>)`, `LongVarchar`, `Boolean`, `Date (YYYY-MM-DD)`, `DateTime`, `Base64`, `Estructura <attr>`, `Colección de Estructura <attr>`, `Colección JSON`. No usar `Texto`, `Numérico`, `Objeto JSON`, etc.
+- Resolución de dominios homónimos: una referencia `Domain:Nombre` sin módulo se resuelve al dominio de la raíz (`fullyQualifiedName` igual al nombre); si se necesita otro módulo, la referencia lo califica (`Domain:Nombre, Modulo`), y esa forma prevalece.
 - `Obligatorio` = `SI` solo con evidencia confirmada; al confirmar un campo primitivo, dejar de recorrer. Sin evidencia = `NO`.
 - Errores HTTP: únicamente llamadas a `GenerarAPIGLMResponse` con código ≠ 200 dentro del programa principal. `HttpCode.BadRequest`→400, `NotFound`→404, `MethodNotAllowed`→405. Excluir errores funcionales bajo HTTP 200.
 - Ante evidencia insuficiente o contradictoria, **detener y registrar** `PENDIENTE DE CONFIRMACIÓN: <dato faltante>. Evidencia requerida: <fuente necesaria>.` Nunca completar por analogía ni suposiciones.

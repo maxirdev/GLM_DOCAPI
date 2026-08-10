@@ -12,8 +12,12 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $StartTime = Get-Date
-if (-not $ConfigPath) { $ConfigPath = Join-Path $PSScriptRoot '..\..\..\configuracion.json' }
-. (Join-Path $PSScriptRoot 'CargarConfiguracion.ps1')
+if (-not $ConfigPath) { $ConfigPath = Join-Path $PSScriptRoot '..\configuracion.json' }
+$RaizRepositorio = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
+$DirectorioLogs = Join-Path $PSScriptRoot '..\Logs'
+$diagnosticosIA = New-Object System.Collections.Generic.List[object]
+$faseActual = 'inicio'
+. (Join-Path $PSScriptRoot 'DiagnosticoIA.ps1')
 
 if (-not [Console]::IsOutputRedirected) {
     try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch { }
@@ -35,11 +39,12 @@ function Procesar-Servicio {
         [Parameter(Mandatory = $true)][System.Xml.XmlDocument]$Xml,
         [Parameter(Mandatory = $true)]$Indice,
         [Parameter(Mandatory = $true)][string]$DirectorioSalida,
-        [Parameter(Mandatory = $true)][string]$RutaInformeRevision,
-        [Parameter(Mandatory = $true)]$ListaErrores,
+        [Parameter(Mandatory = $true)]$ListaDiagnosticos,
+        [Parameter(Mandatory = $true)][string]$RaizRepositorio,
         [switch]$Silencioso
     )
 
+    $faseServicio = 'analisis'
     try {
         if (-not $Silencioso) { Write-Step 3 'Analizando el servicio desde el XPZ...' }
         $documentacion = Analizar-Servicio -Xml $Xml -NombreCompletoWrapper $Endpoint.proceso -PackageName $PackageName -Indice $Indice
@@ -49,12 +54,14 @@ function Procesar-Servicio {
             Write-Host ("  Endpoint: " + $documentacion.EndpointPublicado) -ForegroundColor DarkGray
         }
 
+        $faseServicio = 'redaccion'
         if (-not $Silencioso) { Write-Step 4 'Redactando el documento segun la plantilla...' }
         $documento = Redactar-Documento -Documentacion $documentacion
         if (-not $Silencioso) { Write-Host ("  Documento redactado (" + $documento.Length + " caracteres)") -ForegroundColor DarkGray }
 
+        $faseServicio = 'escritura'
         if (-not $Silencioso) { Write-Step 5 'Escribiendo las salidas...' }
-        $rutaDocumento = Escribir-Salidas -Documentacion $documentacion -Documento $documento -DirectorioSalida $DirectorioSalida -RutaInformeRevision $RutaInformeRevision
+        $rutaDocumento = Escribir-Salidas -Documentacion $documentacion -Documento $documento -DirectorioSalida $DirectorioSalida
 
         $tienePendientes = @($documentacion.Pendientes).Count -gt 0
         $estado = 'OK'
@@ -68,10 +75,7 @@ function Procesar-Servicio {
             Mensajes = @()
         }
     } catch {
-        $ListaErrores.Add([pscustomobject]@{
-            servicio = $Endpoint.proceso
-            error = $_.Exception.Message
-        })
+        $ListaDiagnosticos.Add((New-DiagnosticoIAError -ErrorRecord $_ -Componente 'GenerarDocumento' -Fase $faseServicio -Servicio $Endpoint.proceso -RaizRepositorio $RaizRepositorio))
         return [pscustomobject]@{
             FullyQualifiedName = $Endpoint.proceso
             Estado = 'ERROR'
@@ -82,9 +86,8 @@ function Procesar-Servicio {
     }
 }
 
-$RutaInventario = Join-Path $PSScriptRoot '..\..\Endpoints\assets\endpoints.json'
-$DirectorioSalida = Join-Path $PSScriptRoot '..\..\servicios'
-$RutaInformeRevision = Join-Path $PSScriptRoot '..\assets\apiglm-doc-review.json'
+$RutaInventario = Join-Path $PSScriptRoot '..\documentacion\Endpoints\assets\endpoints.json'
+$DirectorioSalida = Join-Path $PSScriptRoot '..\documentacion\servicios'
 
 try {
     Write-Host '==============================================================' -ForegroundColor Cyan
@@ -92,10 +95,13 @@ try {
     Write-Host ("  " + (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')) -ForegroundColor Cyan
     Write-Host '==============================================================' -ForegroundColor Cyan
 
+    $faseActual = 'carga-modulos'
+    . (Join-Path $PSScriptRoot 'CargarConfiguracion.ps1')
     . (Join-Path $PSScriptRoot 'AnalizarServicio.ps1')
     . (Join-Path $PSScriptRoot 'RedactarDocumento.ps1')
     . (Join-Path $PSScriptRoot 'EscribirSalidas.ps1')
 
+    $faseActual = 'configuracion-inventario'
     Write-Step 1 'Cargando configuracion e inventario...'
     $cargarConfiguracionParametros = @{ ConfigPath = $ConfigPath }
     if ($XpzPath) { $cargarConfiguracionParametros.XpzPath = $XpzPath }
@@ -115,11 +121,13 @@ try {
     }
     Write-Host ("  Inventario: " + $endpoints.Count + " endpoints") -ForegroundColor DarkGray
 
+    $faseActual = 'apertura-xpz'
     Write-Step 2 'Abriendo XPZ y construyendo indices...'
     $aperturaXpz = Abrir-XPZ -RutaXpz $configuracion.XpzPath
     $indices = Construir-Indices -Xml $aperturaXpz.Xml
     Write-Host ("  XPZ abierto y " + $aperturaXpz.Xml.SelectNodes('//Object').Count + " objetos indexados") -ForegroundColor DarkGray
 
+    $faseActual = 'seleccion-servicios'
     Write-Host ''
     Write-Host '  Modos de generacion:' -ForegroundColor Cyan
     Write-Host '    1. Servicio particular (seleccion individual)'
@@ -204,21 +212,22 @@ try {
     $okCount = 0
     $warningCount = 0
     $errorCount = 0
-    $errores = New-Object System.Collections.Generic.List[object]
     $resultados = New-Object System.Collections.Generic.List[object]
     $totalServicios = $serviciosParaProcesar.Count
     $contador = 0
 
     foreach ($servicio in $serviciosParaProcesar) {
+        $faseActual = 'procesamiento-servicios'
         $contador++
         if ($modoSeleccionado -ne 1) {
             $progreso = [math]::Floor(($contador / $totalServicios) * 100)
             Write-Progress -Activity 'Generando documentacion de servicio' -PercentComplete $progreso -Status "Procesando $contador de $totalServicios"
         }
-        $resultado = Procesar-Servicio -Endpoint $servicio -PackageName $configuracion.PackageName -Xml $aperturaXpz.Xml -Indice $indices -DirectorioSalida $DirectorioSalida -RutaInformeRevision $RutaInformeRevision -ListaErrores $errores -Silencioso:($modoSeleccionado -ne 1)
+        $resultado = Procesar-Servicio -Endpoint $servicio -PackageName $configuracion.PackageName -Xml $aperturaXpz.Xml -Indice $indices -DirectorioSalida $DirectorioSalida -ListaDiagnosticos $diagnosticosIA -RaizRepositorio $RaizRepositorio -Silencioso:($modoSeleccionado -ne 1)
         $resultados.Add($resultado)
         if ($resultado.Estado -eq 'OK') {
             $okCount++
+            Write-Host ("  [OK] " + $servicio.proceso + " — Documentacion generada correctamente.") -ForegroundColor Green
         } elseif ($resultado.Estado -eq 'WARNING') {
             $warningCount++
             Write-Host ("  [WARNING] " + $servicio.proceso + " — PENDIENTES: " + (@($resultado.Pendientes).Count)) -ForegroundColor Yellow
@@ -255,9 +264,9 @@ try {
     Write-Host ''
     Write-Host ("Completado: $okCount OK, $warningCount WARNING, $errorCount ERROR.") -ForegroundColor Cyan
 
-    $directorioLogs = Join-Path $PSScriptRoot '..\Logs'
-    if (-not (Test-Path -LiteralPath $directorioLogs)) {
-        New-Item -ItemType Directory -Path $directorioLogs -Force | Out-Null
+    $faseActual = 'escritura-logs'
+    if (-not (Test-Path -LiteralPath $DirectorioLogs)) {
+        New-Item -ItemType Directory -Path $DirectorioLogs -Force | Out-Null
     }
 
     $finEjecucion = Get-Date
@@ -283,7 +292,7 @@ try {
             }
         })
     }
-    $rutaRevision = Join-Path $directorioLogs ($marcaTemporal + '-review.json')
+    $rutaRevision = Join-Path $DirectorioLogs ($marcaTemporal + '-review.json')
     $jsonRevision = $revision | ConvertTo-Json -Depth 5
     $jsonRevision = $jsonRevision -replace "`r`n", "`n"
     [System.IO.File]::WriteAllText($rutaRevision, $jsonRevision, (New-Object System.Text.UTF8Encoding($false)))
@@ -304,11 +313,16 @@ try {
             }
         }
         if ($lineasTxt.Count -gt 0) {
-            $rutaErrores = Join-Path $directorioLogs ($marcaTemporal + '-errores.txt')
+            $rutaErrores = Join-Path $DirectorioLogs ($marcaTemporal + '-errores.txt')
             $contenidoTxt = ($lineasTxt -join "`n") + "`n"
             [System.IO.File]::WriteAllText($rutaErrores, $contenidoTxt, (New-Object System.Text.UTF8Encoding($false)))
             Write-Host ("Incidencias: " + $rutaErrores) -ForegroundColor DarkGray
         }
+    }
+
+    if ($diagnosticosIA.Count -gt 0) {
+        $rutaDiagnosticoIA = Write-DiagnosticoIA -Errores $diagnosticosIA -Pipeline 'generador-servicios' -Inicio $StartTime -DirectorioLogs $DirectorioLogs -RaizRepositorio $RaizRepositorio -MarcaTemporal $marcaTemporal
+        Write-Host ("Diagnostico IA: " + $rutaDiagnosticoIA) -ForegroundColor DarkGray
     }
 
     if ($errorCount -gt 0) {
@@ -319,8 +333,15 @@ try {
         $script:ExitCode = 0
     }
 } catch {
+    $diagnosticosIA.Add((New-DiagnosticoIAError -ErrorRecord $_ -Componente 'GenerarDocumento' -Fase $faseActual -RaizRepositorio $RaizRepositorio))
     Write-Host ''
     Write-Host ("ERROR: " + $_.Exception.Message) -ForegroundColor Red
+    try {
+        $rutaDiagnosticoIA = Write-DiagnosticoIA -Errores $diagnosticosIA -Pipeline 'generador-servicios' -Inicio $StartTime -DirectorioLogs $DirectorioLogs -RaizRepositorio $RaizRepositorio -MarcaTemporal $marcaTemporal
+        Write-Host ("Diagnostico IA: " + $rutaDiagnosticoIA) -ForegroundColor DarkGray
+    } catch {
+        Write-Host ("No se pudo escribir el diagnostico IA: " + $_.Exception.Message) -ForegroundColor DarkGray
+    }
     exit 1
 } finally {
     Write-Host ''

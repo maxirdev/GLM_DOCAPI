@@ -46,8 +46,6 @@ function Redactar-Documento {
         [void]$documento.Append("`n")
     }
 
-    $codigosCanonicos = @(200, 400, 401, 500, 501, 503)
-
     Agregar-Linea ('# ' + $Documentacion.NombreFuncional)
     Agregar-Linea ''
     Agregar-Linea ($Documentacion.Descripcion + '.')
@@ -81,10 +79,6 @@ function Redactar-Documento {
     Agregar-Linea '| 500 | Error interno de Servicio. |'
     Agregar-Linea '| 501 | Servicio no implementado o sin configuración. |'
     Agregar-Linea '| 503 | Servicio no disponible o inactivo. |'
-    $codigosAdicionales = @($Documentacion.Errores | ForEach-Object { $_.Codigo } | Where-Object { $_ -is [int] -and $_ -ne 0 -and $codigosCanonicos -notcontains $_ } | Sort-Object -Unique)
-    foreach ($codigo in $codigosAdicionales) {
-        Agregar-Linea ('| ' + $codigo + ' | PENDIENTE DE CONFIRMACIÓN: significado del código HTTP ' + $codigo + '. Evidencia requerida: configuración desplegada o respuesta real sanitizada. |')
-    }
     Agregar-Linea ''
     Agregar-Linea '## Entrada'
     Agregar-Linea ''
@@ -120,16 +114,35 @@ function Redactar-Documento {
     Agregar-Linea ''
     Agregar-Linea '## Salida exitosa'
     Agregar-Linea ''
-    $coleccion = 'NO'
-    if ($Documentacion.SalidaColeccion) { $coleccion = 'SI' }
-    Agregar-Linea ('Colección: `' + $coleccion + '`.')
-    Agregar-Linea ''
-    Agregar-Linea '| Campo | Tipo | Descripción |'
-    Agregar-Linea '|---|---|---|'
-    foreach ($campo in $Documentacion.Salida) {
-        $nombreCampo = Convertir-Celda $campo.Campo
-        if ($nombreCampo) { $nombreCampo = '`' + $nombreCampo + '`' }
-        Agregar-Linea ('| ' + $nombreCampo + ' | ' + (Convertir-Celda $campo.Tipo) + ' | ' + (Convertir-Celda $campo.Descripcion) + ' |')
+
+    if ($Documentacion.TipoContenidoSalida -eq 'application/octet-stream') {
+        Agregar-Linea 'Content-Type: `application/octet-stream`'
+        Agregar-Linea ''
+        Agregar-Linea 'Archivo binario (PDF).'
+    } else {
+        $coleccion = 'NO'
+        if ($Documentacion.SalidaColeccion) { $coleccion = 'SI' }
+        Agregar-Linea ('Colección: `' + $coleccion + '`.')
+        Agregar-Linea ''
+        Agregar-Linea '| Campo | Tipo | Descripción |'
+        Agregar-Linea '|---|---|---|'
+        foreach ($campo in $Documentacion.Salida) {
+            $nombreCampo = Convertir-Celda $campo.Campo
+            if ($nombreCampo) { $nombreCampo = '`' + $nombreCampo + '`' }
+            Agregar-Linea ('| ' + $nombreCampo + ' | ' + (Convertir-Celda $campo.Tipo) + ' | ' + (Convertir-Celda $campo.Descripcion) + ' |')
+        }
+        foreach ($estructura in $Documentacion.EstructurasSalida) {
+            Agregar-Linea ''
+            Agregar-Linea ('**Estructura de ' + $estructura.RutaJson + '**')
+            Agregar-Linea ''
+            Agregar-Linea '| Campo | Tipo | Descripción |'
+            Agregar-Linea '|---|---|---|'
+            foreach ($hijo in $estructura.Hijos) {
+                $nombreCampo = Convertir-Celda $hijo.Campo
+                if ($nombreCampo) { $nombreCampo = '`' + $nombreCampo + '`' }
+                Agregar-Linea ('| ' + $nombreCampo + ' | ' + (Convertir-Celda $hijo.Tipo) + ' | ' + (Convertir-Celda $hijo.Descripcion) + ' |')
+            }
+        }
     }
     Agregar-Linea ''
     Agregar-Linea '## Errores específicos'

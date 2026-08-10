@@ -11,9 +11,11 @@ $ErrorActionPreference = 'Stop'
 if (-not $CatalogPath) { $CatalogPath = Join-Path $PSScriptRoot '..\..\..\GeneXus-XPZ-Skills-main\scripts\gx-object-type-catalog.json' }
 if (-not $OutputDirectory) { $OutputDirectory = Join-Path $PSScriptRoot '..\assets' }
 if (-not $ConfigPath) { $ConfigPath = Join-Path $PSScriptRoot '..\..\..\configuracion.json' }
-. (Join-Path $PSScriptRoot '..\..\Generador\binary\CargarConfiguracion.ps1')
-. (Join-Path $PSScriptRoot '..\..\Generador\binary\AnalizarServicio.ps1')
 $StartTime = Get-Date
+$RaizRepositorio = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..\..'))
+$DirectorioLogs = Join-Path $PSScriptRoot '..\..\..\Logs'
+$faseActual = 'inicio'
+. (Join-Path $PSScriptRoot '..\..\..\binary\DiagnosticoIA.ps1')
 $ProcedureTypeGuid = '84a12160-f59b-4ad7-a683-ea4481ac23e9'
 $PackageName = ''
 
@@ -45,6 +47,11 @@ try {
     Write-Host ("  " + (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')) -ForegroundColor Cyan
     Write-Host '==============================================================' -ForegroundColor Cyan
 
+    $faseActual = 'carga-modulos'
+    . (Join-Path $PSScriptRoot '..\..\..\binary\CargarConfiguracion.ps1')
+    . (Join-Path $PSScriptRoot '..\..\..\binary\AnalizarServicio.ps1')
+
+    $faseActual = 'catalogo-tipos'
     if (Test-Path -LiteralPath $CatalogPath) {
         try {
             $catalog = Get-Content -LiteralPath $CatalogPath -Raw | ConvertFrom-Json
@@ -57,6 +64,7 @@ try {
     }
     Write-Host ("GUID de tipo Procedure: " + $ProcedureTypeGuid) -ForegroundColor DarkGray
 
+    $faseActual = 'configuracion'
     Write-Step 1 'Cargando configuracion y resolviendo XPZ...'
     $cargarConfiguracionParametros = @{ ConfigPath = $ConfigPath }
     if ($XpzPath) { $cargarConfiguracionParametros.XpzPath = $XpzPath }
@@ -69,12 +77,14 @@ try {
         Write-Host ("  Cliente: " + $configuracion.Cliente) -ForegroundColor DarkGray
     }
 
+    $faseActual = 'apertura-xpz'
     $aperturaXpz = Abrir-XPZ -RutaXpz $XpzPath
     $xml = $aperturaXpz.Xml
     $XpzName = $aperturaXpz.Nombre
     Write-Host ("  Archivo: " + $XpzName) -ForegroundColor DarkGray
     Write-Host ("  Raiz: " + $xml.DocumentElement.Name) -ForegroundColor DarkGray
 
+    $faseActual = 'localizacion-main'
     Write-Step 2 ("Localizando APIGLM.APIGLMMain en " + $XpzName + " y su único Source no vacío...")
     $mainNodes = $xml.SelectNodes("//Object[@fullyQualifiedName='APIGLM.APIGLMMain']")
     if ($mainNodes.Count -ne 1) {
@@ -97,6 +107,7 @@ try {
     $source = $sourceNode.InnerText
     Write-Host ("  Source localizado (" + $source.Length + " caracteres)") -ForegroundColor DarkGray
 
+    $faseActual = 'extraccion-llamadas'
     Write-Step 3 'Extrayendo llamadas WS... activas del Source...'
     $lines = [regex]::Split($source, "`r?`n")
     $candidates = New-Object System.Collections.Generic.List[object]
@@ -118,6 +129,7 @@ try {
     }
     Write-Host ("  Candidatos activos: " + $candidates.Count + " / líneas ignoradas por comentario: " + $ignored) -ForegroundColor DarkGray
 
+    $faseActual = 'resolucion-candidatos'
     Write-Step 4 'Resolviendo candidatos y confirmando Procedure / IsMain=True / CALL_PROTOCOL=HTTP...'
     $allObjects = $xml.SelectNodes('//Object')
     $byFqn = @{}
@@ -189,6 +201,7 @@ try {
         Write-Host ("  [OK] " + $item.Fqn) -ForegroundColor Green
     }
 
+    $faseActual = 'escritura-inventario'
     Write-Step 5 'Escribiendo endpoints.json y endpoints.md...'
     if (-not (Test-Path -LiteralPath $OutputDirectory)) {
         New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
@@ -239,6 +252,7 @@ try {
     $mdPath = Join-Path $OutputDirectory 'endpoints.md'
     [System.IO.File]::WriteAllText($mdPath, $md, (New-Object System.Text.UTF8Encoding($false)))
 
+    $faseActual = 'verificacion-inventario'
     Write-Step 6 'Verificación final'
     Write-Host ''
     Write-Host ("Conteo confirmado: " + $final.Count) -ForegroundColor Cyan
@@ -264,8 +278,15 @@ try {
     Write-Host ("  " + $jsonPath) -ForegroundColor White
     Write-Host ("  " + $mdPath) -ForegroundColor White
 } catch {
+    $diagnosticoIA = New-DiagnosticoIAError -ErrorRecord $_ -Componente 'GenerarListaEndpoints' -Fase $faseActual -RaizRepositorio $RaizRepositorio
     Write-Host ''
     Write-Host ("ERROR: " + $_.Exception.Message) -ForegroundColor Red
+    try {
+        $rutaDiagnosticoIA = Write-DiagnosticoIA -Errores @($diagnosticoIA) -Pipeline 'inventario-endpoints' -Inicio $StartTime -DirectorioLogs $DirectorioLogs -RaizRepositorio $RaizRepositorio
+        Write-Host ("Diagnostico IA: " + $rutaDiagnosticoIA) -ForegroundColor DarkGray
+    } catch {
+        Write-Host ("No se pudo escribir el diagnostico IA: " + $_.Exception.Message) -ForegroundColor DarkGray
+    }
     exit 1
 } finally {
     Write-Host ''

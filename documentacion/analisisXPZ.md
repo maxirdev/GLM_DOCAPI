@@ -77,11 +77,16 @@ Confirmar además si el Body contiene un objeto o una colección. Si el mecanism
 
 Para cada campo de entrada y salida, resolver el tipo mediante `ATTCUSTOMTYPE`, `idBasedOn`, SDT, dominio o atributo. No inferirlo por el nombre.
 
+Cuando una referencia `idBasedOn` de dominio (`Domain:Nombre`) venga sin calificar el módulo y existan dominios homónimos en módulos distintos, resolver al dominio de la raíz (aquel cuyo `fullyQualifiedName` coincide exactamente con el nombre de la referencia). Cuando se necesita un dominio de otro módulo, la referencia lo califica (`Domain:Nombre, Modulo`), y esa forma prevalece sobre la raíz. Si aun así la referencia no puede resolverse sin ambigüedad, no completar por analogía ni suposiciones.
+
+Cuando la cadena de resolución llegue a un nodo hoja sin `ATTCUSTOMTYPE` ni `idBasedOn`, mapear el tipo con los datos presentes en el XPZ: la presencia de `Decimals` (incluso `0`) o de `Length`/`AttMaxLen` confirma `bas:Numeric` (tipo por defecto de GeneXus para dominios y atributos sin tipo declarado), produciendo `Integer (<longitud>)` o `Decimal (<longitud>, <decimales>)`. Solo cuando el nodo no exponga ningún dato de tipo (sin `bas:`, sin `idBasedOn`, sin `Length` ni `Decimals`) el tipo no puede confirmarse desde el XPZ: detener la generación del documento y registrar el dato con la evidencia requerida (configuración desplegada o respuesta real sanitizada). No usar `ATT_PICTURE` como evidencia de tipo.
+
 Aplicar esta tipografía canónica:
 
 - `bas:Numeric` con cero decimales: `Integer (<longitud>)`; si la longitud no está confirmada, `Integer`.
 - `bas:Numeric` con decimales: `Decimal (<longitud>, <decimales>)`.
-- `bas:Character`, `bas:VarChar`, `bas:LongVarChar` y GUID serializado: `String`. Para `Character` o `VarChar`, usar `String (<longitud>)` cuando la dimensión esté confirmada.
+- `bas:Character`, `bas:VarChar` y GUID serializado: `String`. Para `Character` o `VarChar`, usar `String (<longitud>)` cuando la dimensión esté confirmada.
+- `bas:LongVarChar`: `LongVarchar`.
 - `bas:Boolean`: `Boolean`.
 - `bas:Date`: `Date (YYYY-MM-DD)`.
 - `bas:DateTime`: `DateTime`; agregar formato solo con evidencia.
