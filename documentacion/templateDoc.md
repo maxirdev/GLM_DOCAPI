@@ -6,7 +6,7 @@ Este documento es la tercera fuente normativa y contiene el formato final. Se ut
 
 - Copiar la plantilla para cada servicio.
 - Trasladar la única documentación técnica sin recalcular método, entrada, tipos, obligatoriedad, salida, errores ni endpoint.
-- Usar la plantilla solo cuando exista un programa principal separado y único.
+- Usar la plantilla solo cuando exista un programa principal único confirmado, delegado o contenido en el wrapper HTTP.
 - Conservar únicamente la variante de entrada correspondiente.
 - Reemplazar los marcadores editoriales con datos confirmados o pendientes.
 - El campo Endpoint lleva el nombre completo publicado (package + módulo + procedimiento), en minúsculas, recibido en la documentación.
@@ -87,10 +87,14 @@ La consulta debe conservar exactamente <cantidad> posiciones y respetar el orden
 
 ## Salida exitosa
 
-<!-- Tres variantes según la salida:
+<!-- Seis variantes según la salida:
 1) Salida estructurada: Colección: <SI/NO>. + tabla de campos (+ tablas de estructuras anidadas por ruta JSON).
-2) Payload vacío (''): reemplazar la tabla por: Sin mensaje explícito.
-3) Colección primitiva: Colección: SI. + línea `Colección de <tipo del elemento>` (o `Colección JSON` si el tipo no se confirma).
+2) Salida escalar: tabla con un único campo y su tipo canónico.
+3) Payload vacío (''): reemplazar la tabla por: Sin mensaje explícito.
+4) Colección primitiva: Colección: SI. + línea `Colección de <tipo del elemento>` (o `Colección JSON` si el tipo no se confirma).
+5) Mensaje textual explícito: mostrar `Mensaje: <texto>` (o una lista de mensajes normalizados), sin inventar campos JSON.
+6) Archivo binario: mostrar `Content-Type: application/octet-stream` y `Archivo binario.`; no afirmar una extensión.
+En una salida estructurada recursiva, conservar el campo que referencia la misma estructura, no repetir indefinidamente sus tablas y agregar una nota breve que describa la recursión confirmada.
 -->
 
 Colección: `<SI/NO>`.

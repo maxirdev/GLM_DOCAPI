@@ -330,13 +330,19 @@ try {
         $lineasTxt = New-Object System.Collections.Generic.List[string]
         foreach ($resultado in $resultados) {
             if ($resultado.Estado -eq 'OK') { continue }
+
+            $detalles = New-Object System.Collections.Generic.List[string]
             foreach ($mensaje in $resultado.Mensajes) {
-                $lineasTxt.Add($resultado.FullyQualifiedName + " | " + $resultado.Estado + " | " + $mensaje)
+                if ($mensaje) { $detalles.Add([string]$mensaje) }
             }
             if ($resultado.Pendientes.Count -gt 0) {
-                foreach ($pendiente in $resultado.Pendientes) {
-                    $lineasTxt.Add($resultado.FullyQualifiedName + " | " + $resultado.Estado + " | PENDIENTE: " + $pendiente)
+                $pendientes = @($resultado.Pendientes | Where-Object { $_ } | ForEach-Object { [string]$_ })
+                if ($pendientes.Count -gt 0) {
+                    $detalles.Add('PENDIENTE: ' + ($pendientes -join '; '))
                 }
+            }
+            if ($detalles.Count -gt 0) {
+                $lineasTxt.Add($resultado.FullyQualifiedName + " | " + $resultado.Estado + " | " + ($detalles -join '; '))
             }
         }
         if ($lineasTxt.Count -gt 0) {

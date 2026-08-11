@@ -19,7 +19,7 @@ No incluir:
 ## Reglas de presentación
 
 - Consumir la documentación técnica sin recalcular programa principal, método, entrada, tipos, obligatoriedad, salida, errores ni endpoint.
-- No iniciar la redacción si la documentación no identifica un programa principal separado y único.
+- No iniciar la redacción si la documentación no identifica un programa principal único, ya sea delegado o contenido en el wrapper HTTP.
 - Mantener nombres de campos y mensajes con su grafía real.
 - Usar únicamente `SI` o `NO` en la columna `Obligatorio`.
 - Conservar la tipografía canónica recibida desde el análisis.
@@ -27,7 +27,7 @@ No incluir:
 - Escribir descripciones funcionales y omitir conversiones, variables auxiliares o llamadas internas.
 - No inventar una descripción cuando la función del campo no esté confirmada.
 - No agregar una fila pendiente para una variable ausente de la documentación.
-- En la salida, indicar únicamente si es una colección y enumerar sus campos.
+- En la salida, presentar únicamente la variante confirmada: estructura o colección con sus campos, escalar, mensaje textual, respuesta vacía o archivo binario genérico. Agregar notas recursivas solo cuando formen parte de la documentación técnica recibida.
 
 ### Estructuras compuestas
 

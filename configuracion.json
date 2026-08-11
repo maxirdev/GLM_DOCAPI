@@ -1,9 +1,11 @@
 {
-  "xpz": "xpz/trunk.xpz",
+  "xpz": "xpz/SEGUROS_COMERCIAL_APIGLM_20260811_165832837.xpz",
   "packagename": "glmsuit.comercial.",
   "cliente": "Trunk",
   "serviciosIgnorados": [
     "APIGLM.WSRedireccionHome",
-    "APIGLM.Comun.WSLiberarSolicitud"
+    "APIGLM.Comun.WSLiberarSolicitud",
+    "APIGLM.Test.WSTestMaxi",
+    "APIGLM.WSEjemplo"
   ]
 }

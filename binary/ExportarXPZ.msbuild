@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="ExportarAPIGLM"
+         xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+
+  <Import Project="$(GX_PROGRAM_DIR)\Genexus.Tasks.targets" />
+
+  <Target Name="ExportarAPIGLM">
+    <Error Condition="'$(KBPath)' == ''"
+           Text="No se definio la propiedad KBPath." />
+    <Error Condition="'$(XPZFile)' == ''"
+           Text="No se definio la propiedad XPZFile." />
+
+    <Message Text="Abriendo Knowledge Base: $(KBPath)" Importance="high" />
+    <OpenKnowledgeBase Directory="$(KBPath)" />
+
+    <Message Text="Exportando Module:APIGLM con referencias minimas." Importance="high" />
+    <Export File="$(XPZFile)"
+            Objects="Module:APIGLM"
+            IncludeChildren="true"
+            DependencyType="ReferencesTo"
+            ReferenceType="Minimal"
+            ExportKBInfo="true"
+            IncludeGXMessages="false"
+            IncludeUntranslatedMessages="false" />
+
+    <CloseKnowledgeBase />
+  </Target>
+
+</Project>

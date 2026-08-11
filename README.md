@@ -8,9 +8,10 @@ La fuente principal es el XPZ indicado en `configuracion.json`. El archivo conti
 
 | Proceso | Estado | Comportamiento actual |
 |---|---|---|
+| Exportación del XPZ | Operativo | `exportarXPZ.cmd` abre la KB configurada, exporta `Module:APIGLM` con referencias mínimas y crea un XPZ fechado. La consola conserva una lista de cinco tareas y marca cada una como `OK` o `ERROR`, dejando un indicador animado únicamente en la tarea en curso. |
 | Inventario de endpoints | Operativo | Lee el XPZ configurado, localiza `APIGLM.APIGLMMain`, resuelve sus llamadas activas y genera `endpoints.json` y `endpoints.md`. |
 | Visor web | Operativo | Consume `endpoints.json`, incorpora el `cliente` definido en la configuración y genera `APIServicios.html`. |
-| Documentación de servicios | Operativo con revisión | Permite procesar un servicio, una selección múltiple o todo el inventario. Cada resultado queda clasificado como `OK`, `WARNING`, `ERROR` u `OMITIDO` (servicios excluidos por `serviciosIgnorados`). |
+| Documentación de servicios | Operativo con revisión | Permite procesar un servicio, una selección múltiple o todo el inventario. Expande SDT recursivos de forma segura, sigue flujos reales/formales y utiliza evidencia global por identidad exacta de SDT y ruta interna. Cada resultado queda clasificado como `OK`, `WARNING`, `ERROR` u `OMITIDO`. |
 | Diagnósticos | Operativo | Una ejecución completada del generador produce `review.json`; los `WARNING`/`ERROR`/`OMITIDO` pueden generar `errores.txt` y las excepciones generan `diagnostico-ia.json` en `Logs/`. |
 | Grafo y detección de cambios | No implementado | El grafo de dependencias, la detección automática de cambios y `controlVersiones.json` no forman parte de los procesos disponibles. |
 | Artefactos generados | Bajo demanda | El inventario, el visor, los documentos de servicios y los logs se crean al ejecutar los generadores; no se presupone que existan en una copia nueva. |
@@ -27,11 +28,37 @@ Hay dos mecanismos de deduplicación distintos según el proceso:
 ### Requisitos
 
 - Windows con Windows PowerShell 5.1.
+- GeneXus 18 y MSBuild de 32 bits únicamente si se utilizará la exportación automática de la KB.
 - Un XPZ válido dentro de `xpz/` o en una ruta accesible.
 - Un archivo `configuracion.json` en la raíz del repositorio.
 - `Out-GridView` disponible únicamente si se utilizará la selección múltiple del modo 2.
 
 El repositorio auxiliar `GeneXus-XPZ-Skills-main/` es opcional para el inventario. Su catálogo de tipos solo se usa para confirmar el GUID de Procedure: si el archivo no existe, no puede leerse, su JSON es inválido o no contiene `types.Procedure.objectTypeGuid`, el script utiliza el GUID conocido de Procedure sin detenerse.
+
+### 0. Exportar el módulo APIGLM (opcional)
+
+Si el XPZ debe obtenerse directamente desde la Knowledge Base local:
+
+```powershell
+.\exportarXPZ.cmd
+```
+
+El comando valida las rutas requeridas, exige que GeneXus esté cerrado y ejecuta MSBuild en una ventana oculta. La consola muestra el avance como una lista persistente:
+
+```text
+[1/5] Iniciando MSBuild ... OK
+[2/5] Abriendo la Knowledge Base ... OK
+[3/5] Exportando APIGLM y sus referencias ... |
+```
+
+La tarea activa utiliza un indicador `| / - \`; las tareas finalizadas permanecen visibles como `OK` o `ERROR` y las siguientes aparecen cuando comienzan. La duración no se estima ni limita artificialmente.
+
+Salidas:
+
+- `xpz/SEGUROS_COMERCIAL_APIGLM_<marca>.xpz`;
+- `Logs/exportarXPZ_<marca>.log`.
+
+Para automatización puede usarse `exportarXPZ.cmd --no-pause`. Las rutas de GeneXus y de la KB están declaradas actualmente en el propio `.cmd`; deben revisarse antes de usarlo en otro equipo.
 
 ### 1. Configurar la ejecución
 
@@ -155,7 +182,7 @@ Además del inventario, existe un pipeline en PowerShell 5.1 que genera la docum
 
 Los documentos normativos no se leen durante la generación: el markdown está codificado en `RedactarDocumento.ps1`. Cambiar `analisisXPZ.md`, `reglasEditoriales.md` o `templateDoc.md` no modifica automáticamente la salida; scripts y normativa deben mantenerse sincronizados manualmente.
 
-En los modos 2 y 3 se muestra una barra de progreso global. Cada ejecución completada genera `review.json`; cuando hay incidencias también genera `errores.txt` y, si existe al menos un error, `diagnostico-ia.json` con la ubicación, la sentencia y el stack trace necesarios para analizarlo.
+En los modos 2 y 3 se muestra una barra de progreso global y, al completar cada servicio, una línea con su estado (`OK`, `WARNING` o `ERROR`). Cada ejecución completada genera `review.json`; cuando hay incidencias también genera `errores.txt` y, si existe al menos un error, `diagnostico-ia.json` con la ubicación, la sentencia y el stack trace necesarios para analizarlo.
 
 ### Selección, ignorados y duplicados
 
@@ -188,7 +215,7 @@ Cada documento se produce en tres etapas, implementadas como módulos PowerShell
 
 | Módulo | Función |
 |---|---|
-| `AnalizarServicio.ps1` | Abre el XPZ como ZIP de solo lectura, localiza el wrapper por `fullyQualifiedName`, confirma que sea Procedure con `IsMain=True` y `CALL_PROTOCOL=HTTP`, detecta el programa principal delegado (o acepta el wrapper si contiene lógica REST reconocible), resuelve método HTTP (GET por `QueryParams`, POST por `FromJson`), tipifica campos, expande SDTs, determina obligatoriedad, resuelve salida y errores HTTP, y construye el endpoint publicado. |
+| `AnalizarServicio.ps1` | Abre el XPZ como ZIP de solo lectura, localiza wrapper y programa principal, resuelve GET/POST, tipifica campos, expande SDT —incluidas autorreferencias—, sigue argumentos reales y parámetros formales, consulta evidencia global por `SDT FQN + ruta`, determina obligatoriedad, resuelve salidas estructuradas, delegadas, textuales o binarias, y obtiene errores HTTP y endpoint publicado. |
 | `RedactarDocumento.ps1` | Toma la documentación técnica en memoria y renderiza el markdown según la plantilla, respetando bloques canónicos y reemplazando marcadores con datos o pendientes. |
 | `EscribirSalidas.ps1` | Escribe el `.md` en `documentacion/servicios/<wrapper>.md` (UTF-8 sin BOM, LF). |
 | `CargarConfiguracion.ps1` | Módulo común de carga de `configuracion.json`: resuelve la ruta del XPZ contra la raíz del repositorio, aplica el override de `-XpzPath` y expone `PackageName`, `Cliente` y `ServiciosIgnorados`. Se importa por dot-source desde el generador, el inventario y el visor. |
@@ -203,7 +230,7 @@ Cada servicio seleccionado termina en uno de estos estados:
 |---|---|---|---|
 | `OK` | Análisis completo sin pendientes. | Escrito (sobrescribe). | 0 |
 | `WARNING` | Documento generado con pendientes de confirmación (tipos o descripciones de campos, o duplicado de nombre local). | Escrito (sobrescribe), salvo duplicados. | 0 |
-| `ERROR` | El análisis no pudo completarse (SDT ausente o cíclico, salida estructural no resoluble, método ambiguo, delegado no exportado, etc.). | **No** se escribe; se elimina el archivo previo del servicio. | 1 |
+| `ERROR` | El análisis no pudo completarse (SDT ausente, salida estructural no resoluble, método ambiguo, delegado no exportado, etc.). Una autorreferencia válida del mismo SDT no constituye un error. | **No** se escribe; se elimina el archivo previo del servicio. | 1 |
 | `OMITIDO` | FQN en `serviciosIgnorados` presente en el inventario. | No se genera ni se elimina. | 0 |
 
 Limpieza de documentos:
@@ -215,7 +242,8 @@ Limpieza de documentos:
 Logs:
 
 - ejecución completada → `review.json`;
-- si hay al menos un `WARNING` o `ERROR` → `errores.txt`, que además incluye las líneas `OMITIDO` de esa ejecución (una ejecución con omisiones únicamente no crea `errores.txt`);
+- si hay al menos un `WARNING` o `ERROR` → `errores.txt`, con una sola línea por servicio y sus mensajes concatenados mediante `; `; también incluye las líneas `OMITIDO` de esa ejecución (una ejecución con omisiones únicamente no crea `errores.txt`);
+- `review.json` conserva cada pendiente como un elemento estructurado independiente aunque el log plano los agrupe por servicio;
 - si hay excepciones → `diagnostico-ia.json`;
 - cancelar el `Out-GridView` del modo 2 termina con código 0 y **no** escribe logs;
 - un error fatal (configuración, inventario, apertura del XPZ, cierre) escribe `diagnostico-ia.json` pero no `review.json`.
@@ -230,6 +258,7 @@ La marca temporal de los logs tiene precisión de un segundo: dos ejecuciones qu
 | `GeneXus-XPZ-Skills-main/` | Repositorio auxiliar opcional con scripts y catálogos, como `gx-object-type-catalog.json`. Está ignorado por git. |
 | [configuracion.json](configuracion.json) | Configuración operativa y dinámica: ruta al XPZ activo, `packagename` del endpoint publicado, etiqueta `cliente` y lista `serviciosIgnorados`. |
 | [AGENTS.md](AGENTS.md) | Memoria del proyecto para agentes: reglas no obvias, estructura de carpetas, fuentes normativas y convenciones. |
+| [exportarXPZ.cmd](exportarXPZ.cmd) | Exporta automáticamente `Module:APIGLM` desde la KB local, presenta cinco tareas con estado y genera un XPZ y su log con marca temporal. |
 | [GenerarDocumentacion.cmd](GenerarDocumentacion.cmd) | Orquestador que regenera inventario (`endpoints.json`, `endpoints.md`) y visor (`APIServicios.html`). |
 | [GenerarDocumentoServicio.cmd](GenerarDocumentoServicio.cmd) | Entry point del generador interactivo de documentación de servicios. |
 | [.gitignore](.gitignore) | Excluye los XPZ, el repositorio auxiliar, los inventarios, el visor, los documentos generados y los logs. |
@@ -253,7 +282,10 @@ La marca temporal de los logs tiene precisión de un segundo: dos ejecuciones qu
 | `binary/CargarConfiguracion.ps1` | Módulo común de carga de `configuracion.json` con resolución de rutas contra la raíz del repositorio. |
 | `binary/DiagnosticoIA.ps1` | Módulo común de diagnóstico de excepciones para el generador, el inventario y el visor. |
 | `binary/GenerarDocumento.ps1` | Orquestador del generador: filtra ignorados, detecta duplicados, menú interactivo de tres modos, pipeline análisis → redacción → escritura, limpieza de `ERROR` y logs. |
+| `binary/ExportarXPZProgreso.ps1` | Ejecuta MSBuild en segundo plano, interpreta sus eventos y mantiene visibles las tareas terminadas y la tarea activa. |
+| `binary/ExportarXPZ.msbuild` | Proyecto MSBuild que abre la KB, exporta `Module:APIGLM` con referencias mínimas y cierra la KB. |
 | `binary/ObtenerDocumento.cmd` | Atajo para invocar el generador de documentación de servicios desde `binary/`. |
+| `Logs/exportarXPZ_<marca>.log` | Log completo generado por MSBuild durante una exportación automática del XPZ. |
 | `Logs/yyyyMMdd-HHmmss-review.json` | Resultado agregado de una ejecución completada (incluye `OK`, `WARNING`, `ERROR` y los `OMITIDO` presentes en el inventario). |
 | `Logs/yyyyMMdd-HHmmss-errores.txt` | `WARNING`, `ERROR` y `OMITIDO` legibles; se genera solo cuando hay al menos un warning o error. |
 | `Logs/yyyyMMdd-HHmmss-diagnostico-ia.json` | Excepciones estructuradas con fase, causa interna, ubicación, sentencia y stack trace; se genera solo cuando hay errores. |
@@ -321,8 +353,8 @@ El análisis individual comprende:
    - **POST**: se reconoce únicamente cuando el programa lee `APIGLMRequestIn.Body` y lo deserializa con `FromJson`. Se usa la primera llamada balanceada que menciona `Body`; la variable destino debe estar declarada con `ATTCUSTOMTYPE=sdt:...`.
    - **GET**: todo lo demás, incluida la ausencia de entrada funcional. La entrada se obtiene de las posiciones de `APIGLMRequestIn.QueryParams` mediante asignaciones directas `&variable = ...&colQueryParams.Item(<entero>)`; solo se reconoce la primera llamada y las posiciones numéricas directas. Si no hay parser reconocido, el método queda GET con entrada vacía.
    - Si el programa combina `QueryParams` con `FromJson` sobre una estructura en una posición de la URL, el método es ambiguo y el análisis se detiene con `ERROR`.
-3. Resolver los tipos de los campos a través de sus variables, dominios, atributos o estructuras de datos.
-4. Expandir las estructuras compuestas hasta identificar sus campos simples; cada estructura y subestructura se documenta en una tabla independiente identificada por su ruta JSON completa.
+3. Resolver los tipos de los campos a través de sus variables, dominios, atributos, estructuras y conversiones confirmadas. Cuando un tipo sigue pendiente, se consulta un índice memoizado por identidad exacta del SDT y ruta interna, construido desde asignaciones de todo el XPZ.
+4. Expandir las estructuras compuestas hasta identificar sus campos simples; cada estructura y subestructura se documenta en una tabla independiente identificada por su ruta JSON completa. Una referencia al mismo SDT conserva el campo recursivo y detiene allí la expansión para evitar tablas infinitas.
 5. Determinar qué campos son obligatorios a partir del uso confirmado en el proceso (ver [Cálculo de Obligatorio](#cálculo-de-obligatorio)).
 6. Resolver la salida satisfactoria HTTP 200 (ver [Salida](#salida)).
 7. Registrar únicamente los errores HTTP explícitos generados por `GenerarAPIGLMResponse` dentro del programa principal (ver [Errores HTTP](#errores-http)).
@@ -337,10 +369,12 @@ La salida satisfactoria usa HTTP 200 y puede adoptar estas formas, cada una con 
 | Forma | Patrón detectado | Documentación |
 |---|---|---|
 | SDT (simple o colección) | `GenerarAPIGLMResponse(HttpCode.OK, ..., &Var.ToJson())` | Tabla de campos y tablas por ruta JSON para subestructuras. |
+| SDT delegado | `APIGLMResponse` fluye hacia un Procedure exportado con parámetro `out:` confirmado | Se sigue el enlace real/formal y se documenta la estructura resuelta en el Procedure delegado. |
 | Colección primitiva | Variable que declara colección de un tipo primitivo | `Colección de <tipo del elemento>` o `Colección JSON` si el tipo no se confirma. |
 | Escalar | `&X` o `&X.ToString()` como payload | Un único campo con su tipo canónico. |
+| Mensaje | Literal o texto compuesto enviado como respuesta exitosa | Uno o más mensajes normalizados, sin inventar un SDT ni un campo JSON. |
 | Vacío | Payload `''` o `""` | `Sin mensaje explícito` (no genera pendiente). |
-| Binario | `HttpResponse.AddFile` | `Content-Type: application/octet-stream` + `Archivo binario (PDF).` |
+| Binario | `HttpResponse.AddFile` | `Content-Type: application/octet-stream` + `Archivo binario`; no se presupone PDF porque también puede tratarse de XLSX u otro formato. |
 
 La salida es una colección cuando el payload declara `AttCollection=True` o cuando el SDT está definido como colección en su nodo principal. Si el SDT de salida no está exportado en el XPZ o la estructura no puede determinarse, el análisis se detiene con `ERROR` y no se genera el documento (ver [Cuándo detener el análisis](#cuándo-detener-el-análisis)).
 
@@ -366,7 +400,8 @@ Los errores funcionales dentro de una respuesta HTTP 200 y los códigos provenie
 
 - La obligatoriedad se calcula por campo y por ruta JSON completa, tanto en la fila raíz como en cada subnivel. Un campo en `SI` no promueve a su estructura padre, ni el `SI` de una estructura o colección se hereda a sus hijos: cada uno requiere evidencia propia de uso en el programa principal.
 - Se consideran el programa principal y las fuentes de los procedimientos alcanzables (transitivo, con profundidad máxima 5) como evidencia complementaria.
-- En GET, la asignación desde `&colQueryParams.Item(N)` ya referencia la variable, por lo que los parámetros detectados por el parser tienden a quedar `SI`.
+- En GET, la asignación inicial desde `&colQueryParams.Item(N)` se ignora para este cálculo. El campo queda `SI` únicamente cuando después se valida, consume o pasa como argumento; si solo se parsea, queda `NO`.
+- Cuando un SDT se pasa completo a otro Procedure, la obligatoriedad se sigue por el enlace confirmado entre argumento real y parámetro formal, con memoización y protección contra ciclos. No se mezclan variables locales homónimas de fuentes auxiliares.
 - Los campos homónimos de estructuras distintas no comparten obligatoriedad: cada uno se resuelve con su propia ruta JSON.
 
 ## Nombre GeneXus y endpoint publicado
@@ -404,7 +439,7 @@ Hay dos resultados posibles cuando falta evidencia, y es importante distinguirlo
 - no hay delegación única ni lógica REST en el wrapper;
 - el método es ambiguo (combina `QueryParams` con `FromJson` desde una posición de la URL);
 - el programa principal delegado no está exportado en el XPZ configurado (`El programa principal <X> no está exportado en el XPZ configurado. No puede inferirse.`);
-- la entrada o la salida referencia un SDT ausente o cíclico (`La entrada del SDT <X> ...` / `La salida del SDT <X> ... no puede inferirse.`);
+- la entrada o la salida referencia un SDT ausente (`La entrada del SDT <X> ...` / `La salida del SDT <X> ... no puede inferirse.`); una autorreferencia al mismo SDT es válida y se documenta sin expandirla indefinidamente;
 - la salida HTTP 200 no puede determinarse;
 - distintas fuentes presentan información contradictoria.
 

@@ -121,9 +121,17 @@ function Redactar-Documento {
     if ($Documentacion.TipoContenidoSalida -eq 'application/octet-stream') {
         Agregar-Linea 'Content-Type: `application/octet-stream`'
         Agregar-Linea ''
-        Agregar-Linea 'Archivo binario (PDF).'
+        Agregar-Linea 'Archivo binario.'
     } elseif ($Documentacion.SalidaVacia) {
         Agregar-Linea 'Sin mensaje explícito.'
+    } elseif (@($Documentacion.MensajesSalida | Where-Object { $_ }).Count -gt 0) {
+        $mensajes = @($Documentacion.MensajesSalida | Where-Object { $_ })
+        if ($mensajes.Count -eq 1) {
+            Agregar-Linea ('Mensaje: `' + (Convertir-Celda $mensajes[0]) + '`')
+        } else {
+            Agregar-Linea 'Mensajes posibles:'
+            foreach ($mensaje in $mensajes) { Agregar-Linea ('- `' + (Convertir-Celda $mensaje) + '`') }
+        }
     } elseif ($Documentacion.TipoColeccionPrimitiva -ne $null) {
         Agregar-Linea 'Colección: `SI`.'
         Agregar-Linea ''
@@ -155,6 +163,10 @@ function Redactar-Documento {
                 Agregar-Linea ('| ' + $nombreCampo + ' | ' + (Convertir-Celda $hijo.Tipo) + ' | ' + (Convertir-Celda $hijo.Descripcion) + ' |')
             }
         }
+    }
+    foreach ($notaSalida in @($Documentacion.NotasSalida | Where-Object { $_ })) {
+        Agregar-Linea ''
+        Agregar-Linea ('Nota: ' + (Convertir-Celda $notaSalida))
     }
     Agregar-Linea ''
     Agregar-Linea '## Errores específicos'
