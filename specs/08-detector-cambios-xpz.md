@@ -32,6 +32,7 @@ El checksum del wrapper no cubre por sí solo los cambios de los SDT, dominios y
 - Grafo visual SVG o diagrama.
 - Commit en git.
 - Dependencias de Procedures auxiliares llamados por el programa principal.
+- Cambios de obligatoriedad originados en procedures auxiliares o anidados. El checksum nativo del wrapper y del SDT cubren cambios estructurales de entrada/salida, pero no lógica delegada de validación.
 - Control de ediciones manuales del Markdown mediante checksum del documento.
 - Regeneración total automática de todos los documentos.
 
@@ -107,6 +108,9 @@ APIGLMMain
         └── SDT de salida
             └── SDT anidados
                 └── Domain / Attribute
+
+No se incluyen: Procedures auxiliares llamados por el programa principal,
+ni sus SDT internos, ni validaciones de obligatoriedad delegadas.
 ```
 
 `APIGLMMain` delimita el inventario, pero su checksum no forma parte de la huella individual. No se siguen Procedures auxiliares llamados por el programa principal. `parentGuid` sirve para contexto jerárquico, no como única evidencia de dependencia funcional.
@@ -175,6 +179,7 @@ El XPZ local `trunk.xpz` mostró 593 Procedures, 457 SDT y 2.429 atributos raíz
 - [ ] La huella compuesta depende de nodos y aristas ordenados establemente.
 - [ ] APIGLMMain aparece como raíz, pero su checksum no regenera todos los servicios.
 - [ ] No se siguen Procedures auxiliares llamados por el programa principal.
+- [ ] Los procedures auxiliares llamados por el programa principal NO forman parte de la huella compuesta.
 - [ ] Un cambio de estructura explica campos, nodos o aristas agregados, eliminados o modificados.
 - [ ] El control maestro conserva el historial completo de versiones.
 - [ ] La versión inicial es `1.0` y cada regeneración OK incrementa una sola vez.
@@ -212,6 +217,7 @@ El XPZ local `trunk.xpz` mostró 593 Procedures, 457 SDT y 2.429 atributos raíz
 | Un SDT compartido cambia durante un lote parcial | Conservar snapshots por tipo, GUID y checksum, baseline anterior y target pendiente. |
 | El control maestro se corrompe | Escribir temporal y reemplazar atómicamente. |
 | Aparece un ciclo SDT | Detectar GUID visitado, registrar ruta y fallar el servicio. |
+| Cambio de obligatoriedad en procedure auxiliar no detectado | Documentar como limitación conocida. El usuario debe regenerar manualmente si sospecha cambios de este tipo. |
 | Cambia el perfil documental | Cambiar `profileChecksum` y marcar servicios documentados como impactados. |
 
 ## Lo que **no** incluye esta spec
