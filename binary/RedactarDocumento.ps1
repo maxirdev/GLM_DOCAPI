@@ -86,7 +86,10 @@ function Redactar-Documento {
         if (@($Documentacion.Entrada).Count -eq 0) {
             Agregar-Linea 'Sin parámetros de entrada.'
         } else {
-            Agregar-Linea ('La consulta debe conservar exactamente ' + @($Documentacion.Entrada).Count + ' posiciones y respetar el orden indicado.')
+            $cantidad = @($Documentacion.Entrada).Count
+            $textoCantidad = "$cantidad posiciones"
+            if ($cantidad -eq 1) { $textoCantidad = "1 posición" }
+            Agregar-Linea ('La consulta debe conservar exactamente ' + $textoCantidad + ' y respetar el orden indicado.')
             Agregar-Linea ''
             Agregar-Linea '| Posición | Parámetro | Tipo | Obligatorio | Descripción |'
             Agregar-Linea '|---:|---|---|---|---|'

@@ -1,6 +1,6 @@
 # Identificación de endpoints APIGLM desde el XPZ
 
-Esta guía explica cómo un agente debe reproducir el inventario de [endpoints.md](endpoints.md) a partir de [LPS_COM_v01.xpz](../../../xpz/LPS_COM_v01.xpz) y del proceso `APIGLM.APIGLMMain`.
+Esta guía explica cómo un agente debe reproducir el inventario de [endpoints.md](endpoints.md) a partir del XPZ indicado en `configuracion.json` y del proceso `APIGLM.APIGLMMain`.
 
 En este inventario, un endpoint es el nombre completo del procedimiento GeneXus que funciona como wrapper HTTP. No es una URL desplegada. La determinación del método HTTP, los datos de entrada y salida o la URL publicada pertenece al análisis individual definido en [analisisXPZ.md](../../analisisXPZ.md).
 
@@ -8,8 +8,8 @@ En este inventario, un endpoint es el nombre completo del procedimiento GeneXus 
 
 El agente debe usar estas fuentes:
 
-1. El archivo `LPS_COM_v01.xpz`.
-2. Su XML interno `LPS_COM_v01.xml`, cuya raíz es `ExportFile`.
+1. El archivo XPZ configurado en `configuracion.json`.
+2. Su XML interno (la primera entrada del ZIP cuyo nombre termina en `.xml`), cuya raíz es `ExportFile`.
 3. El `Source` del objeto `APIGLM.APIGLMMain`, que delimita los candidatos activos.
 4. Los objetos exportados dentro de `/ExportFile/Objects`.
 5. El [catálogo de tipos GeneXus](../../../GeneXus-XPZ-Skills-main/scripts/gx-object-type-catalog.json), que permite confirmar que el valor de `Object/@type` corresponde a `Procedure`.
@@ -20,7 +20,7 @@ El agente debe usar estas fuentes:
 
 ### 1. Validar y abrir el XPZ
 
-Tratar el XPZ como un contenedor de solo lectura. Confirmar que puede abrirse, que contiene `LPS_COM_v01.xml` y que ese archivo es XML bien formado con raíz `ExportFile`.
+Tratar el XPZ como un contenedor de solo lectura. Confirmar que puede abrirse, que contiene un XML interno y que ese archivo es XML bien formado con raíz `ExportFile`.
 
 Si el contenedor no puede abrirse, el XML está ausente o su estructura no puede interpretarse, detener el análisis. No intentar reconstruir el inventario desde los documentos de servicios ni desde nombres recordados.
 
@@ -88,11 +88,11 @@ No ampliar el alcance buscando todos los objetos que tengan `IsMain=True` y `CAL
 
 ## Control del resultado
 
-Para la versión actual de `LPS_COM_v01.xpz`, el resultado esperado es de **135 endpoints activos y únicos**.
+El resultado esperado debe coincidir con el inventario vigente [endpoints.md](endpoints.md), que se regenera desde el XPZ configurado.
 
 Antes de considerar válido el inventario, confirmar que:
 
-- las 135 entradas aparecen en el mismo orden que las llamadas activas de `APIGLMMain`;
+- todas las entradas aparecen en el mismo orden que las llamadas activas de `APIGLMMain`;
 - no hay nombres repetidos;
 - todos los nombres resuelven a un único objeto;
 - todos los objetos aceptados son `Procedure`, `IsMain=True` y `CALL_PROTOCOL=HTTP`;
@@ -100,7 +100,7 @@ Antes de considerar válido el inventario, confirmar que:
 - `WSGrabarTramites()` fue resuelto como `APIGLM.Tramite.WSGrabarTramites`;
 - el resultado coincide exactamente con [endpoints.md](endpoints.md).
 
-Si el conteo o el contenido no coincide, no corregir el resultado por analogía ni forzarlo a llegar a 135. Determinar primero si cambió el XPZ, si cambió `APIGLMMain` o si `endpoints.md` quedó desactualizado, y comunicar la diferencia antes de modificar el inventario.
+Si el conteo o el contenido no coincide, no corregir el resultado por analogía ni forzarlo a un número esperado. Determinar primero si cambió el XPZ, si cambió `APIGLMMain` o si `endpoints.md` quedó desactualizado, y comunicar la diferencia antes de modificar el inventario.
 
 ## Límites
 

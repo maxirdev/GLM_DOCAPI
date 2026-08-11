@@ -50,7 +50,7 @@ Orden obligatorio por servicio: analisisXPZ → reglasEditoriales → templateDo
 
 ## Verificación e inconsistencias conocidas
 
-- No hay lint ni tests. La verificación son las listas de control al final de `analisisXPZ.md`, `reglasEditoriales.md` y `templateDoc.md`; `Endpoints/assets/analisisEndpoint.md` espera 135 endpoints. Si el conteo difiere, primero determinar si cambió el XPZ o `APIGLMMain`; no forzar el número.
+- No hay lint ni tests. La verificación son las listas de control al final de `analisisXPZ.md`, `reglasEditoriales.md` y `templateDoc.md`; `Endpoints/assets/analisisEndpoint.md` espera que el conteo coincida con `endpoints.md`. Si el conteo difiere, primero determinar si cambió el XPZ o `APIGLMMain`; no forzar el número.
 - Markdown en UTF-8 sin BOM y finales de línea LF.
 - `Endpoints/assets/analisisEndpoint.md` referencia el XPZ configurado en `configuracion.json` y `GeneXus-XPZ-Skills-main/scripts/gx-object-type-catalog.json` mediante `../../../`.
 

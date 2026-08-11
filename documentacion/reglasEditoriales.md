@@ -55,8 +55,8 @@ Documentar únicamente los rechazos HTTP explícitos recibidos en la documentaci
 
 Cuando existan errores explícitos:
 
-- Crear una sola tabla con código HTTP, condición y mensaje literal o patrón.
-- Repetir una fila por cada condición, aunque varias usen el mismo código.
+- Crear una sola tabla con código HTTP y mensaje literal o patrón.
+- Repetir una fila por cada mensaje distinto, aunque varios usen el mismo código.
 - Conservar el texto fijo y los marcadores descriptivos de mensajes dinámicos, por ejemplo `Consulte Log. <número>`.
 
 Cuando no existan, mostrar `No se identificaron errores específicos en el programa principal.`.

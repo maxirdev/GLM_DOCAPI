@@ -156,7 +156,6 @@ La única evidencia admitida es una llamada a `GenerarAPIGLMResponse` dentro del
 Por cada llamada, registrar una sola vez:
 
 - Código HTTP resuelto.
-- Condición que conduce a la llamada.
 - Mensaje literal o patrón.
 
 Cuando una parte del mensaje sea dinámica, conservar el texto fijo y representar la parte variable mediante un marcador descriptivo, por ejemplo `Consulte Log. <número>`.
@@ -165,7 +164,7 @@ Resolver `HttpCode.BadRequest` como 400, `HttpCode.NotFound` como 404 y `HttpCod
 
 Excluir códigos provenientes únicamente del wrapper, procedimientos auxiliares, estados internos, campos del payload o evidencia de ejecución. Excluir también errores funcionales contenidos dentro de una respuesta HTTP 200.
 
-La tabla canónica de Generalidades pertenece a [templateDoc.md](templateDoc.md). Agregar allí cada código adicional una sola vez y en orden numérico. Si varias condiciones generan el mismo código, conservar cada condición como una fila independiente en `Errores específicos`.
+La tabla canónica de Generalidades pertenece a [templateDoc.md](templateDoc.md). Agregar allí cada código adicional una sola vez y en orden numérico. Si varias llamadas generan el mismo código, conservar cada mensaje distinto como una fila independiente en `Errores específicos`. No publicar condiciones GeneXus: la condición interna no se documenta, solo código y mensaje.
 
 Si no existen rechazos explícitos, registrar `No se identificaron errores específicos en el programa principal.`.
 
@@ -190,7 +189,7 @@ Antes de redactar, preparar un único documento técnico con:
 - Entrada con campos, orden cuando corresponda, tipos y obligatoriedad.
 - Árbol completo de estructuras compuestas de entrada.
 - Salida con condición de colección, campos, tipos y descripciones.
-- Errores HTTP explícitos con código, condición y mensaje o patrón.
+- Errores HTTP explícitos con código y mensaje o patrón.
 - Pendientes y evidencia necesaria.
 
 Esta documentación es la única transferencia hacia [reglasEditoriales.md](reglasEditoriales.md) y [templateDoc.md](templateDoc.md). No recalcular decisiones durante la redacción.

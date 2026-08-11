@@ -101,7 +101,7 @@ Colección: `<SI/NO>`.
 
 ## Errores específicos
 
-<!-- Si existen errores explícitos, conservar la tabla y repetir una fila por cada condición. Si no existen, reemplazar la tabla por: No se identificaron errores específicos en el programa principal. En ambos casos, conservar el JSON común. -->
+<!-- Si existen errores explícitos, conservar la tabla y repetir una fila por cada mensaje distinto. Si no existen, reemplazar la tabla por: No se identificaron errores específicos en el programa principal. En ambos casos, conservar el JSON común. -->
 
 | Código HTTP | Respuesta o mensaje |
 |---:|---|
