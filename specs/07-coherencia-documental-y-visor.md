@@ -1,6 +1,6 @@
 # SPEC 07 — Coherencia documental y robustez del visor
 
-> **Estado:** Borrador
+> **Estado:** Implementado
 > **Depende de:** SPEC 05, SPEC 06
 > **Fecha:** 2026-08-09
 > **Objetivo:** Alinear las normas y salidas documentales con el pipeline real y mejorar la seguridad, accesibilidad, rendimiento y adaptación móvil del visor de endpoints.

@@ -191,6 +191,7 @@ Cada documento se produce en tres etapas, implementadas como módulos PowerShell
 | `AnalizarServicio.ps1` | Abre el XPZ como ZIP de solo lectura, localiza el wrapper por `fullyQualifiedName`, confirma que sea Procedure con `IsMain=True` y `CALL_PROTOCOL=HTTP`, detecta el programa principal delegado (o acepta el wrapper si contiene lógica REST reconocible), resuelve método HTTP (GET por `QueryParams`, POST por `FromJson`), tipifica campos, expande SDTs, determina obligatoriedad, resuelve salida y errores HTTP, y construye el endpoint publicado. |
 | `RedactarDocumento.ps1` | Toma la documentación técnica en memoria y renderiza el markdown según la plantilla, respetando bloques canónicos y reemplazando marcadores con datos o pendientes. |
 | `EscribirSalidas.ps1` | Escribe el `.md` en `documentacion/servicios/<wrapper>.md` (UTF-8 sin BOM, LF). |
+| `CargarConfiguracion.ps1` | Módulo común de carga de `configuracion.json`: resuelve la ruta del XPZ contra la raíz del repositorio, aplica el override de `-XpzPath` y expone `PackageName`, `Cliente` y `ServiciosIgnorados`. Se importa por dot-source desde el generador, el inventario y el visor. |
 | `GenerarDocumento.ps1` | Orquestador: carga configuración, lee inventario, filtra ignorados, detecta duplicados, despliega menú, encadena los tres módulos anteriores, limpia documentos de servicios en `ERROR` y escribe los logs. |
 | `DiagnosticoIA.ps1` | Captura excepciones del pipeline en un JSON estructurado para análisis técnico, con rutas relativas al repositorio y rutas externas enmascaradas. |
 
@@ -237,7 +238,7 @@ La marca temporal de los logs tiene precisión de un segundo: dos ejecuciones qu
 | `documentacion/reglasEditoriales.md` | Fuente normativa #2: presentación del documento final. Lenguaje, formato de tablas, secciones obligatorias y nomenclatura de archivos. |
 | `documentacion/templateDoc.md` | Fuente normativa #3: plantilla markdown de cada servicio. Bloques canónicos y marcadores de reemplazo. |
 | `documentacion/servicios/` | Documentos generados por servicio. Cada archivo utiliza el nombre local del wrapper en minúsculas. |
-| `documentacion/Endpoints/assets/` | Guía local del inventario y salidas generadas desde `APIGLM.APIGLMMain`. |
+| `documentacion/Endpoints/assets/analisisEndpoint.md` | Guía para reproducir el inventario de endpoints desde `APIGLM.APIGLMMain`. `endpoints.json` y `endpoints.md` son salidas generadas (ignoradas). |
 | `documentacion/Endpoints/assets/endpoints.json` | Inventario de endpoints en JSON (generado, ignorado). |
 | `documentacion/Endpoints/assets/endpoints.md` | Inventario de endpoints en markdown (generado, ignorado). |
 | `documentacion/Endpoints/binary/GenerarListaEndpoints.ps1` | Script que extrae wrappers HTTP activos desde el XPZ y escribe el inventario. |
@@ -249,8 +250,10 @@ La marca temporal de los logs tiene precisión de un segundo: dos ejecuciones qu
 | `binary/AnalizarServicio.ps1` | Módulo de análisis: abre el XPZ configurado, resuelve wrapper y programa principal, método HTTP, entrada/salida, tipos, obligatoriedad por subnivel, errores HTTP y endpoint. |
 | `binary/RedactarDocumento.ps1` | Módulo de redacción: documentación técnica → markdown según template. |
 | `binary/EscribirSalidas.ps1` | Módulo de escritura: guarda el `.md`. |
+| `binary/CargarConfiguracion.ps1` | Módulo común de carga de `configuracion.json` con resolución de rutas contra la raíz del repositorio. |
 | `binary/DiagnosticoIA.ps1` | Módulo común de diagnóstico de excepciones para el generador, el inventario y el visor. |
 | `binary/GenerarDocumento.ps1` | Orquestador del generador: filtra ignorados, detecta duplicados, menú interactivo de tres modos, pipeline análisis → redacción → escritura, limpieza de `ERROR` y logs. |
+| `binary/ObtenerDocumento.cmd` | Atajo para invocar el generador de documentación de servicios desde `binary/`. |
 | `Logs/yyyyMMdd-HHmmss-review.json` | Resultado agregado de una ejecución completada (incluye `OK`, `WARNING`, `ERROR` y los `OMITIDO` presentes en el inventario). |
 | `Logs/yyyyMMdd-HHmmss-errores.txt` | `WARNING`, `ERROR` y `OMITIDO` legibles; se genera solo cuando hay al menos un warning o error. |
 | `Logs/yyyyMMdd-HHmmss-diagnostico-ia.json` | Excepciones estructuradas con fase, causa interna, ubicación, sentencia y stack trace; se genera solo cuando hay errores. |
@@ -263,8 +266,14 @@ El desarrollo sigue el método spec-driven. Cada spec define el alcance, modelo 
 |---|---|---|
 | [SPEC 02](specs/02-visor-endpoints.md) | Aprobado e implementado | Visor web de endpoints: grilla con filtro, tema claro/oscuro y generación desde `endpoints.json`. |
 | [SPEC 03](specs/03-generador-documentacion-servicios.md) | Aprobado e implementado | Pipeline `AnalizarServicio.ps1` → `RedactarDocumento.ps1` → `EscribirSalidas.ps1`, configuración dinámica y selección interactiva. |
+| [SPEC 04](specs/04-menu-interactivo-generador.md) | Implementado | Menú interactivo con tres modos (individual, múltiple vía `Out-GridView`, lote completo), barra de progreso, regeneración sin confirmación y log de errores. |
+| [SPEC 05](specs/05-integridad-pipeline-generacion.md) | Implementado | Integridad del pipeline: configuración única del XPZ, duplicados, estados `OK`/`WARNING`/`ERROR`/`OMITIDO`, logs y códigos de salida. |
+| [SPEC 06](specs/06-analizador-xpz-contratos-completos.md) | Implementado | Analizador XPZ de contratos completos: tipos estrictos, estructuras SDT recursivas expandidas por ruta JSON y estados de resolución. |
+| [SPEC 07](specs/07-coherencia-documental-y-visor.md) | Implementado | Coherencia documental y robustez del visor: normas y rutas alineadas con el pipeline real, seguridad, accesibilidad y adaptación móvil del visor. |
+| [SPEC 08](specs/08-detector-cambios-xpz.md) | Borrador | Detector de cambios por árbol transitivo del XPZ, checksums, historial de versiones y grafo de dependencias. |
+| [SPEC 09](specs/09-pruebas-automatizadas-locales.md) | Borrador | Harness local sin dependencias para probar pipeline, analizador y visor en entornos aislados. |
 
-Las funcionalidades que no aparecen en esta tabla no se consideran disponibles. Las propuestas futuras deben incorporarse mediante una spec aprobada antes de documentarse como parte del proceso operativo.
+Las filas en `Borrador` corresponden a funcionalidades en desarrollo; las funcionalidades que no aparecen en esta tabla no se consideran disponibles. Las propuestas futuras deben incorporarse mediante una spec aprobada antes de documentarse como parte del proceso operativo.
 
 ## Obtención del inventario de endpoints
 
