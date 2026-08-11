@@ -52,11 +52,17 @@ function Cargar-Configuracion {
         throw 'La configuracion no define packagename.'
     }
 
+    $serviciosIgnorados = @()
+    if ($configuracionRaw.serviciosIgnorados -and @($configuracionRaw.serviciosIgnorados).Count -gt 0) {
+        $serviciosIgnorados = @($configuracionRaw.serviciosIgnorados | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } | ForEach-Object { [string]$_ })
+    }
+
     return [pscustomobject]@{
         ConfigPath = $ConfigPath
         XpzPath = $rutaXpzResuelta
         PackageName = $packageName
         Cliente = [string]$configuracionRaw.cliente
+        ServiciosIgnorados = $serviciosIgnorados
         RaizRepositorio = $raizRepositorio
     }
 }

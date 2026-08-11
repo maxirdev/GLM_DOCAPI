@@ -1,6 +1,6 @@
 # SPEC 02 — Visor web de los endpoints APIGLM
 
-> **Estado:** Aprobado
+> **Estado:** Implementado
 > **Depende de:** —
 > **Fecha:** 2026-08-07
 > **Objetivo:** Crear un visor estático sin dependencias que muestre los endpoints de `documentacion/Endpoints/endpoints.json` en una grilla filtrable, con un script que se ejecuta en cascada con el inventario.

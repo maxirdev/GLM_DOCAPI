@@ -119,6 +119,15 @@ function Redactar-Documento {
         Agregar-Linea 'Content-Type: `application/octet-stream`'
         Agregar-Linea ''
         Agregar-Linea 'Archivo binario (PDF).'
+    } elseif ($Documentacion.SalidaVacia) {
+        Agregar-Linea 'Sin mensaje explícito.'
+    } elseif ($Documentacion.TipoColeccionPrimitiva -ne $null) {
+        Agregar-Linea 'Colección: `SI`.'
+        Agregar-Linea ''
+        $tipoColeccion = $Documentacion.TipoColeccionPrimitiva
+        if ([string]::IsNullOrWhiteSpace([string]$tipoColeccion)) { $tipoColeccion = 'Colección JSON' }
+        else { $tipoColeccion = 'Colección de ' + $tipoColeccion }
+        Agregar-Linea $tipoColeccion
     } else {
         $coleccion = 'NO'
         if ($Documentacion.SalidaColeccion) { $coleccion = 'SI' }

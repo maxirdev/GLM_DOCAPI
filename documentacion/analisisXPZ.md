@@ -21,6 +21,10 @@ Si el servicio combina ambas fuentes, usa otro mecanismo de entrada o no permite
 
 Usar el XPZ como fuente principal para Source, Rules, variables, SDT, dominios, atributos y asignaciones. Usar información operativa, código generado, configuración desplegada o una respuesta real sanitizada únicamente cuando el XPZ no pueda confirmar un dato necesario para consumir el servicio.
 
+La fuente de verdad es únicamente el XPZ indicado en `configuracion.json`. No buscar delegados, SDT ni procedimientos en otros XPZ disponibles localmente (p. ej. versiones viejas o de otros clientes): un objeto ausente en el XPZ configurado se trata como no exportado.
+
+Los servicios listados en `serviciosIgnorados` de `configuracion.json` están referenciados en el inventario pero no se documentan. `GenerarDocumento.ps1` los informa al abrir la consola y los excluye del procesamiento con estado `OMITIDO`; no se genera su documento ni se registran como error.
+
 Si las fuentes se contradicen, no elegir una por analogía. Registrar el dato como pendiente e indicar la evidencia necesaria:
 
 ```text
@@ -48,6 +52,8 @@ Leer Source, Rules y variables del programa principal.
 #### GET
 
 Clasificar como GET cuando el programa principal usa `APIGLMRequestIn.QueryParams` o no recibe parámetros funcionales.
+
+Si el programa usa `QueryParams` y además deserializa una estructura con `FromJson` desde una posición de la URL (`&Sdt.FromJson(&colQueryParams.Item(N))`), el método es ambiguo (una estructura no viaja en la URL de un GET); detener el análisis y marcar error `Método ambiguo`.
 
 Cuando exista un parser posicional:
 
@@ -93,7 +99,8 @@ Aplicar esta tipografía canónica:
 - `bas:Blob` y `bas:Image` serializados: `Base64`.
 - Objeto compuesto: `Estructura <nombre del atributo>`.
 - Colección compuesta: `Colección de Estructura <nombre del atributo>`.
-- Colección primitiva o todavía no resuelta: `Colección JSON`.
+- Colección primitiva con tipo de elemento confirmado: `Colección de <tipo del elemento>`, por ejemplo `Colección de String (100)`.
+- Colección primitiva cuyo tipo de elemento no se confirma: `Colección JSON`.
 
 No usar como tipos finales `Texto`, `Numérico`, `Booleano`, `LongString`, `Objeto JSON` ni `Colección`. Si un tipo textual no tiene dimensión confirmada, usar `String`. Si `Length` y `AttMaxLen` difieren, usar `String` sin dimensión y sin registrar un pendiente por esa discrepancia.
 
@@ -109,7 +116,7 @@ Los nombres internos de SDT sirven solo para localizar evidencia y no se publica
 
 ### 4. Calcular `Obligatorio`
 
-Analizar la obligatoriedad después de resolver la entrada completa, limitándose al programa principal. No recorrer procedimientos llamados en cascada. Las validaciones funcionales se inspeccionan únicamente para esta columna y no se publican como contenido del servicio.
+Analizar la obligatoriedad después de resolver la entrada completa, limitándose al programa principal. No recorrer procedimientos llamados en cascada. Cuando el Source de los subprocesos alcanzables esté informado en el XPZ, puede usarse como evidencia complementaria de referencia para los campos de entrada (mismo patrón `VariableSdt.RutaJson`), sin reemplazar la regla de no recorrer procedimientos para inferencias por analogía. Las validaciones funcionales se inspeccionan únicamente para esta columna y no se publican como contenido del servicio.
 
 Usar `SI` cuando se confirme al menos una de estas evidencias:
 
@@ -135,6 +142,12 @@ Seguir la construcción de la respuesta satisfactoria en el programa principal y
 - Los tipos y descripciones de esos campos.
 
 La salida satisfactoria usa HTTP 200. No publicar nombres internos de SDT ni la configuración de la envoltura.
+
+La salida es una colección cuando el payload declara `AttCollection=True` (variable o SDT devuelto) o cuando el SDT está definido como colección en su nodo principal. Un payload escalar (`&X` o `&X.ToString()`) se documenta como un único campo con su tipo canónico. Un payload vacío (`''`) se documenta como `Sin mensaje explícito` sin generar pendiente.
+
+Si el procedimiento principal de un servicio no está exportado en el XPZ configurado, detener el análisis con el mensaje `El programa principal <X> no está exportado en el XPZ configurado. No puede inferirse.` Igual criterio cuando la salida referencia un SDT ausente: `La salida del SDT <X> no está exportada en el XPZ configurado. No puede inferirse.` No completar la estructura por analogía.
+
+Si tras los controles anteriores la salida no puede determinarse, detener el análisis y marcar error: no se genera un documento con salida vacía no confirmada.
 
 ### 6. Extraer errores HTTP explícitos
 

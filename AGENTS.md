@@ -29,7 +29,7 @@ En `documentacion/` (commiteada):
 - `Endpoints/binary/` — scripts: `GenerarListaEndpoints.ps1` (inventario), `GenerarVistaHTML.ps1` (visor) y `ObtenerEndpoints.cmd`.
 - `Endpoints/web/` — visor estático: `APIServicios.html` (generado e ignorado), `style.css`, `app.js`.
 - `GenerarDocumentacion.cmd` (raíz del repo) — orquestador que regenera inventario y visor.
-- `configuracion.json` (raíz del repo) — configuración operativa: ruta del XPZ, rutas de salida y `packagename` constante del endpoint publicado por XPZ.
+- `configuracion.json` (raíz del repo) — configuración operativa: ruta del XPZ, rutas de salida, `packagename` constante del endpoint publicado por XPZ y `serviciosIgnorados` (lista de FQN referenciados que no se documentan).
 - `servicios/` — documentos por servicio (p. ej. `wsobtenertotalessolicitud.md`).
 
 Orden obligatorio por servicio: analisisXPZ → reglasEditoriales → templateDoc. No recalcular decisiones durante la redacción.
@@ -44,6 +44,8 @@ Orden obligatorio por servicio: analisisXPZ → reglasEditoriales → templateDo
 - Resolución de dominios homónimos: una referencia `Domain:Nombre` sin módulo se resuelve al dominio de la raíz (`fullyQualifiedName` igual al nombre); si se necesita otro módulo, la referencia lo califica (`Domain:Nombre, Modulo`), y esa forma prevalece.
 - `Obligatorio` = `SI` solo con evidencia confirmada; al confirmar un campo primitivo, dejar de recorrer. Sin evidencia = `NO`.
 - Errores HTTP: únicamente llamadas a `GenerarAPIGLMResponse` con código ≠ 200 dentro del programa principal. `HttpCode.BadRequest`→400, `NotFound`→404, `MethodNotAllowed`→405. Excluir errores funcionales bajo HTTP 200.
+- Fuente única: solo el XPZ de `configuracion.json`. Si el programa principal delegado o el SDT de entrada/salida no está exportado en ese XPZ, detener con el mensaje correspondiente (`El programa principal <X> no está exportado en el XPZ configurado. No puede inferirse.` / `La salida del SDT <X> no está exportada en el XPZ configurado. No puede inferirse.`). No buscarlo en otros XPZ ni inferir por analogía.
+- `serviciosIgnorados` en `configuracion.json`: FQN referenciados en el inventario que no se documentan. Al abrir la consola se informan y se excluyen del procesamiento con estado `OMITIDO` (ni ERROR ni documento).
 - Ante evidencia insuficiente o contradictoria, **detener y registrar** `PENDIENTE DE CONFIRMACIÓN: <dato faltante>. Evidencia requerida: <fuente necesaria>.` Nunca completar por analogía ni suposiciones.
 
 ## Verificación e inconsistencias conocidas

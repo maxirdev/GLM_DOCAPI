@@ -1,5 +1,9 @@
 {
   "xpz": "xpz/trunk.xpz",
   "packagename": "glmsuit.comercial.",
-  "cliente": "Trunk"
+  "cliente": "Trunk",
+  "serviciosIgnorados": [
+    "APIGLM.WSRedireccionHome",
+    "APIGLM.Comun.WSLiberarSolicitud"
+  ]
 }

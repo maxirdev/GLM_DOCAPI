@@ -87,6 +87,12 @@ La consulta debe conservar exactamente <cantidad> posiciones y respetar el orden
 
 ## Salida exitosa
 
+<!-- Tres variantes según la salida:
+1) Salida estructurada: Colección: <SI/NO>. + tabla de campos (+ tablas de estructuras anidadas por ruta JSON).
+2) Payload vacío (''): reemplazar la tabla por: Sin mensaje explícito.
+3) Colección primitiva: Colección: SI. + línea `Colección de <tipo del elemento>` (o `Colección JSON` si el tipo no se confirma).
+-->
+
 Colección: `<SI/NO>`.
 
 | Campo | Tipo | Descripción |

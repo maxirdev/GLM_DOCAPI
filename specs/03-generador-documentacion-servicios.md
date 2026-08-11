@@ -1,6 +1,6 @@
 # SPEC 02 — Generador de documentación de servicios APIGLM
 
-> **Estado:** Aprobado
+> **Estado:** Implementado
 > **Depende de:** —
 > **Fecha:** 2026-08-08
 > **Objetivo:** Crear un generador en PowerShell 5.1 (sin dependencias) que, a partir del XPZ y del inventario `endpoints.json`, produzca la documentación pública de un servicio APIGLM siguiendo `analisisXPZ.md` → `reglasEditoriales.md` → `templateDoc.md`, con un informe de revisión para los juicios no automatizables.

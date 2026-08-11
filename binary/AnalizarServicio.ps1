@@ -314,6 +314,14 @@ function Obtener-DelegacionUnica {
     $palabrasReservadas = @('if', 'for', 'while', 'do', 'case', 'switch', 'catch', 'return', 'new', 'format')
     $infraestructura = @('ProcesarRequest', 'GenerarAPIGLMResponse', 'GenerarHttpResponse', 'GenerarHttpError', 'PHacerRollback', 'PHacerCommit', 'InsLogEventos', 'InsLogs')
     $patronLlamada = [regex]::new('\b([A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*)\s*\(')
+    $patronDelegacion = [regex]::new('&APIGLMResponse\s*=\s*([A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*)\s*\(')
+    $delegacionEscrita = $null
+    $coincidenciaDelegacion = $patronDelegacion.Match($source)
+    if ($coincidenciaDelegacion.Success) {
+        $delegacionEscrita = $coincidenciaDelegacion.Groups[1].Value
+        $ultimoSegmentoDelegacion = $delegacionEscrita.Split('.')[-1]
+        if ($infraestructura -contains $ultimoSegmentoDelegacion) { $delegacionEscrita = $null }
+    }
     $delegacionesTier1 = New-Object System.Collections.Generic.List[string]
     $delegacionesTier2 = New-Object System.Collections.Generic.List[string]
     $vistos = @{}
@@ -324,6 +332,21 @@ function Obtener-DelegacionUnica {
         $objeto = $null
         if ($llamada.Contains('.')) {
             if ($porNombreCompleto.ContainsKey($llamada)) { $objeto = $porNombreCompleto[$llamada] }
+            if (-not $objeto) {
+                $ultimoSegmento = $llamada.Split('.')[-1]
+                if ($ultimoSegmento -in @('Udp', 'Call', 'St', 'Upd')) {
+                    $nombreBase = $llamada.Substring(0, $llamada.Length - $ultimoSegmento.Length - 1)
+                    if ($porNombre.ContainsKey($nombreBase) -and $porNombre[$nombreBase].Count -eq 1) {
+                        $objeto = $porNombre[$nombreBase][0]
+                    } elseif ($porNombre.ContainsKey($nombreBase)) {
+                        $moduloWrapper = $Wrapper.GetAttribute('fullyQualifiedName')
+                        $ultimoPunto = $moduloWrapper.LastIndexOf('.')
+                        if ($ultimoPunto -gt 0) { $moduloWrapper = $moduloWrapper.Substring(0, $ultimoPunto) }
+                        $candidatos = @($porNombre[$nombreBase] | Where-Object { $_.GetAttribute('fullyQualifiedName') -like "$moduloWrapper.*" })
+                        if ($candidatos.Count -eq 1) { $objeto = $candidatos[0] }
+                    }
+                }
+            }
         } else {
             if ($porNombre.ContainsKey($llamada) -and $porNombre[$llamada].Count -eq 1) { $objeto = $porNombre[$llamada][0] }
             elseif ($porNombre.ContainsKey($llamada)) {
@@ -357,6 +380,19 @@ function Obtener-DelegacionUnica {
     elseif ($delegacionesTier2.Count -eq 1) { $delegaciones = $delegacionesTier2 }
     else { $delegaciones = @() }
     if ($delegaciones.Count -eq 0) {
+        if ($delegacionEscrita) {
+            $nombreBase = $delegacionEscrita
+            $ultimoSegmento = $nombreBase.Split('.')[-1]
+            if ($ultimoSegmento -in @('Udp', 'Call', 'St', 'Upd')) {
+                $nombreBase = $nombreBase.Substring(0, $nombreBase.Length - $ultimoSegmento.Length - 1)
+            }
+            $existe = $false
+            if ($porNombreCompleto.ContainsKey($delegacionEscrita)) { $existe = $true }
+            elseif ($porNombre.ContainsKey($nombreBase)) { $existe = $true }
+        if (-not $existe) {
+            throw ('El programa principal ' + $nombreBase + ' no está exportado en el XPZ configurado. No puede inferirse.')
+        }
+        }
         return $null
     }
     if ($delegaciones.Count -gt 1) {
@@ -427,6 +463,49 @@ function Obtener-Sdt {
         $candidatos = [array]$Indice.PorNombre[$NombreSdt]
     } else {
         $candidatos = @($Xml.SelectNodes("//Object[@name='" + $NombreSdt + "']"))
+    }
+    if ($candidatos.Count -eq 0 -and $NombreSdt -match '\.') {
+        $partesRuta = @($NombreSdt.Split('.'))
+        $nodoActual = Obtener-Sdt -Xml $Xml -NombreSdt $partesRuta[0] -Modulo $Modulo -Indice $Indice
+        if ($nodoActual) {
+            for ($i = 1; $i -lt $partesRuta.Count; $i++) {
+                $segmento = $partesRuta[$i]
+                $siguiente = $null
+                foreach ($hijo in @(Obtener-HijosSdt -Sdt $nodoActual)) {
+                    $nombreHijo = $hijo.GetAttribute('name')
+                    if (-not $nombreHijo) { $nombreHijo = $hijo.GetAttribute('Name') }
+                    if ($nombreHijo -eq $segmento) { $siguiente = $hijo; break }
+                }
+                if (-not $siguiente) {
+                    foreach ($hijo in @(Obtener-HijosSdt -Sdt $nodoActual)) {
+                        if ($hijo.LocalName -ne 'Level') { continue }
+                        $infoHijo = $hijo.SelectSingleNode('LevelInfo')
+                        $itemColeccionHijo = ''
+                        if ($infoHijo) { $itemColeccionHijo = Obtener-Propiedad -Nodo $infoHijo -Nombre 'idCollectionItemName' }
+                        if ($itemColeccionHijo -eq $segmento) { $siguiente = $hijo; break }
+                    }
+                }
+                if (-not $siguiente -and $nodoActual.LocalName -eq 'Object') {
+                    $raiz = $null
+                    foreach ($part in $nodoActual.SelectNodes('Part')) {
+                        $hijosRaiz = @($part.ChildNodes | Where-Object { $_.NodeType -eq 'Element' -and $_.LocalName -ne 'Properties' })
+                        if ($hijosRaiz.Count -gt 0) { $raiz = $hijosRaiz[0]; break }
+                    }
+                    if ($raiz) {
+                        $itemColeccion = ''
+                        $info = $raiz.SelectSingleNode('LevelInfo')
+                        if ($info) { $itemColeccion = Obtener-Propiedad -Nodo $info -Nombre 'idCollectionItemName' }
+                        $nombreRaiz = $raiz.GetAttribute('Name')
+                        if (-not $nombreRaiz) { $nombreRaiz = $raiz.GetAttribute('name') }
+                        if ($segmento -eq $itemColeccion -or $segmento -eq $nombreRaiz) { $siguiente = $raiz }
+                    }
+                }
+                if (-not $siguiente) { return $null }
+                $nodoActual = $siguiente
+            }
+            return $nodoActual
+        }
+        return $null
     }
     if ($candidatos.Count -eq 0) { return $null }
     if ($Modulo) {
@@ -513,6 +592,11 @@ function Resolver-Metodo {
         throw 'El programa principal combina QueryParams y FromJson sobre Body; el metodo no puede resolverse. No se genera el documento.'
     }
     if ($esPost) { return 'POST' }
+
+    $esFromJsonQuery = $Source -match '&[A-Za-z_][A-Za-z0-9_]*\s*\.FromJson\s*\(\s*&[A-Za-z_][A-Za-z0-9_]*\.Item\s*\('
+    if ($esFromJsonQuery) {
+        throw 'Metodo ambiguo: el programa combina QueryParams con FromJson de una estructura en una posicion de la URL; no es compatible con GET. No se genera el documento.'
+    }
     return 'GET'
 }
 
@@ -603,7 +687,7 @@ function Resolver-EntradaPost {
     }
     $sdt = Obtener-Sdt -Xml $Xml -NombreSdt $nombreSdt -Modulo $modulo -Indice $Indice
     if (-not $sdt) {
-        throw ('No se pudo localizar el SDT ' + $nombreSdt + ' en el XPZ.')
+        throw ('La entrada del SDT ' + $nombreSdt + ' no está exportada en el XPZ configurado. No puede inferirse.')
     }
     return [pscustomobject]@{
         VariableSdt = $variableSdt
@@ -866,7 +950,9 @@ function Obtener-DescripcionCampo {
     Obtiene la descripcion de un campo desde su evidencia en el XPZ.
     .DESCRIPTION
     Usa el atributo description del item o la propiedad Description, y en su defecto
-    la descripcion del objeto Domain o Attribute referenciado por idBasedOn.
+    la descripcion del objeto Domain o Attribute referenciado por idBasedOn. Para
+    referencias Attribute se consulta la definicion canonica (elemento Attribute),
+    ademas de la busqueda entre objetos.
     Devuelve una cadena vacia cuando no hay descripcion derivable.
     #>
     [CmdletBinding()]
@@ -884,6 +970,19 @@ function Obtener-DescripcionCampo {
     $idBasedOn = Obtener-Propiedad -Nodo $Item -Nombre 'idBasedOn'
     if ($idBasedOn -match '^(Domain|Attribute):(.+)$') {
         $nombreRef = $Matches[2].Trim()
+        if ($Matches[1] -eq 'Attribute') {
+            $atributo = Obtener-Referencia -Tipo 'Attribute' -Nombre $nombreRef -Indice $Indice -Xml $Xml
+            if (-not $atributo) {
+                $atributosXml = @($Xml.SelectNodes("//Attribute[@name='" + $nombreRef + "']"))
+                if ($atributosXml.Count -eq 1) { $atributo = $atributosXml[0] }
+            }
+            if ($atributo) {
+                $descripcion = $atributo.GetAttribute('description')
+                if ($descripcion) { return ($descripcion -replace '^\*\s*', '') }
+                $descripcion = Obtener-Propiedad -Nodo $atributo -Nombre 'Description'
+                if ($descripcion) { return $descripcion }
+            }
+        }
         $objetos = @()
         if ($Indice -and $Indice.PorNombre -and $Indice.PorNombre.ContainsKey($nombreRef)) {
             $objetos = [array]$Indice.PorNombre[$nombreRef]
@@ -1161,7 +1260,8 @@ function Resolver-Obligatorio {
     param(
         [Parameter(Mandatory = $true)][string]$Source,
         [Parameter(Mandatory = $true)][object]$Fila,
-        [Parameter(Mandatory = $false)][string]$VariableSdt = ''
+        [Parameter(Mandatory = $false)][string]$VariableSdt = '',
+        [Parameter(Mandatory = $false)][object[]]$SourcesAdicionales = @()
     )
 
     $lineas = [regex]::Split($Source, "`r?`n")
@@ -1180,6 +1280,14 @@ function Resolver-Obligatorio {
 
     if ($codigo -match $patron) {
         return 'SI'
+    }
+
+    foreach ($fuenteAdicional in $SourcesAdicionales) {
+        $lineasAdicionales = [regex]::Split($fuenteAdicional, "`r?`n")
+        $codigoAdicional = @($lineasAdicionales | Where-Object { $_ -notmatch '^\s*//' }) -join "`n"
+        if ($codigoAdicional -match $patron) {
+            return 'SI'
+        }
     }
 
     if ($VariableSdt -and $Fila.PSObject.Properties['RutaJson'] -and $Fila.RutaJson) {
@@ -1216,10 +1324,11 @@ function Agregar-Obligatorio {
     param(
         [Parameter(Mandatory = $true)][string]$Source,
         [Parameter(Mandatory = $true)][object]$Fila,
-        [Parameter(Mandatory = $false)][string]$VariableSdt = ''
+        [Parameter(Mandatory = $false)][string]$VariableSdt = '',
+        [Parameter(Mandatory = $false)][object[]]$SourcesAdicionales = @()
     )
 
-    $Fila | Add-Member -MemberType NoteProperty -Name 'Obligatorio' -Value (Resolver-Obligatorio -Source $Source -Fila $Fila -VariableSdt $VariableSdt) -Force
+    $Fila | Add-Member -MemberType NoteProperty -Name 'Obligatorio' -Value (Resolver-Obligatorio -Source $Source -Fila $Fila -VariableSdt $VariableSdt -SourcesAdicionales $SourcesAdicionales) -Force
 }
 
 function Aplicar-Obligatorio {
@@ -1236,12 +1345,13 @@ function Aplicar-Obligatorio {
         [Parameter(Mandatory = $true)][string]$Source,
         [Parameter(Mandatory = $false)][object[]]$Filas = @(),
         [Parameter(Mandatory = $false)][object[]]$Tablas = @(),
-        [Parameter(Mandatory = $false)][string]$VariableSdt = ''
+        [Parameter(Mandatory = $false)][string]$VariableSdt = '',
+        [Parameter(Mandatory = $false)][object[]]$SourcesAdicionales = @()
     )
 
-    foreach ($fila in $Filas) { Agregar-Obligatorio -Source $Source -Fila $fila -VariableSdt $VariableSdt }
+    foreach ($fila in $Filas) { Agregar-Obligatorio -Source $Source -Fila $fila -VariableSdt $VariableSdt -SourcesAdicionales $SourcesAdicionales }
     foreach ($tabla in $Tablas) {
-        foreach ($fila in $tabla.Filas) { Agregar-Obligatorio -Source $Source -Fila $fila -VariableSdt $VariableSdt }
+        foreach ($fila in $tabla.Filas) { Agregar-Obligatorio -Source $Source -Fila $fila -VariableSdt $VariableSdt -SourcesAdicionales $SourcesAdicionales }
     }
 }
 
@@ -1486,7 +1596,7 @@ function Resolver-Errores {
     )
 
     $errores = New-Object System.Collections.Generic.List[object]
-    $spans = Obtener-SpansLlamada -Source $Source -PatronNombre 'GenerarAPIGLMResponse'
+    $spans = Obtener-SpansLlamada -Source $Source -PatronNombre 'GenerarAPIGLMResponse(?:\.[A-Za-z]+)?'
     foreach ($span in $spans) {
         $interior = Obtener-InteriorLlamada -Span $span
         $argumentos = Obtener-ArgumentosLlamada -Interior $interior
@@ -1521,17 +1631,52 @@ function Resolver-Salida {
     )
 
     $variable = $null
-    $spans = Obtener-SpansLlamada -Source $Source -PatronNombre 'GenerarAPIGLMResponse'
+    $variableEscalar = $null
+    $payloadVacio = $false
+    $spans = Obtener-SpansLlamada -Source $Source -PatronNombre 'GenerarAPIGLMResponse(?:\.[A-Za-z]+)?'
     foreach ($span in $spans) {
         $interior = Obtener-InteriorLlamada -Span $span
         $argumentos = Obtener-ArgumentosLlamada -Interior $interior
         if ($argumentos.Count -lt 3) { continue }
         if ($argumentos[0].Trim() -notmatch '^HttpCode\.OK$') { continue }
         $coincidenciaVariable = [regex]::Match($argumentos[2], '&([A-Za-z_][A-Za-z0-9_]*)\s*\.ToJson\s*\(\s*\)')
-        if (-not $coincidenciaVariable.Success) { continue }
-        $variable = $coincidenciaVariable.Groups[1].Value
+        if ($coincidenciaVariable.Success) { $variable = $coincidenciaVariable.Groups[1].Value; continue }
+        $arg2Normalizado = $argumentos[2].Trim() -replace '^!', ''
+        if ($arg2Normalizado -eq "''" -or $arg2Normalizado -eq '""' -or $arg2Normalizado -eq '') { $payloadVacio = $true; continue }
+        if ($variableEscalar) { continue }
+        $coincidenciaEscalar = [regex]::Match($argumentos[2], '&([A-Za-z_][A-Za-z0-9_]*)\s*\.ToString\s*\(\s*\)')
+        if (-not $coincidenciaEscalar.Success) {
+            $coincidenciaEscalar = [regex]::Match($argumentos[2].Trim(), '^&([A-Za-z_][A-Za-z0-9_]*)$')
+        }
+        if ($coincidenciaEscalar.Success) { $variableEscalar = $coincidenciaEscalar.Groups[1].Value }
     }
     if (-not $variable) {
+        if ($payloadVacio) {
+            return [pscustomobject]@{
+                SalidaColeccion = $false
+                Salida = @()
+                EstructurasSalida = @()
+                Faltantes = @()
+                Ciclos = @()
+                NoResuelta = $false
+                SalidaVacia = $true
+                TipoContenidoSalida = 'application/json'
+            }
+        }
+        if ($variableEscalar) {
+            $salidaEscalar = Resolver-SalidaEscalar -Xml $Xml -ProgramaPrincipal $ProgramaPrincipal -Nombre $variableEscalar -Indice $Indice
+            if ($salidaEscalar) {
+                return [pscustomobject]@{
+                    SalidaColeccion = $false
+                    Salida = @($salidaEscalar)
+                    EstructurasSalida = @()
+                    Faltantes = @()
+                    Ciclos = @()
+                    NoResuelta = $false
+                    TipoContenidoSalida = 'application/json'
+                }
+            }
+        }
         if ($Source -match 'HttpResponse\.AddFile') {
             return [pscustomobject]@{
                 SalidaColeccion = $false
@@ -1567,6 +1712,30 @@ function Resolver-Salida {
     }
     $datosTipo = Obtener-DatosTipo -Xml $Xml -Nodo $variableNodo -Indice $Indice
     if (-not $datosTipo.EsEstructura) {
+        if ($datosTipo.EsColeccion) {
+            $datosElemento = [pscustomobject]@{
+                BaseTipo = $datosTipo.BaseTipo
+                EsEstructura = $false
+                EsColeccion = $false
+                NombreSdt = ''
+                ModuloSdt = ''
+                Longitud = $datosTipo.Longitud
+                LongitudMaxima = $datosTipo.LongitudMaxima
+                Decimales = $datosTipo.Decimales
+                NoResuelto = $datosTipo.NoResuelto
+            }
+            $tipoElemento = Convertir-TipoCanonico -DatosTipo $datosElemento -NombreCampo $variable
+            return [pscustomobject]@{
+                SalidaColeccion = $true
+                Salida = @()
+                EstructurasSalida = @()
+                Faltantes = @()
+                Ciclos = @()
+                NoResuelta = $false
+                TipoColeccionPrimitiva = $tipoElemento
+                TipoContenidoSalida = 'application/json'
+            }
+        }
         return [pscustomobject]@{
             SalidaColeccion = $datosTipo.EsColeccion
             Salida = @()
@@ -1586,10 +1755,12 @@ function Resolver-Salida {
             Faltantes = @()
             Ciclos = @()
             NoResuelta = $true
+            MotivoNoResuelta = ('La salida del SDT ' + $datosTipo.NombreSdt + ' no está exportada en el XPZ configurado. No puede inferirse.')
             TipoContenidoSalida = 'application/json'
         }
     }
 
+    $esColeccionSalida = $datosTipo.EsColeccion -or (Obtener-SdtEsColeccion -Sdt $sdt)
     $expandido = Expandir-EstructuraSdt -Xml $Xml -Sdt $sdt -Indice $Indice
     $salida = New-Object System.Collections.Generic.List[object]
     foreach ($fila in $expandido.Filas) {
@@ -1617,7 +1788,7 @@ function Resolver-Salida {
     }
 
     return [pscustomobject]@{
-        SalidaColeccion = $datosTipo.EsColeccion
+        SalidaColeccion = $esColeccionSalida
         Salida = $salida.ToArray()
         EstructurasSalida = $estructurasSalida.ToArray()
         Faltantes = $expandido.Faltantes
@@ -1625,6 +1796,79 @@ function Resolver-Salida {
         NoResuelta = $false
         TipoContenidoSalida = 'application/json'
     }
+}
+
+function Obtener-SdtEsColeccion {
+    <#
+    .SYNOPSIS
+    Indica si un SDT esta definido como coleccion en su nodo principal (factor B).
+    .DESCRIPTION
+    Para Object (SDT externo) lee el AttCollection del LevelInfo del nodo raiz;
+    para Level (resultado de ruta punteada) lee su LevelInfo. Devuelve $true si el
+    SDT declara coleccion aunque la variable no lo marque.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][System.Xml.XmlNode]$Sdt
+    )
+
+    try {
+        $raiz = $Sdt
+        if ($Sdt.LocalName -eq 'Object') {
+            foreach ($part in $Sdt.SelectNodes('Part')) {
+                $hijos = @($part.ChildNodes | Where-Object { $_.NodeType -eq 'Element' -and $_.LocalName -ne 'Properties' })
+                if ($hijos.Count -eq 0) { continue }
+                $raiz = $hijos[0]
+                break
+            }
+        }
+        $info = $raiz.SelectSingleNode('LevelInfo')
+        if ($info) {
+            return (Obtener-Propiedad -Nodo $info -Nombre 'AttCollection') -eq 'True'
+        }
+        return (Obtener-Propiedad -Nodo $raiz -Nombre 'AttCollection') -eq 'True'
+    } catch { return $false }
+}
+
+function Resolver-SalidaEscalar {
+    <#
+    .SYNOPSIS
+    Resuelve la salida cuando el payload de OK es un valor escalar, no un SDT.
+    .DESCRIPTION
+    Control adicional que actua solo cuando la salida estructurada no pudo
+    confirmarse: reconoce la variable del payload escalar ('&X.ToString()' o
+    '&X') y documenta un unico campo con su tipo y descripcion canonicos.
+    Devuelve $null cuando el tipo no puede confirmarse desde el XPZ.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][System.Xml.XmlDocument]$Xml,
+        [Parameter(Mandatory = $true)][System.Xml.XmlNode]$ProgramaPrincipal,
+        [Parameter(Mandatory = $true)][string]$Nombre,
+        [Parameter(Mandatory = $false)]$Indice
+    )
+
+    try {
+        $tipo = ''
+        $descripcion = ''
+        $variableNodo = Obtener-Variable -ProgramaPrincipal $ProgramaPrincipal -Nombre $Nombre
+        if ($variableNodo) {
+            $datos = Obtener-DatosTipo -Xml $Xml -Nodo $variableNodo -Indice $Indice
+            $tipo = Convertir-TipoCanonico -DatosTipo $datos -NombreCampo $Nombre
+            $descripcion = Obtener-DescripcionCampo -Xml $Xml -Item $variableNodo -Indice $Indice
+        }
+        if (-not $tipo) {
+            $atributo = Obtener-Referencia -Tipo 'Attribute' -Nombre $Nombre -Indice $Indice -Xml $Xml
+            if ($atributo) {
+                $datosAtributo = Obtener-DatosTipo -Xml $Xml -Nodo $atributo -Indice $Indice
+                $tipo = Convertir-TipoCanonico -DatosTipo $datosAtributo -NombreCampo $Nombre
+                if (-not $descripcion) { $descripcion = Obtener-DescripcionCampo -Xml $Xml -Item $atributo -Indice $Indice }
+            }
+        }
+        if (-not $tipo) { return $null }
+        if (-not $descripcion) { $descripcion = $Nombre }
+        return [pscustomobject]@{ Campo = $Nombre; Tipo = $tipo; Descripcion = $descripcion }
+    } catch { return $null }
 }
 
 function Resolver-Endpoint {
@@ -1674,6 +1918,396 @@ function Obtener-Source {
     throw ('El programa principal ' + $ProgramaPrincipal.GetAttribute('fullyQualifiedName') + ' no tiene un Source no vacio.')
 }
 
+function Obtener-SourcesEvidencia {
+    <#
+    .SYNOPSIS
+    Reune los Sources de los procedimientos que construyen la salida de un servicio.
+    .DESCRIPTION
+    Devuelve el Source del programa principal y los de los procedimientos alcanzables
+    por llamadas (incluyendo sufijos de invocacion como Udp/Call cuando se indique).
+    No lanza: omite los procedimientos sin Source no vacio.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][System.Xml.XmlDocument]$Xml,
+        [Parameter(Mandatory = $true)][System.Xml.XmlNode]$ProgramaPrincipal,
+        [Parameter(Mandatory = $false)]$Indice,
+        [Parameter(Mandatory = $false)][switch]$IncluirSufijos
+    )
+
+    $fuentes = New-Object System.Collections.Generic.List[string]
+    foreach ($nodo in @(Obtener-NodosEvidencia -Xml $Xml -ProgramaPrincipal $ProgramaPrincipal -Indice $Indice -IncluirSufijos:$IncluirSufijos -ProfundidadMaxima 5)) {
+        try {
+            $fuente = Obtener-Source -ProgramaPrincipal $nodo
+            $fuentes.Add($fuente)
+        } catch { }
+    }
+    return $fuentes.ToArray()
+}
+
+function Obtener-SourceLimpio {
+    <#
+    .SYNOPSIS
+    Devuelve el Source con comentarios y secciones java neutralizadas.
+    .DESCRIPTION
+    Reemplaza por espacios los caracteres de comentario de linea, bloque y las
+    secciones java (marcas 2, 3 y 4 de Construir-MarcasEspeciales), conservando los
+    saltos de linea para que las anclas de linea sigan siendo validas. Los literales
+    se mantienen para poder descartarlos en la resolucion de tipos.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$Source
+    )
+
+    $marcas = Construir-MarcasEspeciales -Source $Source
+    $chars = $Source.ToCharArray()
+    for ($i = 0; $i -lt $chars.Length; $i++) {
+        if ($marcas[$i] -ge 2 -and $chars[$i] -ne "`n") { $chars[$i] = ' ' }
+    }
+    return (-join $chars)
+}
+
+function Obtener-NombresLlamados {
+    <#
+    .SYNOPSIS
+    Extrae los nombres de procedimientos llamados desde un Source.
+    .DESCRIPTION
+    Devuelve los nombres unicos de llamadas que abren parentesis, omitiendo
+    palabras reservadas, infraestructura y las apariciones dentro de literales o
+    comentarios. Se usa para reunir los procedimientos que construyen la salida.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$Source
+    )
+
+    $palabrasReservadas = @('if', 'for', 'while', 'do', 'case', 'switch', 'catch', 'return', 'new', 'format', 'elseif', 'else', 'endif', 'endfor', 'endwhile', 'endsub', 'sub', 'end', 'exit', 'continue')
+    $infraestructura = @('ProcesarRequest', 'GenerarAPIGLMResponse', 'GenerarHttpResponse', 'GenerarHttpError', 'PHacerRollback', 'PHacerCommit', 'InsLogEventos', 'InsLogs', 'FromJson', 'ToJson', 'ToNumeric', 'ToString', 'Item', 'IsEmpty', 'Add', 'Clear')
+    $marcas = Construir-MarcasEspeciales -Source $Source
+    $patron = [regex]::new('\b([A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*)\s*\(')
+    $resultados = New-Object System.Collections.Generic.List[string]
+    $vistos = @{}
+    foreach ($coincidencia in $patron.Matches($Source)) {
+        if ($marcas[$coincidencia.Index] -ne 0) { continue }
+        $llamada = $coincidencia.Groups[1].Value
+        $ultimoSegmento = $llamada.Split('.')[-1]
+        if ($palabrasReservadas -contains $ultimoSegmento.ToLowerInvariant()) { continue }
+        if ($infraestructura -contains $ultimoSegmento) { continue }
+        if ($vistos.ContainsKey($llamada)) { continue }
+        $vistos[$llamada] = $true
+        $resultados.Add($llamada)
+    }
+    return $resultados.ToArray()
+}
+
+function Resolver-ObjetoLlamado {
+    <#
+    .SYNOPSIS
+    Resuelve el objeto Procedure de una llamada por nombre o fullyQualifiedName.
+    .DESCRIPTION
+    Devuelve el nodo unico o $null cuando la llamada no puede resolverse sin
+    ambiguedad. No lanza: ante cualquier duda se omite la fuente de evidencia.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][System.Xml.XmlDocument]$Xml,
+        [Parameter(Mandatory = $true)][string]$Nombre,
+        [Parameter(Mandatory = $false)]$Indice,
+        [Parameter(Mandatory = $false)][System.Xml.XmlNode]$Origen,
+        [Parameter(Mandatory = $false)][switch]$IncluirSufijos
+    )
+
+    if (-not $Indice) { return $null }
+    if ($Nombre.Contains('.')) {
+        if ($Indice.PorFqn -and $Indice.PorFqn.ContainsKey($Nombre)) {
+            return $Indice.PorFqn[$Nombre]
+        }
+        if ($IncluirSufijos) {
+            foreach ($sufijo in @('Call', 'Udp', 'St', 'Upd')) {
+                if ($Nombre -match ('\.' + $sufijo + '$')) {
+                    $nombreBase = $Nombre.Substring(0, $Nombre.Length - $sufijo.Length - 1)
+                    $objetoSufijo = Resolver-ObjetoLlamado -Xml $Xml -Nombre $nombreBase -Indice $Indice -Origen $Origen -IncluirSufijos
+                    if ($objetoSufijo) { return $objetoSufijo }
+                }
+            }
+        }
+        return $null
+    }
+    if ($Indice.PorNombreCodigo -and $Indice.PorNombreCodigo.ContainsKey($Nombre)) {
+        $candidatos = [array]$Indice.PorNombreCodigo[$Nombre]
+        if ($candidatos.Count -eq 1) { return $candidatos[0] }
+        if ($candidatos.Count -gt 1 -and $Origen) {
+            $moduloOrigen = $Origen.GetAttribute('fullyQualifiedName')
+            $ultimoPunto = $moduloOrigen.LastIndexOf('.')
+            if ($ultimoPunto -gt 0) { $moduloOrigen = $moduloOrigen.Substring(0, $ultimoPunto) }
+            $porModulo = @($candidatos | Where-Object { $_.GetAttribute('fullyQualifiedName') -like "$moduloOrigen.*" })
+            if ($porModulo.Count -eq 1) { return $porModulo[0] }
+        }
+    }
+    return $null
+}
+
+function Obtener-NodosEvidencia {
+    <#
+    .SYNOPSIS
+    Reune los procedimientos que construyen la salida de un servicio.
+    .DESCRIPTION
+    Devuelve el programa principal y los procedimientos que este alcanza por
+    llamadas (transitivo con profundidad acotada y deduplicado). No lanza: ante
+    cualquier fallo devuelve el programa principal como unica evidencia.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][System.Xml.XmlDocument]$Xml,
+        [Parameter(Mandatory = $true)][System.Xml.XmlNode]$ProgramaPrincipal,
+        [Parameter(Mandatory = $false)]$Indice,
+        [Parameter(Mandatory = $false)][int]$ProfundidadMaxima = 3,
+        [Parameter(Mandatory = $false)][switch]$IncluirSufijos
+    )
+
+    $nodos = New-Object System.Collections.Generic.List[object]
+    $vistos = New-Object System.Collections.Generic.List[string]
+    try {
+        $cola = New-Object System.Collections.Generic.Queue[object]
+        $fqnRaiz = $ProgramaPrincipal.GetAttribute('fullyQualifiedName')
+        $vistos.Add($fqnRaiz)
+        $cola.Enqueue([pscustomobject]@{ Nodo = $ProgramaPrincipal; Profundidad = 0 })
+        while ($cola.Count -gt 0) {
+            $actual = $cola.Dequeue()
+            $nodos.Add($actual.Nodo)
+            if ($actual.Profundidad -ge $ProfundidadMaxima) { continue }
+            $source = $null
+            try { $source = Obtener-Source -ProgramaPrincipal $actual.Nodo } catch { $source = $null }
+            if (-not $source) { continue }
+            foreach ($nombre in Obtener-NombresLlamados -Source $source) {
+                $objeto = Resolver-ObjetoLlamado -Xml $Xml -Nombre $nombre -Indice $Indice -Origen $actual.Nodo -IncluirSufijos:$IncluirSufijos
+                if (-not $objeto) { continue }
+                $fqn = $objeto.GetAttribute('fullyQualifiedName')
+                if ($vistos -contains $fqn) { continue }
+                $vistos.Add($fqn)
+                $cola.Enqueue([pscustomobject]@{ Nodo = $objeto; Profundidad = $actual.Profundidad + 1 })
+            }
+        }
+    } catch { }
+    return $nodos.ToArray()
+}
+
+function Normalizar-Rhs {
+    <#
+    .SYNOPSIS
+    Normaliza el lado derecho de una asignacion para resolver su tipo.
+    .DESCRIPTION
+    Quita los sufijos Trim() encadenados. No elimina otras conversiones
+    (ToString, ToNumeric) para no perder evidencia; si aparecen, la resolucion
+    queda sin confirmar.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$Texto
+    )
+
+    $t = $Texto.Trim()
+    $cambio = $true
+    while ($cambio) {
+        $cambio = $false
+        if ($t -match '\.Trim\(\s*\)\s*$') {
+            $t = ($t -replace '\.Trim\(\s*\)\s*$', '').Trim()
+            $cambio = $true
+        }
+    }
+    return $t
+}
+
+function Resolver-TipoAtributo {
+    <#
+    .SYNOPSIS
+    Resuelve el tipo canonico de un atributo referenciado como identificador.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][System.Xml.XmlDocument]$Xml,
+        [Parameter(Mandatory = $true)][string]$Nombre,
+        [Parameter(Mandatory = $false)]$Indice
+    )
+
+    try {
+        $atributo = Obtener-Referencia -Tipo 'Attribute' -Nombre $Nombre -Indice $Indice -Xml $Xml
+        if (-not $atributo) { return '' }
+        $datos = Obtener-DatosTipo -Xml $Xml -Nodo $atributo -Indice $Indice
+        return Convertir-TipoCanonico -DatosTipo $datos -NombreCampo $Nombre
+    } catch { return '' }
+}
+
+function Resolver-TipoVariable {
+    <#
+    .SYNOPSIS
+    Resuelve el tipo canonico de una variable a partir de su declaracion o sus asignaciones.
+    .DESCRIPTION
+    Busca la declaracion de la variable en los procedimientos de evidencia y, en su
+    defecto, las asignaciones '&variable = <rhs>' en sus fuentes, resolviendo el RHS
+    de forma recursiva con profundidad acotada. Devuelve el tipo solo si todos los
+    caminos confirman un unico tipo canonico.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][System.Xml.XmlDocument]$Xml,
+        [Parameter(Mandatory = $true)][string]$Variable,
+        [Parameter(Mandatory = $false)][object[]]$Nodos = @(),
+        [Parameter(Mandatory = $false)]$Indice,
+        [Parameter(Mandatory = $false)][int]$Profundidad = 0,
+        [Parameter(Mandatory = $false)]$Visitados = $null
+    )
+
+    if (-not $Visitados) { $Visitados = New-Object 'System.Collections.Generic.HashSet[string]' }
+    if ($Visitados.Contains($Variable)) { return '' }
+    if ($Profundidad -gt 3) { return '' }
+    [void]$Visitados.Add($Variable)
+
+    $tipos = New-Object System.Collections.Generic.List[string]
+    foreach ($nodo in $Nodos) {
+        $variableNodo = $null
+        try { $variableNodo = Obtener-Variable -ProgramaPrincipal $nodo -Nombre $Variable } catch { $variableNodo = $null }
+        if ($variableNodo) {
+            try {
+                $datos = Obtener-DatosTipo -Xml $Xml -Nodo $variableNodo -Indice $Indice
+                $canon = Convertir-TipoCanonico -DatosTipo $datos -NombreCampo $Variable
+                if ($canon) { $tipos.Add($canon) }
+            } catch { }
+        }
+
+        $source = $null
+        try { $source = Obtener-Source -ProgramaPrincipal $nodo } catch { $source = $null }
+        if (-not $source) { continue }
+        $limpio = Obtener-SourceLimpio -Source $source
+        $patron = [regex]::new('(?m)^\s*&' + [regex]::Escape($Variable) + '\s*=\s*(.+?)\s*$')
+        foreach ($coincidencia in $patron.Matches($limpio)) {
+            $rhs = Normalizar-Rhs -Texto $coincidencia.Groups[1].Value
+            if (-not $rhs) { continue }
+            $nuevoVisitados = New-Object 'System.Collections.Generic.HashSet[string]'
+            foreach ($v in $Visitados) { [void]$nuevoVisitados.Add($v) }
+            $tipoRhs = Resolver-TipoRhs -Xml $Xml -Rhs $rhs -Nodos $Nodos -Indice $Indice -Profundidad ($Profundidad + 1) -Visitados $nuevoVisitados
+            if ($tipoRhs) { $tipos.Add($tipoRhs) }
+        }
+    }
+
+    $distintos = @($tipos | Select-Object -Unique)
+    if ($distintos.Count -eq 1) { return $distintos[0] }
+    return ''
+}
+
+function Resolver-TipoRhs {
+    <#
+    .SYNOPSIS
+    Resuelve el tipo canonico del lado derecho de una asignacion.
+    .DESCRIPTION
+    Si el RHS es una variable (&var) delega en Resolver-TipoVariable; si es un
+    identificador pelado lo resuelve como atributo. Cualquier otra forma
+    (literal, llamada o expresion) queda sin confirmar.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][System.Xml.XmlDocument]$Xml,
+        [Parameter(Mandatory = $true)][string]$Rhs,
+        [Parameter(Mandatory = $false)][object[]]$Nodos = @(),
+        [Parameter(Mandatory = $false)]$Indice,
+        [Parameter(Mandatory = $false)][int]$Profundidad = 0,
+        [Parameter(Mandatory = $false)]$Visitados = $null
+    )
+
+    $rhs = Normalizar-Rhs -Texto $Rhs
+    if (-not $rhs) { return '' }
+    if ($rhs -match '^&([A-Za-z_][A-Za-z0-9_]*)$') {
+        return Resolver-TipoVariable -Xml $Xml -Variable $Matches[1] -Nodos $Nodos -Indice $Indice -Profundidad $Profundidad -Visitados $Visitados
+    }
+    if ($rhs -match '^[A-Za-z_][A-Za-z0-9_]*$') {
+        return Resolver-TipoAtributo -Xml $Xml -Nombre $rhs -Indice $Indice
+    }
+    return ''
+}
+
+function Resolver-TipoPorAsignacion {
+    <#
+    .SYNOPSIS
+    Resuelve el tipo canonico de un campo de SDT de salida por su asignacion en el programa.
+    .DESCRIPTION
+    Busca en las fuentes de evidencia asignaciones '&var.<Campo> = <rhs>' y resuelve
+    el tipo del RHS. Solo devuelve un tipo cuando todas las asignaciones encontradas
+    confirman un unico tipo canonico; ante ausencia o ambiguedad devuelve vacio.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][System.Xml.XmlDocument]$Xml,
+        [Parameter(Mandatory = $true)][string]$Campo,
+        [Parameter(Mandatory = $false)][object[]]$Nodos = @(),
+        [Parameter(Mandatory = $false)]$Indice
+    )
+
+    try {
+        $tipos = New-Object System.Collections.Generic.List[string]
+        $patron = [regex]::new('(?m)^\s*&[A-Za-z_][A-Za-z0-9_]*\.' + [regex]::Escape($Campo) + '\s*=\s*(.+?)\s*$')
+        foreach ($nodo in $Nodos) {
+            $source = $null
+            try { $source = Obtener-Source -ProgramaPrincipal $nodo } catch { $source = $null }
+            if (-not $source) { continue }
+            $limpio = Obtener-SourceLimpio -Source $source
+            foreach ($coincidencia in $patron.Matches($limpio)) {
+                $rhs = Normalizar-Rhs -Texto $coincidencia.Groups[1].Value
+                if (-not $rhs) { continue }
+                $tipo = Resolver-TipoRhs -Xml $Xml -Rhs $rhs -Nodos $Nodos -Indice $Indice
+                if ($tipo) { $tipos.Add($tipo) }
+            }
+        }
+        $distintos = @($tipos | Select-Object -Unique)
+        if ($distintos.Count -eq 1) { return $distintos[0] }
+    } catch { }
+    return ''
+}
+
+function Resolver-TipoPorLectura {
+    <#
+    .SYNOPSIS
+    Resuelve el tipo canonico de un campo de SDT de entrada por su lectura en el programa.
+    .DESCRIPTION
+    Busca en las fuentes de evidencia asignaciones donde se lee el campo del SDT
+    de entrada deserializado ('&destino = &VariableSdt.<ruta>.<Campo>') y resuelve el
+    tipo de la variable receptora. Solo devuelve un tipo cuando todas las lecturas
+    encontradas confirman un unico tipo canonico; ante ausencia o ambiguedad
+    devuelve vacio.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][System.Xml.XmlDocument]$Xml,
+        [Parameter(Mandatory = $true)][string]$Campo,
+        [Parameter(Mandatory = $true)][string]$VariableSdt,
+        [Parameter(Mandatory = $false)][object[]]$Nodos = @(),
+        [Parameter(Mandatory = $false)]$Indice
+    )
+
+    try {
+        $tipos = New-Object System.Collections.Generic.List[string]
+        $patronLectura = [regex]::new('&' + [regex]::Escape($VariableSdt) + '(?:\.\w+)*\.' + [regex]::Escape($Campo) + '\b')
+        $patron = [regex]::new('(?m)^\s*&([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+?)\s*$')
+        foreach ($nodo in $Nodos) {
+            $source = $null
+            try { $source = Obtener-Source -ProgramaPrincipal $nodo } catch { $source = $null }
+            if (-not $source) { continue }
+            $limpio = Obtener-SourceLimpio -Source $source
+            foreach ($coincidencia in $patron.Matches($limpio)) {
+                $lhs = $coincidencia.Groups[1].Value
+                $rhs = $coincidencia.Groups[2].Value
+                if ($lhs -eq $VariableSdt) { continue }
+                if (-not $patronLectura.IsMatch($rhs)) { continue }
+                $tipo = Resolver-TipoVariable -Xml $Xml -Variable $lhs -Nodos $Nodos -Indice $Indice
+                if ($tipo) { $tipos.Add($tipo) }
+            }
+        }
+        $distintos = @($tipos | Select-Object -Unique)
+        if ($distintos.Count -eq 1) { return $distintos[0] }
+    } catch { }
+    return ''
+}
+
 function Construir-MensajeEstructura {
     <#
     .SYNOPSIS
@@ -1691,7 +2325,7 @@ function Construir-MensajeEstructura {
 
     $detalles = New-Object System.Collections.Generic.List[string]
     foreach ($faltante in $Faltantes) {
-        $detalles.Add('SDT faltante ' + $faltante.NombreSdt + ' en la ruta ' + $faltante.RutaJson)
+        $detalles.Add('SDT faltante ' + $faltante.NombreSdt + ' en la ruta ' + $faltante.RutaJson + ' (no está exportado en el XPZ configurado; no puede inferirse)')
     }
     foreach ($ciclo in $Ciclos) {
         $detalles.Add('ciclo SDT en la ruta ' + $ciclo.RutaJson)
@@ -1769,6 +2403,9 @@ function Analizar-Servicio {
     $source = Obtener-Source -ProgramaPrincipal $programaPrincipal
     $metodo = Resolver-Metodo -Source $source
 
+    $fuentesObligatorio = @()
+    try { $fuentesObligatorio = Obtener-SourcesEvidencia -Xml $Xml -ProgramaPrincipal $programaPrincipal -Indice $Indice -IncluirSufijos } catch { $fuentesObligatorio = @() }
+
     $pendientes = New-Object System.Collections.Generic.List[string]
 
     $entrada = @()
@@ -1783,7 +2420,33 @@ function Analizar-Servicio {
         if ($faltantesEntrada.Count -gt 0 -or $ciclosEntrada.Count -gt 0) {
             throw (Construir-MensajeEstructura -Faltantes $faltantesEntrada -Ciclos $ciclosEntrada -Contexto 'de la entrada')
         }
-        Aplicar-Obligatorio -Source $source -Filas @($expandido.Filas) -Tablas @($expandido.Tablas) -VariableSdt $entradaPost.VariableSdt
+        Aplicar-Obligatorio -Source $source -Filas @($expandido.Filas) -Tablas @($expandido.Tablas) -VariableSdt $entradaPost.VariableSdt -SourcesAdicionales $fuentesObligatorio
+        $nodosEvidenciaEntrada = Obtener-NodosEvidencia -Xml $Xml -ProgramaPrincipal $programaPrincipal -Indice $Indice
+        $nodosEvidenciaEntradaSufijos = $null
+        foreach ($filaEntrada in $expandido.Filas) {
+            if ($filaEntrada.Tipo -notmatch '^PENDIENTE DE CONFIRMACIÓN: tipo del campo') { continue }
+            $tipoLectura = Resolver-TipoPorLectura -Xml $Xml -Campo $filaEntrada.Campo -VariableSdt $entradaPost.VariableSdt -Nodos $nodosEvidenciaEntrada -Indice $Indice
+            if (-not $tipoLectura -and $null -eq $nodosEvidenciaEntradaSufijos) {
+                $nodosEvidenciaEntradaSufijos = Obtener-NodosEvidencia -Xml $Xml -ProgramaPrincipal $programaPrincipal -Indice $Indice -IncluirSufijos -ProfundidadMaxima 5
+            }
+            if (-not $tipoLectura) {
+                $tipoLectura = Resolver-TipoPorLectura -Xml $Xml -Campo $filaEntrada.Campo -VariableSdt $entradaPost.VariableSdt -Nodos $nodosEvidenciaEntradaSufijos -Indice $Indice
+            }
+            if ($tipoLectura) { $filaEntrada.Tipo = $tipoLectura }
+        }
+        foreach ($tablaEntrada in $expandido.Tablas) {
+            foreach ($filaEntrada in $tablaEntrada.Filas) {
+                if ($filaEntrada.Tipo -notmatch '^PENDIENTE DE CONFIRMACIÓN: tipo del campo') { continue }
+                $tipoLectura = Resolver-TipoPorLectura -Xml $Xml -Campo $filaEntrada.Campo -VariableSdt $entradaPost.VariableSdt -Nodos $nodosEvidenciaEntrada -Indice $Indice
+                if (-not $tipoLectura -and $null -eq $nodosEvidenciaEntradaSufijos) {
+                    $nodosEvidenciaEntradaSufijos = Obtener-NodosEvidencia -Xml $Xml -ProgramaPrincipal $programaPrincipal -Indice $Indice -IncluirSufijos -ProfundidadMaxima 5
+                }
+                if (-not $tipoLectura) {
+                    $tipoLectura = Resolver-TipoPorLectura -Xml $Xml -Campo $filaEntrada.Campo -VariableSdt $entradaPost.VariableSdt -Nodos $nodosEvidenciaEntradaSufijos -Indice $Indice
+                }
+                if ($tipoLectura) { $filaEntrada.Tipo = $tipoLectura }
+            }
+        }
         $entrada = @($expandido.Filas | ForEach-Object {
             [pscustomobject]@{ Orden = 0; Campo = $_.Campo; Tipo = $_.Tipo; Obligatorio = $_.Obligatorio; Descripcion = $_.Descripcion }
         })
@@ -1799,7 +2462,7 @@ function Analizar-Servicio {
     } else {
         $posiciones = Resolver-EntradaGet -Source $source
         $posicionesTipos = Resolver-EntradaGetTipos -Xml $Xml -ProgramaPrincipal $programaPrincipal -Source $source -Posiciones @($posiciones) -Indice $Indice
-        Aplicar-Obligatorio -Source $source -Filas @($posicionesTipos)
+        Aplicar-Obligatorio -Source $source -Filas @($posicionesTipos) -SourcesAdicionales $fuentesObligatorio
         $entrada = @($posicionesTipos | ForEach-Object {
             [pscustomobject]@{ Orden = $_.Posicion; Campo = $_.Campo; Tipo = $_.Tipo; Obligatorio = $_.Obligatorio; Descripcion = $_.Descripcion }
         })
@@ -1810,7 +2473,37 @@ function Analizar-Servicio {
         throw (Construir-MensajeEstructura -Faltantes @($salida.Faltantes) -Ciclos @($salida.Ciclos) -Contexto 'de la salida')
     }
     if ($salida.NoResuelta) {
-        $pendientes.Add('PENDIENTE DE CONFIRMACIÓN: estructura de salida.')
+        if ($salida.MotivoNoResuelta) {
+            throw $salida.MotivoNoResuelta
+        }
+        throw 'No se puede determinar la estructura de la salida del servicio. No se genera el documento.'
+    } else {
+        $nodosEvidencia = Obtener-NodosEvidencia -Xml $Xml -ProgramaPrincipal $programaPrincipal -Indice $Indice
+        $nodosEvidenciaSufijos = $null
+        foreach ($campoSalida in $salida.Salida) {
+            if ($campoSalida.Tipo -notmatch '^PENDIENTE DE CONFIRMACIÓN: tipo del campo') { continue }
+            $tipoSalida = Resolver-TipoPorAsignacion -Xml $Xml -Campo $campoSalida.Campo -Nodos $nodosEvidencia -Indice $Indice
+            if (-not $tipoSalida -and $null -eq $nodosEvidenciaSufijos) {
+                $nodosEvidenciaSufijos = Obtener-NodosEvidencia -Xml $Xml -ProgramaPrincipal $programaPrincipal -Indice $Indice -IncluirSufijos -ProfundidadMaxima 5
+            }
+            if (-not $tipoSalida) {
+                $tipoSalida = Resolver-TipoPorAsignacion -Xml $Xml -Campo $campoSalida.Campo -Nodos $nodosEvidenciaSufijos -Indice $Indice
+            }
+            if ($tipoSalida) { $campoSalida.Tipo = $tipoSalida }
+        }
+        foreach ($estructuraSalida in $salida.EstructurasSalida) {
+            foreach ($hijoSalida in $estructuraSalida.Hijos) {
+                if ($hijoSalida.Tipo -notmatch '^PENDIENTE DE CONFIRMACIÓN: tipo del campo') { continue }
+                $tipoHijo = Resolver-TipoPorAsignacion -Xml $Xml -Campo $hijoSalida.Campo -Nodos $nodosEvidencia -Indice $Indice
+                if (-not $tipoHijo -and $null -eq $nodosEvidenciaSufijos) {
+                    $nodosEvidenciaSufijos = Obtener-NodosEvidencia -Xml $Xml -ProgramaPrincipal $programaPrincipal -Indice $Indice -IncluirSufijos -ProfundidadMaxima 5
+                }
+                if (-not $tipoHijo) {
+                    $tipoHijo = Resolver-TipoPorAsignacion -Xml $Xml -Campo $hijoSalida.Campo -Nodos $nodosEvidenciaSufijos -Indice $Indice
+                }
+                if ($tipoHijo) { $hijoSalida.Tipo = $tipoHijo }
+            }
+        }
     }
     $errores = Resolver-Errores -Source $source
     $endpoint = Resolver-Endpoint -NombreCompletoWrapper $NombreCompletoWrapper -PackageName $PackageName
@@ -1857,6 +2550,8 @@ function Analizar-Servicio {
         EstructurasSalida = $salida.EstructurasSalida
         SalidaColeccion = $salida.SalidaColeccion
         Salida = $salida.Salida
+        SalidaVacia = $salida.SalidaVacia
+        TipoColeccionPrimitiva = $salida.TipoColeccionPrimitiva
         TipoContenidoSalida = $salida.TipoContenidoSalida
         Errores = $errores
         Pendientes = $pendientes.ToArray()

@@ -121,6 +121,21 @@ try {
     }
     Write-Host ("  Inventario: " + $endpoints.Count + " endpoints") -ForegroundColor DarkGray
 
+    $ignoradosConfig = @($configuracion.ServiciosIgnorados)
+    $ignoradosEnInventario = @($endpoints | Where-Object { $ignoradosConfig -contains $_.proceso })
+    $ignoradosSinInventario = @($ignoradosConfig | Where-Object { $_ -notin @($endpoints | ForEach-Object { $_.proceso }) })
+    if ($ignoradosConfig.Count -gt 0) {
+        Write-Host ("  Servicios ignorados: " + $ignoradosConfig.Count) -ForegroundColor DarkGray
+        foreach ($ignorado in $ignoradosEnInventario) {
+            Write-Host ("    [IGNORADO] " + $ignorado.proceso) -ForegroundColor DarkYellow
+        }
+        foreach ($ignorado in $ignoradosSinInventario) {
+            Write-Host ("    [IGNORADO] " + $ignorado + " (no esta en el inventario)") -ForegroundColor DarkYellow
+        }
+        $endpoints = @($endpoints | Where-Object { $ignoradosConfig -notcontains $_.proceso })
+        Write-Host ("  Inventario efectivo: " + $endpoints.Count + " endpoints") -ForegroundColor DarkGray
+    }
+
     $faseActual = 'apertura-xpz'
     Write-Step 2 'Abriendo XPZ y construyendo indices...'
     $aperturaXpz = Abrir-XPZ -RutaXpz $configuracion.XpzPath
@@ -212,7 +227,18 @@ try {
     $okCount = 0
     $warningCount = 0
     $errorCount = 0
+    $omitidoCount = 0
     $resultados = New-Object System.Collections.Generic.List[object]
+    foreach ($ignorado in $ignoradosEnInventario) {
+        $resultados.Add([pscustomobject]@{
+            FullyQualifiedName = $ignorado.proceso
+            Estado = 'OMITIDO'
+            Documento = ''
+            Pendientes = @()
+            Mensajes = @('Servicio en la lista de serviciosIgnorados de configuracion.json. No se documenta.')
+        })
+        $omitidoCount++
+    }
     $totalServicios = $serviciosParaProcesar.Count
     $contador = 0
 
@@ -262,7 +288,7 @@ try {
     }
 
     Write-Host ''
-    Write-Host ("Completado: $okCount OK, $warningCount WARNING, $errorCount ERROR.") -ForegroundColor Cyan
+    Write-Host ("Completado: $okCount OK, $warningCount WARNING, $errorCount ERROR, $omitidoCount OMITIDO.") -ForegroundColor Cyan
 
     $faseActual = 'escritura-logs'
     if (-not (Test-Path -LiteralPath $DirectorioLogs)) {
@@ -281,6 +307,7 @@ try {
             ok = $okCount
             warning = $warningCount
             error = $errorCount
+            omitido = $omitidoCount
         }
         servicios = @($resultados | ForEach-Object {
             [pscustomobject]@{
