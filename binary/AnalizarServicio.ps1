@@ -452,6 +452,11 @@ function Obtener-Sdt {
     Localiza el objeto SDT por nombre, opcionalmente filtrando por modulo.
     Si se proporciona el indice, lo consulta en lugar de recorrer el XML.
     Devuelve el nodo Object unico o $null si no se localiza de forma inequivoca.
+    .DESCRIPTION
+    Resolucion de SDT homonimos: una referencia sin calificador de modulo con
+    varios candidatos se resuelve al SDT de la raiz (aquel cuyo fullyQualifiedName
+    coincide exactamente con el nombre). Si la referencia califica el modulo, esa
+    forma prevalece y no aplica el respaldo a la raiz.
     #>
     [CmdletBinding()]
     param(
@@ -516,6 +521,10 @@ function Obtener-Sdt {
         if ($conModulo.Count -eq 1) { return $conModulo[0] }
     }
     if ($candidatos.Count -eq 1) { return $candidatos[0] }
+    if (-not $Modulo) {
+        $raiz = @($candidatos | Where-Object { $_.GetAttribute('fullyQualifiedName') -eq $NombreSdt })
+        if ($raiz.Count -eq 1) { return $raiz[0] }
+    }
     return $null
 }
 

@@ -3,8 +3,7 @@ param(
     [string]$XpzPath,
     [string]$CatalogPath,
     [string]$OutputDirectory,
-    [string]$ConfigPath,
-    [int]$ExpectedCount = 135
+    [string]$ConfigPath
 )
 
 $ErrorActionPreference = 'Stop'
@@ -29,7 +28,7 @@ function Write-Step {
         [string]$Text = ''
     )
     Write-Host ''
-    Write-Host ("[ {0}/6 ] {1}" -f $Number, $Text) -ForegroundColor Cyan
+    Write-Host $Text -ForegroundColor Cyan
 }
 
 function Add-Line {
@@ -43,7 +42,7 @@ function Add-Line {
 
 try {
     Write-Host '==============================================================' -ForegroundColor Cyan
-    Write-Host '  EXTRACCION DE ENDPOINTS APIGLM' -ForegroundColor Cyan
+    Write-Host '  ANALISIS DE XPZ APIGLM' -ForegroundColor Cyan
     Write-Host ("  " + (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')) -ForegroundColor Cyan
     Write-Host '==============================================================' -ForegroundColor Cyan
 
@@ -65,7 +64,7 @@ try {
     Write-Host ("GUID de tipo Procedure: " + $ProcedureTypeGuid) -ForegroundColor DarkGray
 
     $faseActual = 'configuracion'
-    Write-Step 1 'Cargando configuracion y resolviendo XPZ...'
+    Write-Step 1 'Cargando configuracion y abriendo el XPZ...'
     $cargarConfiguracionParametros = @{ ConfigPath = $ConfigPath }
     if ($XpzPath) { $cargarConfiguracionParametros.XpzPath = $XpzPath }
     $configuracion = Cargar-Configuracion @cargarConfiguracionParametros
@@ -82,10 +81,8 @@ try {
     $xml = $aperturaXpz.Xml
     $XpzName = $aperturaXpz.Nombre
     Write-Host ("  Archivo: " + $XpzName) -ForegroundColor DarkGray
-    Write-Host ("  Raiz: " + $xml.DocumentElement.Name) -ForegroundColor DarkGray
 
     $faseActual = 'localizacion-main'
-    Write-Step 2 ("Localizando APIGLM.APIGLMMain en " + $XpzName + " y su único Source no vacío...")
     $mainNodes = $xml.SelectNodes("//Object[@fullyQualifiedName='APIGLM.APIGLMMain']")
     if ($mainNodes.Count -ne 1) {
         throw ("APIGLM.APIGLMMain no se encontró o aparece " + $mainNodes.Count + " veces.")
@@ -105,10 +102,10 @@ try {
         throw 'No se encontró un Part/Source no vacío en APIGLM.APIGLMMain.'
     }
     $source = $sourceNode.InnerText
-    Write-Host ("  Source localizado (" + $source.Length + " caracteres)") -ForegroundColor DarkGray
+    Write-Host ("  APIGLMMain localizado, Source de " + $source.Length + " caracteres") -ForegroundColor DarkGray
 
     $faseActual = 'extraccion-llamadas'
-    Write-Step 3 'Extrayendo llamadas WS... activas del Source...'
+    Write-Step 2 'Extrayendo y confirmando endpoints WS activos...'
     $lines = [regex]::Split($source, "`r?`n")
     $candidates = New-Object System.Collections.Generic.List[object]
     $ignored = 0
@@ -117,9 +114,6 @@ try {
         if ($trimmed -eq '') { continue }
         if ($trimmed.StartsWith('//')) {
             $ignored++
-            $preview = $trimmed
-            if ($preview.Length -gt 60) { $preview = $preview.Substring(0, 60) + '...' }
-            Write-Host ("  [ignorada] " + $preview) -ForegroundColor DarkGray
             continue
         }
         $m = [regex]::Match($trimmed, '(\b(?:\w+\.)*WS[A-Za-z0-9_]+)\s*\(')
@@ -127,10 +121,8 @@ try {
             $candidates.Add([pscustomobject]@{ Line = $i + 1; Call = $m.Groups[1].Value })
         }
     }
-    Write-Host ("  Candidatos activos: " + $candidates.Count + " / líneas ignoradas por comentario: " + $ignored) -ForegroundColor DarkGray
 
     $faseActual = 'resolucion-candidatos'
-    Write-Step 4 'Resolviendo candidatos y confirmando Procedure / IsMain=True / CALL_PROTOCOL=HTTP...'
     $allObjects = $xml.SelectNodes('//Object')
     $byFqn = @{}
     $byName = @{}
@@ -146,10 +138,11 @@ try {
             $byName[$n].Add($o)
         }
     }
-    Write-Host ("  Objetos indexados: " + $allObjects.Count) -ForegroundColor DarkGray
 
     $resolved = New-Object System.Collections.Generic.List[object]
     $unresolved = New-Object System.Collections.Generic.List[object]
+    $noEncontrados = 0
+    $ambiguos = 0
     foreach ($c in $candidates) {
         $call = $c.Call
         $matches = $null
@@ -162,11 +155,14 @@ try {
             $procedures = $matches | Where-Object { $_.GetAttribute('type') -eq $ProcedureTypeGuid }
             if ($procedures.Count -eq 1) { $matches = @($procedures) }
         }
-        if (-not $matches -or $matches.Count -ne 1) {
-            $count = 0
-            if ($matches) { $count = $matches.Count }
-            $unresolved.Add([pscustomobject]@{ Candidate = $call; Reason = ("Coincidencias: " + $count) })
-            Write-Host ("  [ambiguo] " + $call + " (coincidencias: " + $count + ")") -ForegroundColor Yellow
+        if (-not $matches) {
+            $noEncontrados++
+            $unresolved.Add([pscustomobject]@{ Candidate = $call; Reason = 'No encontrado' })
+            continue
+        }
+        if ($matches.Count -ne 1) {
+            $ambiguos++
+            $unresolved.Add([pscustomobject]@{ Candidate = $call; Reason = ("Coincidencias: " + $matches.Count) })
             continue
         }
         $resolved.Add([pscustomobject]@{ Fqn = $matches[0].GetAttribute('fullyQualifiedName'); Name = $matches[0].GetAttribute('name'); Object = $matches[0] })
@@ -175,6 +171,7 @@ try {
     $final = New-Object System.Collections.Generic.List[object]
     $rejected = New-Object System.Collections.Generic.List[object]
     $seenFqn = @{}
+    $duplicados = 0
     foreach ($item in $resolved) {
         $obj = $item.Object
         $typeOk = ($obj.GetAttribute('type') -eq $ProcedureTypeGuid)
@@ -182,10 +179,9 @@ try {
         $httpOk = ($obj.SelectSingleNode("Properties/Property[Name='CALL_PROTOCOL' and Value='HTTP']") -ne $null)
         if (-not ($typeOk -and $isMainOk -and $httpOk)) {
             $rejected.Add([pscustomobject]@{ Fqn = $item.Fqn; Type = $typeOk; IsMain = $isMainOk; CallProtocol = $httpOk })
-            Write-Host ("  [no confirmado] " + $item.Fqn) -ForegroundColor Yellow
             continue
         }
-        if ($seenFqn.ContainsKey($item.Fqn)) { continue }
+        if ($seenFqn.ContainsKey($item.Fqn)) { $duplicados++; continue }
         $seenFqn[$item.Fqn] = $true
         $lastDot = $item.Fqn.LastIndexOf('.')
         $module = ''
@@ -198,11 +194,19 @@ try {
         if ($module) { $endpoint = $module.ToLowerInvariant() + '.' + $endpoint }
         if ($PackageName) { $endpoint = $PackageName.TrimEnd('.') + '.' + $endpoint }
         $final.Add([pscustomobject]@{ Fqn = $item.Fqn; Name = $item.Name; Module = $module; Nombre = $nombre; Descripcion = $descripcion; Endpoint = $endpoint })
-        Write-Host ("  [OK] " + $item.Fqn) -ForegroundColor Green
     }
 
+    $okCount = $final.Count
+    $warningCount = $ambiguos + $rejected.Count
+    $errorCount = $noEncontrados
+    Write-Host ("  Candidatos WS: " + $candidates.Count + " (ignorados por comentario: " + $ignored + ")") -ForegroundColor DarkGray
+    Write-Host ("  OK: " + $okCount) -ForegroundColor Green
+    if ($duplicados -gt 0) { Write-Host ("  Duplicados: " + $duplicados) -ForegroundColor DarkGray }
+    if ($warningCount -gt 0) { Write-Host ("  Warning: " + $warningCount) -ForegroundColor Yellow }
+    if ($errorCount -gt 0) { Write-Host ("  Error: " + $errorCount) -ForegroundColor Red }
+
     $faseActual = 'escritura-inventario'
-    Write-Step 5 'Escribiendo endpoints.json y endpoints.md...'
+    Write-Step 3 'Escribiendo endpoints.json y endpoints.md...'
     if (-not (Test-Path -LiteralPath $OutputDirectory)) {
         New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
     }
@@ -212,7 +216,6 @@ try {
         meta = [pscustomobject]@{
             generatedAt = $StartTime.ToString('s')
             source = $XpzName
-            expectedCount = $ExpectedCount
             procedureTypeGuid = $ProcedureTypeGuid
             totalConfirmed = $final.Count
         }
@@ -230,7 +233,7 @@ try {
     Add-Line $sb
     Add-Line $sb 'Inventario de endpoints activos y únicos confirmados desde `APIGLM.APIGLMMain` en el XPZ, generado por `GenerarListaEndpoints.ps1`.'
     Add-Line $sb
-    Add-Line $sb ("Conteo confirmado: **" + $final.Count + "** (esperado: " + $ExpectedCount + ").")
+    Add-Line $sb ("Conteo confirmado: **" + $final.Count + "**.")
     Add-Line $sb
     Add-Line $sb '## Endpoints'
     Add-Line $sb
@@ -253,25 +256,11 @@ try {
     [System.IO.File]::WriteAllText($mdPath, $md, (New-Object System.Text.UTF8Encoding($false)))
 
     $faseActual = 'verificacion-inventario'
-    Write-Step 6 'Verificación final'
+    Write-Step 4 'Verificación final'
     Write-Host ''
     Write-Host ("Conteo confirmado: " + $final.Count) -ForegroundColor Cyan
-    if ($final.Count -ne $ExpectedCount) {
-        Write-Host ("  AVISO: difiere del esperado (" + $ExpectedCount + "). Determinar primero si cambió el XPZ o APIGLMMain; no forzar el número.") -ForegroundColor Yellow
-    } else {
-        Write-Host ("  Coincide con el esperado (" + $ExpectedCount + ").") -ForegroundColor Green
-    }
-    $dups = @($final | Group-Object Fqn | Where-Object { $_.Count -gt 1 })
-    $zona = @($final | Where-Object { $_.Name -eq 'WSObtenerZonaTarifa' })
-    $grabar = @($final | Where-Object { $_.Fqn -eq 'APIGLM.Tramite.WSGrabarTramites' })
-    Write-Host ("Duplicados: " + $(if ($dups.Count -eq 0) { 'ninguno' } else { $dups.Count })) -ForegroundColor Green
-    Write-Host ("WSObtenerZonaTarifa excluido: " + $(if ($zona.Count -eq 0) { 'SI' } else { 'NO' })) -ForegroundColor Green
-    Write-Host ("WSGrabarTramites resuelto como APIGLM.Tramite.WSGrabarTramites: " + $(if ($grabar.Count -eq 1) { 'SI' } else { 'NO' })) -ForegroundColor Green
     if ($unresolved.Count -gt 0) {
         Write-Host ("Candidatos no incorporados: " + $unresolved.Count) -ForegroundColor Yellow
-        foreach ($u in $unresolved) {
-            Write-Host ("  - " + $u.Candidate + " (" + $u.Reason + ")") -ForegroundColor Yellow
-        }
     }
     Write-Host ''
     Write-Host 'Archivos generados:' -ForegroundColor Cyan
@@ -289,6 +278,4 @@ try {
     }
     exit 1
 } finally {
-    Write-Host ''
-    Write-Host ("Fin: " + ((Get-Date) - $StartTime).ToString('mm\:ss')) -ForegroundColor DarkGray
 }
