@@ -109,6 +109,22 @@ function Obtener-SignaturaPendientes {
     return $lista.Trim()
 }
 
+function Obtener-OnlyModuleAPIGLM {
+    param([Parameter(Mandatory = $true)]$Configuracion)
+
+    $propiedad = $null
+    if ($null -ne $Configuracion.exportacion) {
+        $propiedad = $Configuracion.exportacion.PSObject.Properties['onlyModuleAPIGLM']
+    }
+    if ($null -eq $propiedad) {
+        return $true
+    }
+    if ($propiedad.Value -isnot [bool]) {
+        throw 'La propiedad exportacion.onlyModuleAPIGLM debe ser un booleano JSON (true o false).'
+    }
+    return [bool]$propiedad.Value
+}
+
 try {
     if (-not (Test-Path -LiteralPath $rutaConfiguracion -PathType Leaf)) {
         throw 'No existe configuracion.json. Ejecute primero el lanzador para crear el modelo.'
@@ -122,6 +138,20 @@ try {
     }
 
     $configuracion = Get-Content -LiteralPath $rutaConfiguracion -Raw | ConvertFrom-Json
+    $onlyModuleAPIGLM = Obtener-OnlyModuleAPIGLM -Configuracion $configuracion
+
+    if (-not $onlyModuleAPIGLM) {
+        Write-Host ''
+        Write-Host 'ADVERTENCIA: se configuro la exportacion de toda la Knowledge Base.' -ForegroundColor Yellow
+        Write-Host 'La operacion puede tardar aproximadamente entre 20 y 30 minutos.' -ForegroundColor Yellow
+        Write-Host 'Se generara un XPZ nuevo y no se reemplazaran exportaciones anteriores.' -ForegroundColor Yellow
+        $confirmacion = Read-Host 'Desea continuar? [S/N]'
+        if ($confirmacion -notmatch '^(?i:s|si|sí|y|yes)$') {
+            Write-Host 'Exportacion abortada por el usuario.' -ForegroundColor Yellow
+            exit 3
+        }
+    }
+
     $herramientas = $configuracion.herramientas
     $rutaGeneXus = [string]$herramientas.geneXusProgramDir
     $rutaKb = [string]$herramientas.kbPath
@@ -139,23 +169,27 @@ try {
         }
     }
 
-    if (@(Get-Process -Name 'GeneXus' -ErrorAction SilentlyContinue).Count -gt 0) {
-        throw 'GeneXus esta abierto. Cierre GeneXus antes de exportar la KB.'
-    }
-
     $marcaTemporal = (Get-Date).ToString('yyyyMMdd_HHmmssfff')
-    $rutaXpzNuevo = Join-Path $rutaDirectorioXpz ('SEGUROS_COMERCIAL_APIGLM_' + $marcaTemporal + '.xpz')
+    $etiquetaExportacion = if ($onlyModuleAPIGLM) { 'APIGLM' } else { 'KB' }
+    $targetExportacion = if ($onlyModuleAPIGLM) { 'ExportarAPIGLM' } else { 'ExportarTodaLaKB' }
+    $rutaXpzNuevo = Join-Path $rutaDirectorioXpz ('SEGUROS_COMERCIAL_' + $etiquetaExportacion + '_' + $marcaTemporal + '.xpz')
     $rutaLogExportacion = Join-Path $rutaDirectorioLogs ('exportarXPZ_' + $marcaTemporal + '.log')
 
     Write-Host ''
-    Write-Host '[1/4] Exportando APIGLMMain...' -ForegroundColor Cyan
+    if ($onlyModuleAPIGLM) {
+        Write-Host '[1/4] Exportando Module:APIGLM...' -ForegroundColor Cyan
+    } else {
+        Write-Host '[1/4] Exportando todos los objetos de la Knowledge Base...' -ForegroundColor Cyan
+    }
+    Write-Host ('Alcance de exportacion: ' + $etiquetaExportacion) -ForegroundColor DarkGray
     & $rutaPowerShell -NoProfile -ExecutionPolicy Bypass -File $rutaScriptProgreso `
         -MsbuildPath $rutaMsbuild `
         -ProjectFile $rutaProyectoCompleto `
         -GxProgramDir $rutaGeneXus `
         -KbPath $rutaKb `
         -XpzFile $rutaXpzNuevo `
-        -LogFile $rutaLogExportacion 2>&1 | Out-Host
+        -LogFile $rutaLogExportacion `
+        -TargetName $targetExportacion 2>&1 | Out-Host
     $codigoExportacion = $LASTEXITCODE
     if ($codigoExportacion -ne 0 -or -not (Test-XpzValido -Ruta $rutaXpzNuevo)) {
         throw ('La exportacion completa fallo. Revise el log: ' + $rutaLogExportacion)

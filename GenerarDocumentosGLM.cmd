@@ -23,7 +23,7 @@ if "%CONFIGURACION_INVALIDA%"=="1" goto menu_solo_salida
 call :obtener_xpz_principales
 if "%XPZ_CANTIDAD%"=="0" goto menu_sin_xpz
 
-echo  1. Exportar APIGLMMain y completar el XPZ
+echo  1. Exportar segun configuracion (APIGLM/KB) y completar el XPZ
 echo  2. Seleccionar XPZ principal
 echo  3. Generar PDF con el XPZ seleccionado
 echo  4. Salir
@@ -89,10 +89,15 @@ set "ULTIMO_ESTADO=OPERANDO"
 set "ULTIMO_CODIGO=1"
 echo.
 echo ==============================================================
-echo   EXPORTAR APIGLMMAIN Y COMPLETAR EL XPZ
+echo   EXPORTAR SEGUN CONFIGURACION Y COMPLETAR EL XPZ
 echo ==============================================================
 echo.
 %SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%binary\EjecutarExportacionGLM.ps1" -Repositorio "%REPOSITORY_PATH%"
+if errorlevel 3 (
+    set "ULTIMO_ESTADO=ABORTADO"
+    set "ULTIMO_CODIGO=0"
+    exit /b 0
+)
 if errorlevel 1 (
     set "ULTIMO_ESTADO=ERROR"
     set "ULTIMO_CODIGO=1"

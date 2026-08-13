@@ -72,12 +72,8 @@ if defined REPORTE_PATH if not exist "%REPORTE_PATH%" (
     goto fail
 )
 
-tasklist /FI "IMAGENAME eq GeneXus.exe" /NH 2>nul | find /I "GeneXus.exe" >nul
-if not errorlevel 1 (
-    set "ERROR_MESSAGE=GeneXus esta abierto. Cierre GeneXus antes de exportar la KB."
-    set "EXIT_CODE=2"
-    goto fail
-)
+rem GeneXus puede permanecer abierto. El exportador utiliza una sesion
+rem independiente de MSBuild y advierte sobre la concurrencia antes de iniciar.
 
 echo ==============================================================
 echo   EXPORTACION SELECTIVA DE OBJETOS APIGLM

@@ -31,8 +31,19 @@
     <OnError ExecuteTargets="CerrarKnowledgeBase" />
   </Target>
 
+  <Target Name="ExportarTodaLaKB" DependsOnTargets="AbrirKnowledgeBase">
+    <Message Text="Exportando todos los objetos de la Knowledge Base." Importance="high" />
+    <Export File="$(XPZFile)"
+            ExportAll="true"
+            ExportKBInfo="true"
+            IncludeGXMessages="false"
+            IncludeUntranslatedMessages="false" />
+
+    <OnError ExecuteTargets="CerrarKnowledgeBase" />
+  </Target>
+
   <Target Name="CerrarKnowledgeBase"
-          AfterTargets="ExportarAPIGLM"
+          AfterTargets="ExportarAPIGLM;ExportarTodaLaKB"
           Condition="'$(KnowledgeBaseOpened)' == 'true'">
     <Message Text="Cerrando Knowledge Base." Importance="high" />
     <CloseKnowledgeBase />
