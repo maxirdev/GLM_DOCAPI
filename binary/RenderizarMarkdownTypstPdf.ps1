@@ -89,6 +89,49 @@ function Quitar-ContenedoresFiguraTablaTypst {
     })
 }
 
+function Obtener-NombreWsPieDePagina {
+    param(
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$Titulo,
+        [Parameter(Mandatory = $true)][string]$NombreArchivo
+    )
+
+    $nombre = $Titulo -replace '\s+', ''
+    if (-not $nombre) { return $NombreArchivo }
+    if ($nombre.StartsWith('WS', [System.StringComparison]::OrdinalIgnoreCase)) {
+        $nombre = $nombre.Substring(2)
+    }
+    return ('WS ' + $nombre)
+}
+
+function Agregar-PieDePaginaTypst {
+    param(
+        [Parameter(Mandatory = $true)][string]$Contenido,
+        [Parameter(Mandatory = $true)][string]$NombreServicio
+    )
+
+    $paginaConAcento = 'P' + [char]0xE1 + 'gina'
+    $pieDePagina = @'
+#let ws-nombre = "{NOMBRE}"
+#set page(footer: context {
+  let total-pages = counter(page).final()
+  let current-page = counter(page).get()
+  grid(
+    columns: (1fr, auto),
+    [
+      #text(size: 8pt, fill: rgb("#6b7280"))[#ws-nombre]
+    ],
+    [
+      #text(size: 8pt, fill: rgb("#6b7280"))[- {PAGINA} #current-page/#total-pages]
+    ],
+  )
+})
+
+'@
+    $pieDePagina = $pieDePagina.Replace('{NOMBRE}', $NombreServicio)
+    $pieDePagina = $pieDePagina.Replace('{PAGINA}', $paginaConAcento)
+    return ($pieDePagina + $Contenido)
+}
+
 function Invoke-HerramientaPdf {
     param(
         [Parameter(Mandatory = $true)][string]$RutaEjecutable,
@@ -186,6 +229,15 @@ function Convertir-MarkdownAPdf {
         $contenidoTypst = Agregar-CortesEnCodigoInlineTypst -Contenido $contenidoTypst
         $contenidoTypst = Quitar-ContenedoresFiguraTablaTypst -Contenido $contenidoTypst
         $contenidoTypst = Resaltar-MetodoHttpTypst -Contenido $contenidoTypst
+        $tituloServicio = ''
+        foreach ($linea in ($Markdown -split "`n")) {
+            if ($linea -match '^\s*#\s+(.+?)\s*$') {
+                $tituloServicio = $Matches[1].Trim()
+                break
+            }
+        }
+        $nombreServicio = Obtener-NombreWsPieDePagina -Titulo $tituloServicio -NombreArchivo ([System.IO.Path]::GetFileNameWithoutExtension($RutaSalida))
+        $contenidoTypst = Agregar-PieDePaginaTypst -Contenido $contenidoTypst -NombreServicio $nombreServicio
         [System.IO.File]::WriteAllText($rutaFuenteTypst, $contenidoTypst, $codificacion)
 
         [void](Invoke-HerramientaPdf -RutaEjecutable $RutaTypst -Nombre 'Typst' -TiempoMaximoMs 120000 -Argumentos @(

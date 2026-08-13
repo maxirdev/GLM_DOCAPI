@@ -10,6 +10,8 @@ set "ULTIMO_CODIGO=0"
 set "PREFLIGHT_CODIGO=1"
 set "SIN_XPZ=0"
 set "CONFIGURACION_INVALIDA=0"
+set "XPZ_ACTIVO="
+set "XPZ_ACTIVO_NOMBRE=ninguno"
 
 call :preflight
 
@@ -22,13 +24,15 @@ call :obtener_xpz_principales
 if "%XPZ_CANTIDAD%"=="0" goto menu_sin_xpz
 
 echo  1. Exportar APIGLMMain y completar el XPZ
-echo  2. Generar PDF seleccionando el XPZ principal
-echo  3. Salir
+echo  2. Seleccionar XPZ principal
+echo  3. Generar PDF con el XPZ seleccionado
+echo  4. Salir
 echo.
 
-choice /C 123 /N /M "Seleccione una opcion [1-3]: "
-if errorlevel 3 goto salir
-if errorlevel 2 goto pdf
+choice /C 1234 /N /M "Seleccione una opcion [1-4]: "
+if errorlevel 4 goto salir
+if errorlevel 3 goto pdf
+if errorlevel 2 goto seleccion_xpz
 goto exportacion
 
 :menu_sin_xpz
@@ -52,6 +56,20 @@ goto menu
 
 :pdf
 call :ejecutar_pdf
+call :esperar_retorno
+goto menu
+
+:seleccion_xpz
+set "ULTIMO_ESTADO=OPERANDO"
+set "ULTIMO_CODIGO=1"
+call :seleccionar_xpz_activo
+if errorlevel 1 (
+    set "ULTIMO_ESTADO=ERROR"
+    set "ULTIMO_CODIGO=1"
+) else (
+    set "ULTIMO_ESTADO=COMPLETADO"
+    set "ULTIMO_CODIGO=0"
+)
 call :esperar_retorno
 goto menu
 
@@ -82,33 +100,34 @@ if errorlevel 1 (
 )
 set "ULTIMO_ESTADO=COMPLETADO"
 set "ULTIMO_CODIGO=0"
+set "XPZ_ACTIVO_ESTABLECIDO="
+call :inicializar_xpz_activo
 exit /b 0
 
 :ejecutar_pdf
 set "ULTIMO_ESTADO=OPERANDO"
 set "ULTIMO_CODIGO=1"
+if "%XPZ_ACTIVO%"=="" (
+    echo ERROR: No hay un XPZ activo para la generacion de PDF.
+    set "ULTIMO_ESTADO=ERROR"
+    set "ULTIMO_CODIGO=1"
+    exit /b 1
+)
 echo.
 echo ==============================================================
-echo   GENERAR PDF DESDE EL XPZ PRINCIPAL
+echo   GENERAR PDF DESDE EL XPZ ACTIVO
 echo ==============================================================
 echo.
-call :seleccionar_xpz_principal
+echo XPZ activo: %XPZ_ACTIVO%
+echo Regenerando el inventario para el XPZ activo...
+%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%documentacion\Endpoints\binary\GenerarListaEndpoints.ps1" -ConfigPath "%SCRIPT_DIR%configuracion.json" -XpzPath "%XPZ_ACTIVO%"
 if errorlevel 1 (
     set "ULTIMO_ESTADO=ERROR"
     set "ULTIMO_CODIGO=1"
     exit /b 1
 )
 
-echo XPZ principal seleccionado: %XPZ_SELECCIONADO%
-echo Regenerando el inventario para el XPZ seleccionado...
-%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%documentacion\Endpoints\binary\GenerarListaEndpoints.ps1" -ConfigPath "%SCRIPT_DIR%configuracion.json" -XpzPath "%XPZ_SELECCIONADO%"
-if errorlevel 1 (
-    set "ULTIMO_ESTADO=ERROR"
-    set "ULTIMO_CODIGO=1"
-    exit /b 1
-)
-
-%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%binary\GenerarDocumento.ps1" -ConfigPath "%SCRIPT_DIR%configuracion.json" -XpzPath "%XPZ_SELECCIONADO%" -Todos
+%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%binary\GenerarDocumento.ps1" -ConfigPath "%SCRIPT_DIR%configuracion.json" -XpzPath "%XPZ_ACTIVO%" -Todos
 set "GENERACION_MD_CODIGO=%ERRORLEVEL%"
 
 echo.
@@ -126,6 +145,7 @@ if errorlevel 1 (
 echo.
 echo Eliminando los archivos Markdown generados...
 %SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Get-ChildItem -LiteralPath '%SCRIPT_DIR%documentacion\servicios' -Filter '*.md' -File -ErrorAction SilentlyContinue | Remove-Item -Force"
+call :mostrar_resumen_pdf
 if "%GENERACION_MD_CODIGO%"=="1" (
     set "ULTIMO_ESTADO=ERROR"
     set "ULTIMO_CODIGO=1"
@@ -135,23 +155,21 @@ set "ULTIMO_ESTADO=COMPLETADO"
 set "ULTIMO_CODIGO=0"
 exit /b 0
 
+:mostrar_resumen_pdf
+%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%binary\ResumirOperacionPdf.ps1" -Repositorio "%REPOSITORY_PATH%"
+exit /b 0
+
 :esperar_retorno
-echo.
-echo Estado de la operacion: %ULTIMO_ESTADO%
 echo.
 pause
 call :preflight
 exit /b 0
 
-:seleccionar_xpz_principal
+:seleccionar_xpz_activo
 call :obtener_xpz_principales
 if "%XPZ_CANTIDAD%"=="0" (
     echo ERROR: No se encontraron XPZ principales en "%SCRIPT_DIR%xpz".
     exit /b 1
-)
-if "%XPZ_CANTIDAD%"=="1" (
-    set "XPZ_SELECCIONADO=%XPZ_ARCHIVO_1%"
-    exit /b 0
 )
 
 setlocal EnableDelayedExpansion
@@ -161,7 +179,10 @@ echo.
 echo XPZ principales disponibles:
 for /L %%N in (1,1,%XPZ_CANTIDAD%) do (
     call :marca_opcion_xpz %%N
-    echo   !XPZ_MARCA!. !XPZ_ARCHIVO_%%N!
+    for %%F in ("!XPZ_ARCHIVO_%%N!") do set "XPZ_NOMBRE_OPCION=%%~nxF"
+    set "XPZ_TAG="
+    if "!XPZ_ULTIMO_%%N!"=="1" set "XPZ_TAG=[ÚLTIMO]"
+    echo   !XPZ_MARCA!. !XPZ_NOMBRE_OPCION!  ^|  !XPZ_FECHA_%%N!  !XPZ_TAG!
     set /a XPZ_POSICION+=1
     set "XPZ_MAPA_!XPZ_POSICION!=%%N"
     set "XPZ_OPCIONES=!XPZ_OPCIONES!!XPZ_MARCA!"
@@ -172,23 +193,61 @@ for %%I in (!ERRORLEVEL!) do set "XPZ_INDICE=!XPZ_MAPA_%%I!"
 for %%I in (!XPZ_INDICE!) do set "XPZ_ELEGIDO=!XPZ_ARCHIVO_%%I!"
 for %%F in ("!XPZ_ELEGIDO!") do (
     endlocal
-    set "XPZ_SELECCIONADO=%%~fF"
+    set "XPZ_ACTIVO=%%~fF"
+    set "XPZ_ACTIVO_NOMBRE=%%~nxF"
+    set "XPZ_ACTIVO_ESTABLECIDO=1"
+    echo.
+    echo XPZ activo de la sesion: %%~nxF
+    echo ADVERTENCIA: El packagename de configuracion.json no se modifica al cambiar de XPZ.
+    echo El endpoint publicado podria no corresponder al XPZ seleccionado.
     exit /b 0
 )
 
 :obtener_xpz_principales
 set "XPZ_CANTIDAD=0"
-for %%F in ("%SCRIPT_DIR%xpz\*.xpz") do (
-    if exist "%%~fF" call :registrar_xpz_principal "%%~fF"
+for /f "usebackq delims=" %%L in (`%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%binary\ListarXPZPrincipales.ps1" -DirectorioXpz "%SCRIPT_DIR%xpz"`) do (
+    call :registrar_linea_xpz "%%L"
 )
 exit /b 0
 
-:registrar_xpz_principal
-set "XPZ_NOMBRE=%~n1"
-%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -Command "$n='%XPZ_NOMBRE%'; if ($n -match '^(.*)_\d+$' -and (Test-Path -LiteralPath (Join-Path '%SCRIPT_DIR%xpz' ($Matches[1]+'.xpz')))) { exit 1 } else { exit 0 }" >nul
-if errorlevel 1 exit /b 0
+:registrar_linea_xpz
+set "XPZ_LINEA=%~1"
+set "XPZ_CAMPO1="
+set "XPZ_CAMPO2="
+set "XPZ_CAMPO3="
+for /f "tokens=1-3 delims=|" %%A in ("%XPZ_LINEA%") do (
+    set "XPZ_CAMPO1=%%A"
+    set "XPZ_CAMPO2=%%B"
+    set "XPZ_CAMPO3=%%C"
+)
 set /a XPZ_CANTIDAD+=1
-set "XPZ_ARCHIVO_%XPZ_CANTIDAD%=%~1"
+set "XPZ_ARCHIVO_%XPZ_CANTIDAD%=%SCRIPT_DIR%xpz\%XPZ_CAMPO1%"
+set "XPZ_FECHA_%XPZ_CANTIDAD%=%XPZ_CAMPO2%"
+set "XPZ_ULTIMO_%XPZ_CANTIDAD%=%XPZ_CAMPO3%"
+exit /b 0
+
+:obtener_xpz_configurado
+set "XPZ_CONFIGURADO="
+for /f "usebackq delims=" %%C in (`%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -Command "$c = Get-Content -LiteralPath '%SCRIPT_DIR%configuracion.json' -Raw | ConvertFrom-Json; $ruta = [string]$c.xpz; if (-not [System.String]::IsNullOrWhiteSpace($ruta)) { if (-not [System.IO.Path]::IsPathRooted($ruta)) { $ruta = Join-Path '%SCRIPT_DIR%' $ruta }; Write-Output ([System.IO.Path]::GetFullPath($ruta)) }"`) do set "XPZ_CONFIGURADO=%%C"
+exit /b 0
+
+:inicializar_xpz_activo
+if defined XPZ_ACTIVO_ESTABLECIDO exit /b 0
+call :obtener_xpz_configurado
+call :obtener_xpz_principales
+if exist "%XPZ_CONFIGURADO%" (
+    set "XPZ_ACTIVO=%XPZ_CONFIGURADO%"
+    for %%F in ("%XPZ_CONFIGURADO%") do set "XPZ_ACTIVO_NOMBRE=%%~nxF"
+) else (
+    if "%XPZ_CANTIDAD%"=="0" (
+        set "XPZ_ACTIVO="
+        set "XPZ_ACTIVO_NOMBRE=ninguno"
+    ) else (
+        set "XPZ_ACTIVO=%XPZ_ARCHIVO_1%"
+        for %%F in ("%XPZ_ARCHIVO_1%") do set "XPZ_ACTIVO_NOMBRE=%%~nxF"
+    )
+)
+set "XPZ_ACTIVO_ESTABLECIDO=1"
 exit /b 0
 
 :marca_opcion_xpz
@@ -224,6 +283,7 @@ echo.
 set "PREFLIGHT_CODIGO=%ERRORLEVEL%"
 if "%PREFLIGHT_CODIGO%"=="1" set "CONFIGURACION_INVALIDA=1"
 if "%PREFLIGHT_CODIGO%"=="2" set "SIN_XPZ=1"
+if not "%CONFIGURACION_INVALIDA%"=="1" if not defined XPZ_ACTIVO_ESTABLECIDO call :inicializar_xpz_activo
 exit /b 0
 
 :mostrar_encabezado
@@ -232,6 +292,7 @@ echo   GESTION DE DOCUMENTOS APIGLM
 echo   %DATE% %TIME%
 echo ==============================================================
 echo Estado de sesion: %ULTIMO_ESTADO%
+echo XPZ activo: %XPZ_ACTIVO_NOMBRE%
 exit /b 0
 
 :salir
