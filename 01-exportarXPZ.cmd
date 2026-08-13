@@ -10,6 +10,7 @@ set "KB_PATH=C:\KBs\SEGUROS_COMERCIAL_TRUNK"
 set "MSBUILD=%SystemRoot%\Microsoft.NET\Framework\v4.0.30319\MSBuild.exe"
 set "PROJECT_FILE=%~dp0binary\ExportarXPZ.msbuild"
 set "PROGRESS_SCRIPT=%~dp0binary\ExportarXPZProgreso.ps1"
+set "CONFIG_FILE=%~dp0configuracion.json"
 set "OUTPUT_DIR=%~dp0xpz"
 set "LOG_DIR=%~dp0Logs"
 
@@ -54,12 +55,23 @@ if not exist "%PROGRESS_SCRIPT%" (
     goto :fail
 )
 
-tasklist /FI "IMAGENAME eq GeneXus.exe" /NH 2>nul | find /I "GeneXus.exe" >nul
-if not errorlevel 1 (
-    set "ERROR_MESSAGE=GeneXus esta abierto. Cierre GeneXus antes de exportar la KB."
-    set "EXIT_CODE=2"
+if not exist "%CONFIG_FILE%" (
+    set "ERROR_MESSAGE=No se encontro la configuracion en %CONFIG_FILE%."
     goto :fail
 )
+
+for /f "usebackq delims=" %%I in (`powershell.exe -NoProfile -Command "$p = '%CONFIG_FILE%'; try { $j = Get-Content -LiteralPath $p -Raw | ConvertFrom-Json; if ($null -eq $j.exportacion -or $null -eq $j.exportacion.PSObject.Properties['onlyModuleAPIGLM']) { 'true' } elseif ($j.exportacion.onlyModuleAPIGLM -is [bool]) { $j.exportacion.onlyModuleAPIGLM.ToString().ToLowerInvariant() } else { 'INVALID' } } catch { 'INVALID' }"`) do set "ONLY_MODULE_APIGLM=%%I"
+if /I "%ONLY_MODULE_APIGLM%"=="INVALID" (
+    set "ERROR_MESSAGE=La propiedad exportacion.onlyModuleAPIGLM debe ser un booleano JSON (true o false)."
+    goto :fail
+)
+if /I not "%ONLY_MODULE_APIGLM%"=="true" if /I not "%ONLY_MODULE_APIGLM%"=="false" (
+    set "ERROR_MESSAGE=No se pudo resolver exportacion.onlyModuleAPIGLM."
+    goto :fail
+)
+
+rem GeneXus puede permanecer abierto. El exportador utiliza una sesion
+rem independiente de MSBuild y advierte sobre la concurrencia antes de iniciar.
 
 for /f %%I in ('powershell.exe -NoProfile -Command "Get-Date -Format yyyyMMdd_HHmmssfff"') do set "TIMESTAMP=%%I"
 if not defined TIMESTAMP (
@@ -67,13 +79,22 @@ if not defined TIMESTAMP (
     goto :fail
 )
 
-set "XPZ_FILE=%OUTPUT_DIR%\SEGUROS_COMERCIAL_APIGLM_%TIMESTAMP%.xpz"
+if /I "%ONLY_MODULE_APIGLM%"=="true" (
+    set "EXPORT_LABEL=APIGLM"
+    set "EXPORT_SWITCH=ExportarAPIGLM"
+    set "XPZ_FILE=%OUTPUT_DIR%\SEGUROS_COMERCIAL_APIGLM_%TIMESTAMP%.xpz"
+) else (
+    set "EXPORT_LABEL=KB completa"
+    set "EXPORT_SWITCH=ExportarTodaLaKB"
+    set "XPZ_FILE=%OUTPUT_DIR%\SEGUROS_COMERCIAL_KB_%TIMESTAMP%.xpz"
+)
 set "LOG_FILE=%LOG_DIR%\exportarXPZ_%TIMESTAMP%.log"
 
 echo ==============================================================
-echo   EXPORTACION AUTOMATICA DEL MODULO APIGLM
+echo   EXPORTACION AUTOMATICA - %EXPORT_LABEL%
 echo ============================================================== 
 echo KB:     %KB_PATH%
+echo Alcance: %EXPORT_LABEL%
 echo Salida: %XPZ_FILE%
 echo Log:    %LOG_FILE%
 echo.
@@ -84,7 +105,8 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%PROGRESS_SCRIPT%" ^
     -GxProgramDir "%GX_PROGRAM_DIR%" ^
     -KbPath "%KB_PATH%" ^
     -XpzFile "%XPZ_FILE%" ^
-    -LogFile "%LOG_FILE%"
+    -LogFile "%LOG_FILE%" ^
+    -TargetName %EXPORT_SWITCH%
 
 if errorlevel 1 (
     set "ERROR_MESSAGE=GeneXus no pudo generar el XPZ. Revise el log."

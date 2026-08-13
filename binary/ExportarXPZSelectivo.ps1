@@ -492,6 +492,14 @@ try {
     $marcaTemporal = (Get-Date).ToString('yyyyMMdd_HHmmssfff')
     $rutaLogEfectiva = if ($LogFile) { [System.IO.Path]::GetFullPath($LogFile) } else { Join-Path $DirectorioLogs ('exportarXPZSelectivo_' + $marcaTemporal + '.log') }
     Validar-RutasEjecucion -Configuracion $configuracion -RutaMsbuild $rutaMsbuildEfectiva -RutaProyecto $rutaProyectoEfectiva -DirectorioGeneXus $GxProgramDir -RutaKnowledgeBase $KbPath -RutaXpzSalida $rutaXpzSalida -RutaLog $rutaLogEfectiva
+    $instanciasGeneXus = @(Get-Process -Name 'GeneXus' -ErrorAction SilentlyContinue)
+    if ($instanciasGeneXus.Count -gt 0) {
+        Write-Host ''
+        Write-Host ('ADVERTENCIA: se detectaron ' + $instanciasGeneXus.Count + ' instancia(s) de GeneXus abierta(s).') -ForegroundColor Yellow
+        Write-Host 'La exportacion selectiva continuara usando una sesion independiente de MSBuild.' -ForegroundColor Yellow
+        Write-Host 'No edite objetos ni ejecute especificaciones, generaciones o reorganizaciones durante la exportacion.' -ForegroundColor Yellow
+        Write-Host ''
+    }
     Write-Host ('Complemento de salida: ' + $rutaXpzSalida) -ForegroundColor DarkGray
     Write-Host ('Log de ejecucion: ' + $rutaLogEfectiva) -ForegroundColor DarkGray
     Write-Host ('Nombres de objetos: ' + ($seleccion.Objetos -join ',')) -ForegroundColor DarkGray

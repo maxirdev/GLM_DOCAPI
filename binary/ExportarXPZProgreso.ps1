@@ -5,10 +5,23 @@ param(
     [Parameter(Mandatory = $true)][string]$GxProgramDir,
     [Parameter(Mandatory = $true)][string]$KbPath,
     [Parameter(Mandatory = $true)][string]$XpzFile,
-    [Parameter(Mandatory = $true)][string]$LogFile
+    [Parameter(Mandatory = $true)][string]$LogFile,
+    [ValidateSet('ExportarAPIGLM', 'ExportarTodaLaKB')]
+    [string]$TargetName = 'ExportarAPIGLM'
 )
 
 $ErrorActionPreference = 'Stop'
+
+$onlyModuleAPIGLM = ($TargetName -eq 'ExportarAPIGLM')
+
+$instanciasGeneXus = @(Get-Process -Name 'GeneXus' -ErrorAction SilentlyContinue)
+if ($instanciasGeneXus.Count -gt 0) {
+    Write-Host ''
+    Write-Host ('ADVERTENCIA: se detectaron ' + $instanciasGeneXus.Count + ' instancia(s) de GeneXus abierta(s).') -ForegroundColor Yellow
+    Write-Host 'La exportacion continuara usando una sesion independiente de MSBuild.' -ForegroundColor Yellow
+    Write-Host 'No edite objetos ni ejecute especificaciones, generaciones o reorganizaciones durante la exportacion.' -ForegroundColor Yellow
+    Write-Host ''
+}
 
 function Quote-ProcessArgument {
     param([Parameter(Mandatory = $true)][string]$Value)
@@ -158,9 +171,11 @@ function Get-DescendantProcessIds {
     return @($result)
 }
 
+$targetName = $TargetName
+Write-Host ('Target MSBuild: ' + $targetName) -ForegroundColor DarkGray
 $arguments = @(
     (Quote-ProcessArgument $ProjectFile),
-    '/t:ExportarAPIGLM',
+    "/t:$targetName",
     (Quote-ProcessArgument "/p:GX_PROGRAM_DIR=$GxProgramDir"),
     (Quote-ProcessArgument "/p:KBPath=$KbPath"),
     (Quote-ProcessArgument "/p:XPZFile=$XpzFile"),
@@ -173,7 +188,7 @@ $arguments = @(
 $phaseNames = @(
     'Iniciando MSBuild',
     'Abriendo la Knowledge Base',
-    'Exportando APIGLM y sus referencias',
+    $(if ($onlyModuleAPIGLM) { 'Exportando APIGLM y sus referencias' } else { 'Exportando todos los objetos de la Knowledge Base' }),
     'Comprimiendo el XPZ',
     'Cerrando la Knowledge Base'
 )
@@ -185,6 +200,8 @@ $stdoutState = $null
 $stderrState = $null
 $processOutput = New-Object System.Text.StringBuilder
 $processStartedAt = Get-Date
+$lastProgressNoticeAt = $processStartedAt
+$progressNoticeInterval = [TimeSpan]::FromMinutes(3)
 $processId = 0
 $scriptExitCode = 1
 
@@ -219,6 +236,14 @@ try {
     while (-not $process.HasExited) {
         Update-ProcessOutput -State $stdoutState -Buffer $processOutput
         Update-ProcessOutput -State $stderrState -Buffer $processOutput
+
+        if (-not $onlyModuleAPIGLM) {
+            $elapsed = (Get-Date) - $processStartedAt
+            if (($elapsed - $lastProgressNoticeAt) -ge $progressNoticeInterval) {
+                Write-Host ("La exportacion completa de la Knowledge Base continua en ejecucion. Tiempo transcurrido: {0:hh\:mm\:ss}." -f $elapsed) -ForegroundColor Cyan
+                $lastProgressNoticeAt = Get-Date
+            }
+        }
 
         if ($phaseCheckCounter -eq 0) {
             $recentText = ((Get-RecentOutputText -Paths @($LogFile)) -join "`n") + "`n" + $processOutput.ToString()

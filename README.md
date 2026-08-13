@@ -8,7 +8,7 @@ La fuente principal es el XPZ indicado en `configuracion.json`. El archivo conti
 
 | Proceso | Estado | Comportamiento actual |
 |---|---|---|
-| Exportación del XPZ | Operativo | `exportarXPZ.cmd` abre la KB configurada, exporta `Module:APIGLM` con referencias mínimas y crea un XPZ fechado. La consola conserva una lista de cinco tareas y marca cada una como `OK` o `ERROR`, dejando un indicador animado únicamente en la tarea en curso. |
+| Exportación del XPZ | Operativo | `GenerarDocumentosGLM.cmd` opción 1 lee `exportacion.onlyModuleAPIGLM` de `configuracion.json`: `true` exporta `Module:APIGLM` con referencias mínimas y `false` invoca el target `ExportarTodaLaKB` con `ExportAll=true`. La consola conserva una lista de cinco tareas y marca cada una como `OK` o `ERROR`, dejando un indicador animado únicamente en la tarea en curso. La exportación total requiere confirmación y puede tardar entre 20 y 30 minutos. |
 | Exportación selectiva de complementos | Operativo con GeneXus | `exportarXPZSelectivo.cmd` lee el último reporte compatible de `ValidarXPZ.ps1`, exporta solo los nombres de objetos pendientes y crea el siguiente complemento `<base>_<N>.xpz` junto al XPZ principal. |
 | Inventario de endpoints | Operativo | Lee el XPZ configurado, localiza `APIGLM.APIGLMMain`, resuelve sus llamadas activas y genera `endpoints.json` y `endpoints.md`. |
 | Validación de completitud del XPZ | Operativo | `ValidarXPZ.ps1` valida el inventario contra el XPZ principal y los complementarios `<nombre>_<N>.xpz`, aplica las estrategias de resolución de tipos y produce la receta de exportación en `Logs/*-validacion-xpz.json`. |
@@ -37,15 +37,17 @@ Hay dos mecanismos de deduplicación distintos según el proceso:
 
 El repositorio auxiliar `GeneXus-XPZ-Skills-main/` es opcional para el inventario. Su catálogo de tipos solo se usa para confirmar el GUID de Procedure: si el archivo no existe, no puede leerse, su JSON es inválido o no contiene `types.Procedure.objectTypeGuid`, el script utiliza el GUID conocido de Procedure sin detenerse.
 
-### 0. Exportar el módulo APIGLM (opcional)
+### 0. Exportar el XPZ desde la Knowledge Base (opcional)
 
 Si el XPZ debe obtenerse directamente desde la Knowledge Base local:
 
 ```powershell
-.\exportarXPZ.cmd
+.\01-exportarXPZ.cmd
 ```
 
-El comando valida las rutas requeridas, exige que GeneXus esté cerrado y ejecuta MSBuild en una ventana oculta. La consola muestra el avance como una lista persistente:
+La exportación se realiza según `exportacion.onlyModuleAPIGLM` de `configuracion.json`. Para conservar el comportamiento rápido y acotado, usar `"onlyModuleAPIGLM": true`; para exportar todos los objetos de la versión activa, usar `false`. En este último caso se muestra una advertencia y se pide confirmación antes de iniciar la operación.
+
+El comando valida las rutas requeridas y ejecuta MSBuild en una ventana oculta. GeneXus puede permanecer abierto: si se detectan una o más instancias, el exportador muestra una advertencia y continúa con una sesión independiente de MSBuild. Durante toda la exportación no deben editarse objetos ni ejecutarse especificaciones, generaciones o reorganizaciones sobre la KB. La consola muestra el avance como una lista persistente:
 
 ```text
 [1/5] Iniciando MSBuild ... OK
@@ -53,14 +55,15 @@ El comando valida las rutas requeridas, exige que GeneXus esté cerrado y ejecut
 [3/5] Exportando APIGLM y sus referencias ... |
 ```
 
-La tarea activa utiliza un indicador `| / - \`; las tareas finalizadas permanecen visibles como `OK` o `ERROR` y las siguientes aparecen cuando comienzan. La duración no se estima ni limita artificialmente.
+La tarea activa utiliza un indicador `| / - \`; las tareas finalizadas permanecen visibles como `OK` o `ERROR` y las siguientes aparecen cuando comienzan. En la exportación completa se muestra además un aviso cada tres minutos indicando que MSBuild continúa procesando la KB y el tiempo transcurrido. Para toda la KB se informa previamente una duración orientativa de 20 a 30 minutos; el tiempo real depende de la cantidad de objetos y del estado de la KB.
 
-Salidas:
+Salidas (según `exportacion.onlyModuleAPIGLM` en `configuracion.json`):
 
-- `xpz/SEGUROS_COMERCIAL_APIGLM_<marca>.xpz`;
-- `Logs/exportarXPZ_<marca>.log`.
+- `xpz/SEGUROS_COMERCIAL_APIGLM_<marca>.xpz` cuando el valor es `true`;
+- `xpz/SEGUROS_COMERCIAL_KB_<marca>.xpz` cuando el valor es `false`;
+- `Logs/exportarXPZ_<marca>.log` en ambos casos.
 
-Para automatización puede usarse `exportarXPZ.cmd --no-pause`. Las rutas de GeneXus y de la KB están declaradas actualmente en el propio `.cmd`; deben revisarse antes de usarlo en otro equipo.
+Para automatización puede usarse `01-exportarXPZ.cmd --no-pause`. Las rutas de GeneXus, la KB y MSBuild se leen desde `configuracion.json` y deben revisarse antes de usar el proyecto en otro equipo.
 
 ### 0.1. Exportar los objetos faltantes (opcional)
 
@@ -200,7 +203,7 @@ Consistencia y limitaciones:
 
 Además del inventario, existe un pipeline en PowerShell 5.1 que genera la documentación de uno o más servicios implementando en código las reglas definidas en `analisisXPZ.md` → `reglasEditoriales.md` → `templateDoc.md`. Se invoca con `GenerarDocumentoServicio.cmd` desde la raíz y presenta un menú interactivo con tres modos:
 
-La entrada unificada `GenerarDocumentosGLM.cmd` valida la configuración y ofrece la exportación de `APIGLMMain`, la generación de todos los Markdown y, al finalizar, pregunta si se desean convertir a PDF. También conserva una opción independiente para convertir Markdown existentes.
+La entrada unificada `GenerarDocumentosGLM.cmd` valida la configuración y ofrece el selector de XPZ principal, la exportación según `exportacion.onlyModuleAPIGLM` (APIGLM o KB completa), la regeneración del inventario y la generación de los PDF con el XPZ seleccionado. El menú del generador de servicios conserva sus tres modos.
 
 | Opción | Descripción |
 |---|---|
@@ -285,9 +288,10 @@ La marca temporal de los logs tiene precisión de un segundo: dos ejecuciones qu
 |---|---|
 | [xpz/](xpz/) | Exportaciones GeneXus disponibles localmente. El archivo activo es el indicado por `configuracion.json`; la carpeta está ignorada por git. |
 | `GeneXus-XPZ-Skills-main/` | Repositorio auxiliar opcional con scripts y catálogos, como `gx-object-type-catalog.json`. Está ignorado por git. |
-| [configuracion.json](configuracion.json) | Configuración operativa y dinámica: ruta al XPZ activo, `packagename` del endpoint publicado, etiqueta `cliente` y lista `serviciosIgnorados`. |
+| [configuracion.json](configuracion.json) | Configuración operativa y dinámica: ruta al XPZ activo, `packagename` del endpoint publicado, etiqueta `cliente`, lista `serviciosIgnorados`, rutas de herramientas y `exportacion.onlyModuleAPIGLM` (por defecto lógico: `true`). |
 | [AGENTS.md](AGENTS.md) | Memoria del proyecto para agentes: reglas no obvias, estructura de carpetas, fuentes normativas y convenciones. |
-| [exportarXPZ.cmd](exportarXPZ.cmd) | Exporta automáticamente `Module:APIGLM` desde la KB local, presenta cinco tareas con estado y genera un XPZ y su log con marca temporal. |
+| [GenerarDocumentosGLM.cmd](GenerarDocumentosGLM.cmd) | Entrada principal. Valida la configuración, permite seleccionar el XPZ principal, exporta APIGLM o toda la KB según `exportacion.onlyModuleAPIGLM`, completa el XPZ y genera los PDF con el XPZ seleccionado. |
+| [01-exportarXPZ.cmd](01-exportarXPZ.cmd) | Atajo para la exportación automática del XPZ desde la KB local; conserva el alcance configurable (`exportacion.onlyModuleAPIGLM`), presenta cinco tareas con estado y acepta `--no-pause`. |
 | [GenerarDocumentacion.cmd](GenerarDocumentacion.cmd) | Orquestador que analiza el XPZ (inventario `endpoints.json`, `endpoints.md`) y valida la completitud de los XPZ disponibles (reporte `Logs/*-validacion-xpz.json`). |
 | [GenerarDocumentoServicio.cmd](GenerarDocumentoServicio.cmd) | Entry point del generador interactivo de documentación de servicios. |
 | [.gitignore](.gitignore) | Excluye los XPZ, el repositorio auxiliar, los inventarios, el visor, los documentos generados y los logs. |
