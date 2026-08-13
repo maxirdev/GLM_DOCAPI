@@ -11,3 +11,8 @@ logErrores.txt
 
 servicios/
 logs/
+
+tmp/
+
+binary/tools/pandoc.exe
+binary/tools/typst.exe
