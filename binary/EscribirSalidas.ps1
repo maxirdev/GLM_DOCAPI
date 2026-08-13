@@ -1,7 +1,8 @@
 ﻿# EscribirSalidas.ps1
 # Modulo de escritura de las salidas del generador de documentacion APIGLM.
-# Escribe el documento markdown en documentacion/servicios/<wrapper>.md (UTF-8
-# sin BOM y finales LF) sin sobrescribir.
+# Escribe el documento Markdown en documentacion/servicios/<wrapper>.md,
+# reemplazando únicamente el servicio procesado. La conversión a PDF se
+# realiza bajo demanda mediante GenerarPdfServicios.ps1.
 # Se importa por dot-source desde GenerarDocumento.ps1, despues de
 # AnalizarServicio.ps1 y RedactarDocumento.ps1.
 
@@ -10,10 +11,10 @@ $ErrorActionPreference = 'Stop'
 function Escribir-Salidas {
     <#
     .SYNOPSIS
-    Escribe el documento markdown del servicio.
+    Escribe el documento Markdown del servicio.
     .DESCRIPTION
-    Escribe el documento en <directorioSalida>/<wrapper en minusculas>.md con
-    UTF-8 sin BOM y finales LF. Si el archivo ya existe, lo regenera.
+    Escribe el documento en <directorioSalida>/<wrapper en minusculas>.md.
+    Si el archivo ya existe, lo regenera.
     #>
     [CmdletBinding()]
     param(
@@ -32,8 +33,9 @@ function Escribir-Salidas {
     if (-not (Test-Path -LiteralPath $DirectorioSalida)) {
         New-Item -ItemType Directory -Path $DirectorioSalida -Force | Out-Null
     }
-    $documentoNormalizado = $Documento -replace "`r`n", "`n"
-    [System.IO.File]::WriteAllText($rutaDocumento, $documentoNormalizado, (New-Object System.Text.UTF8Encoding($false)))
+    $contenido = $Documento -replace "`r`n", "`n" -replace "`r", "`n"
+    $codificacion = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllText($rutaDocumento, $contenido, $codificacion)
 
     return $rutaDocumento
 }

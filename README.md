@@ -9,10 +9,11 @@ La fuente principal es el XPZ indicado en `configuracion.json`. El archivo conti
 | Proceso | Estado | Comportamiento actual |
 |---|---|---|
 | Exportación del XPZ | Operativo | `exportarXPZ.cmd` abre la KB configurada, exporta `Module:APIGLM` con referencias mínimas y crea un XPZ fechado. La consola conserva una lista de cinco tareas y marca cada una como `OK` o `ERROR`, dejando un indicador animado únicamente en la tarea en curso. |
+| Exportación selectiva de complementos | Operativo con GeneXus | `exportarXPZSelectivo.cmd` lee el último reporte compatible de `ValidarXPZ.ps1`, exporta solo los nombres de objetos pendientes y crea el siguiente complemento `<base>_<N>.xpz` junto al XPZ principal. |
 | Inventario de endpoints | Operativo | Lee el XPZ configurado, localiza `APIGLM.APIGLMMain`, resuelve sus llamadas activas y genera `endpoints.json` y `endpoints.md`. |
 | Validación de completitud del XPZ | Operativo | `ValidarXPZ.ps1` valida el inventario contra el XPZ principal y los complementarios `<nombre>_<N>.xpz`, aplica las estrategias de resolución de tipos y produce la receta de exportación en `Logs/*-validacion-xpz.json`. |
 | Visor web | Operativo (manual) | `GenerarVistaHTML.ps1` consume `endpoints.json`, incorpora el `cliente` definido en la configuración y genera `APIServicios.html`. Ya no se invoca desde `GenerarDocumentacion.cmd`; se ejecuta por separado. |
-| Documentación de servicios | Operativo con revisión | Permite procesar un servicio, una selección múltiple o todo el inventario. Expande SDT recursivos de forma segura, sigue flujos reales/formales y utiliza evidencia global por identidad exacta de SDT y ruta interna. Cada resultado queda clasificado como `OK`, `WARNING`, `ERROR` u `OMITIDO`. |
+| Documentación de servicios | Operativo con revisión | Permite procesar un servicio, una selección múltiple o todo el inventario usando el XPZ principal y sus complementos numerados. Expande SDT recursivos de forma segura, sigue flujos reales/formales y utiliza evidencia global por identidad exacta de SDT y ruta interna. Cada resultado queda clasificado como `OK`, `WARNING`, `ERROR` u `OMITIDO`. |
 | Diagnósticos | Operativo | Una ejecución completada del generador produce `review.json`; los `WARNING`/`ERROR`/`OMITIDO` pueden generar `errores.txt` y las excepciones generan `diagnostico-ia.json` en `Logs/`. |
 | Grafo y detección de cambios | No implementado | El grafo de dependencias, la detección automática de cambios y `controlVersiones.json` no forman parte de los procesos disponibles. |
 | Artefactos generados | Bajo demanda | El inventario, el visor, los documentos de servicios y los logs se crean al ejecutar los generadores; no se presupone que existan en una copia nueva. |
@@ -61,6 +62,22 @@ Salidas:
 
 Para automatización puede usarse `exportarXPZ.cmd --no-pause`. Las rutas de GeneXus y de la KB están declaradas actualmente en el propio `.cmd`; deben revisarse antes de usarlo en otro equipo.
 
+### 0.1. Exportar los objetos faltantes (opcional)
+
+Después de ejecutar `GenerarDocumentacion.cmd`, si `ValidarXPZ.ps1` informa objetos faltantes, generar un complemento selectivo:
+
+```powershell
+.\exportarXPZSelectivo.cmd --no-pause
+```
+
+El comando usa el reporte `Logs/*-validacion-xpz.json` más reciente que corresponda al XPZ de `configuracion.json`. También puede recibir un reporte concreto:
+
+```powershell
+.\exportarXPZSelectivo.cmd --no-pause --reporte Logs\<marca>-validacion-xpz.json
+```
+
+El resultado se guarda junto al XPZ principal con el siguiente número libre, por ejemplo `SEGUROS_COMERCIAL_APIGLM_<marca>_1.xpz`. El XPZ principal no se modifica y los complementos existentes no se sobrescriben.
+
 ### 1. Configurar la ejecución
 
 Completar `configuracion.json` con los valores correspondientes al XPZ que se analizará:
@@ -83,6 +100,7 @@ Los scripts PowerShell aceptan parámetros que los `.cmd` no exponen. Al invocar
 - inventario (`GenerarListaEndpoints.ps1`): `-XpzPath`, `-CatalogPath`, `-OutputDirectory` y `-ConfigPath`;
 - visor (`GenerarVistaHTML.ps1`): `-InputDirectory`, `-OutputPath` y `-ConfigPath`;
 - validación de completitud (`ValidarXPZ.ps1`): `-ConfigPath` y `-XpzPath`;
+- exportación selectiva (`ExportarXPZSelectivo.ps1`): `-ConfigPath`, `-XpzPath`, `-ReportePath`, `-MsbuildPath`, `-ProjectFile`, `-GxProgramDir` y `-KbPath`;
 - generador de servicios (`GenerarDocumento.ps1`): `-ConfigPath` y `-XpzPath`.
 
 Restricciones de los overrides:
@@ -108,6 +126,8 @@ La ejecución analiza el XPZ, escribe el inventario y valida que los servicios d
 
 La validación descubre automáticamente los XPZ complementarios que sigan la convención `<nombre>.xpz` + `<nombre>_<N>.xpz` en el mismo directorio del XPZ principal, construye un índice unificado con resolución en cascada (la primera ocurrencia gana) y, por servicio, solicita los objetos (procedures y SDT) que faltan exportar. Si hay pendientes, `ValidarXPZ.ps1` devuelve código 1 y el orquestador muestra una advertencia pero continúa; el reporte incluye la receta de exportación en `objectList` (nombres reales separados por coma).
 
+El flujo incremental es: (1) ejecutar la validación, (2) ejecutar `exportarXPZSelectivo.cmd`, (3) conservar el XPZ principal y el complemento generado y (4) volver a ejecutar `GenerarDocumentacion.cmd`. Si aparecen nuevas faltas, el exportador crea `_2.xpz`, `_3.xpz`, etc. No se fusionan físicamente los archivos; el validador los lee como un índice único.
+
 El visor (`APIServicios.html`) ya no se genera en este orquestador: para regenerarlo, invocar `GenerarVistaHTML.ps1` directamente (ver [Generación automática del inventario y el visor](#generación-automática-del-inventario-y-el-visor)). El visor se abre localmente con doble clic sobre `APIServicios.html`; no requiere servidor ni conexión de red.
 
 > **Advertencias y código de salida.** `GenerarListaEndpoints.ps1` devuelve 1 solo ante una excepción; candidatos no resueltos u objetos rechazados siguen devolviendo 0. `ValidarXPZ.ps1` devuelve 1 cuando al menos un servicio requiere exportación adicional.
@@ -122,7 +142,7 @@ Después de generar el inventario:
 .\GenerarDocumentoServicio.cmd
 ```
 
-El menú permite seleccionar un servicio, varios mediante `Out-GridView` o todo el inventario. Los documentos se escriben en `documentacion/servicios/`; los exitosos sobrescriben el archivo anterior y un servicio que termina en `ERROR` elimina su documento previo (ver [Estados, limpieza, logs y códigos de salida](#estados-limpieza-logs-y-códigos-de-salida)).
+El menú permite seleccionar un servicio, varios mediante `Out-GridView` o todo el inventario. Los documentos se escriben en `documentacion/servicios/`; los servicios seleccionados que terminan en `OK` o `WARNING` sobrescriben únicamente su archivo anterior. Si un servicio termina en `ERROR`, se conserva su documento previo (ver [Estados, limpieza, logs y códigos de salida](#estados-limpieza-logs-y-códigos-de-salida)).
 
 Al finalizar se muestra un resumen con cantidades dinámicas de `OK`, `WARNING`, `ERROR` y `OMITIDO`. Una ejecución completada escribe `Logs/<marca>-review.json`; si hay incidencias también escribe `Logs/<marca>-errores.txt` y, si hay excepciones, `Logs/<marca>-diagnostico-ia.json`. Si al menos un servicio termina en `ERROR`, el lote devuelve un código de salida distinto de cero aunque otros documentos se hayan generado correctamente; `WARNING` y `OMITIDO` devuelven 0.
 
@@ -151,6 +171,9 @@ El inventario y la validación de completitud se regeneran con un orquestador ub
 | [GenerarDocumentacion.cmd](GenerarDocumentacion.cmd) | raíz del repo | Ejecuta en secuencia el análisis del XPZ (`GenerarListaEndpoints.ps1`) y la validación de completitud (`ValidarXPZ.ps1`). Si el análisis falla, termina con `%ERRORLEVEL%` ≠ 0; si la validación informa pendientes, muestra una advertencia pero continúa. |
 | `GenerarListaEndpoints.ps1` | `documentacion/Endpoints/binary/` | Lee el XPZ configurado y el catálogo de tipos de GeneXus, extrae las llamadas `WS...` activas de `APIGLM.APIGLMMain`, valida que cada objeto sea Procedure con `IsMain=True` y `CALL_PROTOCOL=HTTP`, y escribe `endpoints.json` y `endpoints.md`. |
 | `ValidarXPZ.ps1` | `binary/` | Valida la completitud de uno o varios XPZ contra el inventario: descubre complementos `<nombre>_<N>.xpz`, construye el índice unificado con cascada, aplica las estrategias de resolución de tipos y escribe la receta de exportación en `Logs/<marca>-validacion-xpz.json`. |
+| `exportarXPZSelectivo.cmd` | raíz del repo | Atajo para exportar los objetos indicados por el reporte de validación y crear el siguiente XPZ complementario. Acepta `--no-pause` y `--reporte <ruta>`. |
+| `binary/ExportarXPZSelectivo.ps1` | `binary/` | Selecciona y valida el reporte compatible, convierte la receta a nombres reales de objetos, elige el complemento libre, ejecuta MSBuild y valida el ZIP/XML generado. |
+| `binary/ExportarXPZSelectivo.msbuild` | `binary/` | Proyecto MSBuild que abre la KB, exporta los nombres de objetos recibidos con referencias mínimas y cierra la KB. |
 | `GenerarVistaHTML.ps1` | `documentacion/Endpoints/binary/` | Lee `endpoints.json`, agrega o reemplaza `meta.cliente` con el valor de la configuración, vuelve a serializar el JSON (escapando `</script>`) en `<script type="application/json">` y escribe `APIServicios.html`. No reabre ni valida el XPZ. Ya no se invoca desde `GenerarDocumentacion.cmd`; se ejecuta manualmente. |
 | `ObtenerEndpoints.cmd` | `documentacion/Endpoints/binary/` | Genera únicamente el inventario (sin visor ni validación). |
 
@@ -177,13 +200,15 @@ Consistencia y limitaciones:
 
 Además del inventario, existe un pipeline en PowerShell 5.1 que genera la documentación de uno o más servicios implementando en código las reglas definidas en `analisisXPZ.md` → `reglasEditoriales.md` → `templateDoc.md`. Se invoca con `GenerarDocumentoServicio.cmd` desde la raíz y presenta un menú interactivo con tres modos:
 
+La entrada unificada `GenerarDocumentosGLM.cmd` valida la configuración y ofrece la exportación de `APIGLMMain`, la generación de todos los Markdown y, al finalizar, pregunta si se desean convertir a PDF. También conserva una opción independiente para convertir Markdown existentes.
+
 | Opción | Descripción |
 |---|---|
 | 1 — Servicio particular | Lista numerada de endpoints, elige uno y genera su documentación. |
 | 2 — Múltiples servicios | Abre `Out-GridView` para seleccionar varios con Ctrl+Click. |
 | 3 — TODOS | Genera documentación para todos los endpoints del inventario. |
 
-Los documentos normativos no se leen durante la generación: el markdown está codificado en `RedactarDocumento.ps1`. Cambiar `analisisXPZ.md`, `reglasEditoriales.md` o `templateDoc.md` no modifica automáticamente la salida; scripts y normativa deben mantenerse sincronizados manualmente.
+Los documentos normativos no se leen durante la generación: el markdown está codificado en `RedactarDocumento.ps1`. Cambiar `analisisXPZ.md`, `reglasEditoriales.md` o `templateDoc.md` no modifica automáticamente la salida; scripts y normativa deben mantenerse sincronizados manualmente. El PDF siempre se genera leyendo un `.md` ya escrito en `documentacion/servicios/`.
 
 En los modos 2 y 3 se muestra una barra de progreso global y, al completar cada servicio, una línea con su estado (`OK`, `WARNING` o `ERROR`). Cada ejecución completada genera `review.json`; cuando hay incidencias también genera `errores.txt` y, si existe al menos un error, `diagnostico-ia.json` con la ubicación, la sentencia y el stack trace necesarios para analizarlo.
 
@@ -208,7 +233,7 @@ Los duplicados se resuelven por el nombre local del documento (último segmento 
 - no generan ni sobrescriben un documento;
 - se registran en `review.json` con estado `OMITIDO`;
 - no cuentan como `ERROR` y no cambian el código de salida;
-- **no eliminan** un `.md` generado por una ejecución anterior: solo se deja de producirlo. Si se quiere quitar el archivo, debe borrarse manualmente o moverse el FQN fuera de la lista.
+- **no eliminan** un `.md` ni un `.pdf` generado por una ejecución anterior: solo se deja de producirlo. Si se quiere quitar el archivo, debe borrarse manualmente o moverse el FQN fuera de la lista.
 
 Los FQN de la lista que no estén en el inventario no interrumpen la ejecución: solo se informan como `[IGNORADO] (no esta en el inventario)`.
 
@@ -220,9 +245,10 @@ Cada documento se produce en tres etapas, implementadas como módulos PowerShell
 |---|---|
 | `AnalizarServicio.ps1` | Abre el XPZ como ZIP de solo lectura, localiza wrapper y programa principal, resuelve GET/POST, tipifica campos, expande SDT —incluidas autorreferencias—, sigue argumentos reales y parámetros formales, consulta evidencia global por `SDT FQN + ruta`, determina obligatoriedad, resuelve salidas estructuradas, delegadas, textuales o binarias, y obtiene errores HTTP y endpoint publicado. |
 | `RedactarDocumento.ps1` | Toma la documentación técnica en memoria y renderiza el markdown según la plantilla, respetando bloques canónicos y reemplazando marcadores con datos o pendientes. |
-| `EscribirSalidas.ps1` | Escribe el `.md` en `documentacion/servicios/<wrapper>.md` (UTF-8 sin BOM, LF). |
+| `EscribirSalidas.ps1` | Escribe la redacción como `.md` en `documentacion/servicios/<wrapper>.md`. |
+| `GenerarPdfServicios.ps1` | Convierte bajo demanda los `.md` existentes a `.pdf` mediante Pandoc + Typst portable, Poppins y la plantilla visual del proyecto, sin modificar el Markdown. |
 | `CargarConfiguracion.ps1` | Módulo común de carga de `configuracion.json`: resuelve la ruta del XPZ contra la raíz del repositorio, aplica el override de `-XpzPath` y expone `PackageName`, `Cliente` y `ServiciosIgnorados`. Se importa por dot-source desde el generador, el inventario y el visor. |
-| `GenerarDocumento.ps1` | Orquestador: carga configuración, lee inventario, filtra ignorados, detecta duplicados, despliega menú, encadena los tres módulos anteriores, limpia documentos de servicios en `ERROR` y escribe los logs. |
+| `GenerarDocumento.ps1` | Orquestador: carga el XPZ principal y sus complementos mediante `CargarMultiXPZ.ps1`, lee inventario, filtra ignorados, detecta duplicados, despliega menú, encadena los tres módulos anteriores, conserva documentos previos ante `ERROR` y escribe los logs. |
 | `DiagnosticoIA.ps1` | Captura excepciones del pipeline en un JSON estructurado para análisis técnico, con rutas relativas al repositorio y rutas externas enmascaradas. |
 
 ### Estados, limpieza, logs y códigos de salida
@@ -233,13 +259,13 @@ Cada servicio seleccionado termina en uno de estos estados:
 |---|---|---|---|
 | `OK` | Análisis completo sin pendientes. | Escrito (sobrescribe). | 0 |
 | `WARNING` | Documento generado con pendientes de confirmación (tipos o descripciones de campos, o duplicado de nombre local). | Escrito (sobrescribe), salvo duplicados. | 0 |
-| `ERROR` | El análisis no pudo completarse (SDT ausente, salida estructural no resoluble, método ambiguo, delegado no exportado, etc.). Una autorreferencia válida del mismo SDT no constituye un error. | **No** se escribe; se elimina el archivo previo del servicio. | 1 |
+| `ERROR` | El análisis no pudo completarse (SDT ausente, salida estructural no resoluble, método ambiguo, delegado no exportado, etc.). Una autorreferencia válida del mismo SDT no constituye un error. | **No** se escribe; se conserva el archivo previo del servicio. | 1 |
 | `OMITIDO` | FQN en `serviciosIgnorados` presente en el inventario. | No se genera ni se elimina. | 0 |
 
 Limpieza de documentos:
 
-- los servicios en `OK` o `WARNING` sobrescriben su `.md`;
-- un servicio en `ERROR` elimina el archivo previo (`<ultimo-segmento-fqn>.md`); un fallo en esa eliminación aborta la fase de cierre;
+- los servicios en `OK` o `WARNING` sobrescriben únicamente su `.md` seleccionado;
+- los servicios en `ERROR` conservan el `.md` que ya existía;
 - `OMITIDO` y duplicados `WARNING` no eliminan archivos preexistentes.
 
 Logs:
@@ -269,7 +295,7 @@ La marca temporal de los logs tiene precisión de un segundo: dos ejecuciones qu
 | `documentacion/analisisXPZ.md` | Fuente normativa #1: cómo construir la documentación técnica desde el XPZ. Define el flujo de análisis, tipos canónicos, obligatoriedad por subnivel, criterios de detención y la fuente única de evidencia. |
 | `documentacion/reglasEditoriales.md` | Fuente normativa #2: presentación del documento final. Lenguaje, formato de tablas, secciones obligatorias y nomenclatura de archivos. |
 | `documentacion/templateDoc.md` | Fuente normativa #3: plantilla markdown de cada servicio. Bloques canónicos y marcadores de reemplazo. |
-| `documentacion/servicios/` | Documentos generados por servicio. Cada archivo utiliza el nombre local del wrapper en minúsculas. |
+| `documentacion/servicios/` | Documentos generados por servicio en `.md`; los `.pdf` se crean bajo demanda y conservan el mismo nombre local del wrapper. |
 | `documentacion/Endpoints/assets/analisisEndpoint.md` | Guía para reproducir el inventario de endpoints desde `APIGLM.APIGLMMain`. `endpoints.json` y `endpoints.md` son salidas generadas (ignoradas). |
 | `documentacion/Endpoints/assets/endpoints.json` | Inventario de endpoints en JSON (generado, ignorado). |
 | `documentacion/Endpoints/assets/endpoints.md` | Inventario de endpoints en markdown (generado, ignorado). |
@@ -283,6 +309,7 @@ La marca temporal de los logs tiene precisión de un segundo: dos ejecuciones qu
 | `binary/RedactarDocumento.ps1` | Módulo de redacción: documentación técnica → markdown según template. |
 | `binary/EscribirSalidas.ps1` | Módulo de escritura: guarda el `.md`. |
 | `binary/CargarConfiguracion.ps1` | Módulo común de carga de `configuracion.json` con resolución de rutas contra la raíz del repositorio. |
+| `binary/CargarMultiXPZ.ps1` | Módulo común que descubre complementos `_N.xpz` y construye el XML e índice unificados con prioridad del XPZ principal. |
 | `binary/DiagnosticoIA.ps1` | Módulo común de diagnóstico de excepciones para el generador, el inventario y el visor. |
 | `binary/GenerarDocumento.ps1` | Orquestador del generador: filtra ignorados, detecta duplicados, menú interactivo de tres modos, pipeline análisis → redacción → escritura, limpieza de `ERROR` y logs. |
 | `binary/ValidarXPZ.ps1` | Validador de completitud multi-XPZ contra el inventario: descubre complementos `<nombre>_<N>.xpz`, arma el índice unificado con cascada y escribe la receta de exportación en `Logs/*-validacion-xpz.json`. |
@@ -293,7 +320,8 @@ La marca temporal de los logs tiene precisión de un segundo: dos ejecuciones qu
 | `Logs/yyyyMMdd-HHmmss-review.json` | Resultado agregado de una ejecución completada (incluye `OK`, `WARNING`, `ERROR` y los `OMITIDO` presentes en el inventario). |
 | `Logs/yyyyMMdd-HHmmss-errores.txt` | `WARNING`, `ERROR` y `OMITIDO` legibles; se genera solo cuando hay al menos un warning o error. |
 | `Logs/yyyyMMdd-HHmmss-diagnostico-ia.json` | Excepciones estructuradas con fase, causa interna, ubicación, sentencia y stack trace; se genera solo cuando hay errores. |
-| `Logs/yyyyMMdd-HHmmss-validacion-xpz.json` | Reporte de completitud del XPZ: conteos de la ejecución, servicios que requieren exportación adicional y `objectList` con los objetos a exportar (nombres reales separados por coma). Se genera en cada ejecución de `ValidarXPZ.ps1`. |
+| `Logs/yyyyMMdd-HHmmss-validacion-xpz.json` | Reporte de completitud del XPZ: conteos de la ejecución, servicios que requieren exportación adicional, `selectores` tipo:FQN y `objectList` con los nombres legibles. Se genera en cada ejecución de `ValidarXPZ.ps1`. |
+| `Logs/exportarXPZSelectivo_<marca>.log` | Log de MSBuild de cada exportación selectiva, con la salida y los errores detectados. |
 
 ## Especificaciones (specs)
 
@@ -310,6 +338,7 @@ El desarrollo sigue el método spec-driven. Cada spec define el alcance, modelo 
 | [SPEC 08](specs/08-detector-cambios-xpz.md) | Borrador | Detector de cambios por árbol transitivo del XPZ, checksums, historial de versiones y grafo de dependencias. |
 | [SPEC 09](specs/09-pruebas-automatizadas-locales.md) | Borrador | Harness local sin dependencias para probar pipeline, analizador y visor en entornos aislados. |
 | [SPEC 11](specs/11-validador-completitud-xpz.md) | Aprobado | Validador de completitud multi-XPZ: índice unificado con resolución en cascada, auto-descubrimiento de complementos `<nombre>_<N>.xpz` y reporte `Logs/<marca>-validacion-xpz.json` con la receta de exportación. |
+| [SPEC 12](specs/12-exportacion-selectiva-xpz.md) | Aprobado | Exportación selectiva desde el último reporte de validación y generación de complementos XPZ numerados. |
 
 Las filas en `Borrador` corresponden a funcionalidades en desarrollo; las funcionalidades que no aparecen en esta tabla no se consideran disponibles. Las propuestas futuras deben incorporarse mediante una spec aprobada antes de documentarse como parte del proceso operativo.
 
@@ -426,7 +455,7 @@ El endpoint publicado se escribe en minúsculas y se construye con el `packagena
 1. Asegurarse de que `configuracion.json` apunte al XPZ correcto, tenga el `packagename` adecuado y la lista `serviciosIgnorados` actualizada.
 2. Ejecutar `GenerarDocumentacion.cmd` para regenerar el inventario y validar la completitud del XPZ; si el validador informa servicios con objetos a exportar, revisar `Logs/*-validacion-xpz.json` y re-exportarlos antes de continuar.
 3. Ejecutar `GenerarDocumentoServicio.cmd` y elegir un modo en el menú interactivo (opciones 1, 2 o 3).
-4. El generador aplica las reglas implementadas a partir de `analisisXPZ.md` → `reglasEditoriales.md` → `templateDoc.md` y escribe cada `.md` en `documentacion/servicios/`.
+4. El generador aplica las reglas implementadas a partir de `analisisXPZ.md` → `reglasEditoriales.md` → `templateDoc.md` y escribe cada `.md` en `documentacion/servicios/`. Los PDF se generan después mediante la opción bajo demanda.
 5. Revisar `Logs/*-errores.txt` y `*-review.json` para los warnings, errores y pendientes de la ejecución.
 6. Ante un error, compartir el archivo `Logs/*-diagnostico-ia.json` más reciente para localizar rápidamente la fase y la línea que fallaron.
 

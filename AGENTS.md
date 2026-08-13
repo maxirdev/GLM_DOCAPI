@@ -30,8 +30,8 @@ En `documentacion/` (commiteada):
 - `Endpoints/binary/` — scripts: `GenerarListaEndpoints.ps1` (inventario), `GenerarVistaHTML.ps1` (visor) y `ObtenerEndpoints.cmd`.
 - `Endpoints/web/` — visor estático: `APIServicios.html` (generado e ignorado), `style.css`, `app.js`.
 - `GenerarDocumentacion.cmd` (raíz del repo) — orquestador que regenera inventario y visor.
-- `configuracion.json` (raíz del repo) — configuración operativa: ruta del XPZ, rutas de salida, `packagename` constante del endpoint publicado por XPZ y `serviciosIgnorados` (lista de FQN referenciados que no se documentan).
-- `servicios/` — documentos por servicio (p. ej. `wsobtenertotalessolicitud.md`).
+- `configuracion.json` (raíz del repo) — configuración operativa: ruta del XPZ, `packagename` constante del endpoint publicado por XPZ, `serviciosIgnorados` (lista de FQN referenciados que no se documentan) y rutas de GeneXus, Knowledge Base, MSBuild y Edge.
+- `servicios/` — documentos Markdown por servicio (p. ej. `wsobtenertotalessolicitud.md`). La conversión a PDF se ejecuta bajo demanda desde `binary/GenerarPdfServicios.ps1` mediante Pandoc + Typst portable; la plantilla normativa continúa en `templateDoc.md`.
 
 Orden obligatorio por servicio: analisisXPZ → reglasEditoriales → templateDoc. No recalcular decisiones durante la redacción.
 

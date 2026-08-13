@@ -16,6 +16,7 @@ $DirectorioLogs = Join-Path $RaizRepositorio 'Logs'
 
 . (Join-Path $PSScriptRoot 'CargarConfiguracion.ps1')
 . (Join-Path $PSScriptRoot 'AnalizarServicio.ps1')
+. (Join-Path $PSScriptRoot 'CargarMultiXPZ.ps1')
 
 function Descubrir-XPZComplementarios {
     <#
@@ -180,9 +181,10 @@ function Validar-CompletitudServicio {
     )
 
     $fullyQualifiedName = $Endpoint.proceso
-    $xml = $IndiceUnificado.XmlPrincipal
+    $xml = if ($IndiceUnificado.PSObject.Properties['XmlUnificado']) { $IndiceUnificado.XmlUnificado } else { $IndiceUnificado.XmlPrincipal }
 
     $faltantesExportar = New-Object System.Collections.Generic.List[string]
+    $selectoresExportar = New-Object System.Collections.Generic.List[string]
     $programaPrincipalNode = $null
     $metodo = ''
     $variableSdt = ''
@@ -192,7 +194,8 @@ function Validar-CompletitudServicio {
             $wrapperNode = $IndiceUnificado.PorFqn[$fullyQualifiedName]
         } else {
             Agregar-Faltante -Nombre (Obtener-NombreObjeto -FQN $fullyQualifiedName) -FaltantesExportar $faltantesExportar -IndiceUnificado $IndiceUnificado
-            return Construir-ResultadoValidacion -WS $fullyQualifiedName -Faltantes $faltantesExportar.ToArray()
+            Agregar-SelectorExportacion -Tipo 'Procedure' -FQN $fullyQualifiedName -SelectoresExportar $selectoresExportar
+            return Construir-ResultadoValidacion -WS $fullyQualifiedName -Faltantes $faltantesExportar.ToArray() -Selectores $selectoresExportar.ToArray()
         }
 
         try {
@@ -204,6 +207,8 @@ function Validar-CompletitudServicio {
                 $nombreFaltante = [regex]::Match($_.Exception.Message, 'programa principal ([^\s]+)').Groups[1].Value
                 if (-not $nombreFaltante) { $nombreFaltante = 'desconocido' }
                 Agregar-Faltante -Nombre (Obtener-NombreObjeto -FQN $nombreFaltante) -FaltantesExportar $faltantesExportar -IndiceUnificado $IndiceUnificado
+                $fqnFaltante = Resolver-FqnObjetoFaltante -Nombre $nombreFaltante -WrapperFQN $fullyQualifiedName
+                Agregar-SelectorExportacion -Tipo 'Procedure' -FQN $fqnFaltante -SelectoresExportar $selectoresExportar
             }
             $delegacion = $null
         }
@@ -213,6 +218,8 @@ function Validar-CompletitudServicio {
                 $programaPrincipalNode = $IndiceUnificado.PorFqn[$delegacion]
             } else {
                 Agregar-Faltante -Nombre (Obtener-NombreObjeto -FQN $delegacion) -FaltantesExportar $faltantesExportar -IndiceUnificado $IndiceUnificado
+                $fqnFaltante = Resolver-FqnObjetoFaltante -Nombre $delegacion -WrapperFQN $fullyQualifiedName
+                Agregar-SelectorExportacion -Tipo 'Procedure' -FQN $fqnFaltante -SelectoresExportar $selectoresExportar
             }
         }
 
@@ -228,13 +235,15 @@ function Validar-CompletitudServicio {
                     $expandidoEntrada = Expandir-EstructuraSdt -Xml $xml -Sdt $entrada.Sdt -Indice $IndiceUnificado
                     foreach ($faltante in $expandidoEntrada.Faltantes) {
                         Agregar-Faltante -Nombre (Obtener-NombreObjeto -FQN $faltante.NombreSdt) -FaltantesExportar $faltantesExportar -IndiceUnificado $IndiceUnificado
+                        Agregar-SelectorExportacion -Tipo 'SDT' -FQN $faltante.NombreSdt -SelectoresExportar $selectoresExportar
                     }
-                    Procesar-FilasPendientes -Filas $expandidoEntrada.Filas -Tablas $expandidoEntrada.Tablas -FaltantesExportar $faltantesExportar -Xml $xml -IndiceUnificado $IndiceUnificado -NodosEvidencia $nodosEvidencia -SourcePrograma $sourcePrograma -ProgramaPrincipalNode $programaPrincipalNode -VariableSdt $variableSdt -FQN $fullyQualifiedName
+                    Procesar-FilasPendientes -Filas $expandidoEntrada.Filas -Tablas $expandidoEntrada.Tablas -FaltantesExportar $faltantesExportar -SelectoresExportar $selectoresExportar -Xml $xml -IndiceUnificado $IndiceUnificado -NodosEvidencia $nodosEvidencia -SourcePrograma $sourcePrograma -ProgramaPrincipalNode $programaPrincipalNode -VariableSdt $variableSdt -FQN $fullyQualifiedName
                 } catch {
                     if ($_.Exception.Message -match 'no está exportada en el XPZ') {
                         $nombreFaltante = [regex]::Match($_.Exception.Message, 'SDT\s+([^\s]+)').Groups[1].Value
                         if ($nombreFaltante) {
                             Agregar-Faltante -Nombre (Obtener-NombreObjeto -FQN $nombreFaltante) -FaltantesExportar $faltantesExportar -IndiceUnificado $IndiceUnificado
+                            Agregar-SelectorExportacion -Tipo 'SDT' -FQN $nombreFaltante -SelectoresExportar $selectoresExportar
                         }
                     }
                 }
@@ -244,7 +253,7 @@ function Validar-CompletitudServicio {
                     $entradaResuelta = Resolver-EntradaGetTipos -Xml $xml -ProgramaPrincipal $programaPrincipalNode -Source $sourcePrograma -Posiciones $posiciones -Indice $IndiceUnificado
                     foreach ($fila in $entradaResuelta) {
                         if ($fila.Tipo -match '^PENDIENTE') {
-                            Aplicar-EstrategiasTipo -Fila $fila -Xml $xml -IndiceUnificado $IndiceUnificado -NodosEvidencia $nodosEvidencia -ProgramaPrincipalNode $programaPrincipalNode -SourcePrograma $sourcePrograma -VariableSdt '' -FaltantesExportar $faltantesExportar -FQN $fullyQualifiedName
+                            Aplicar-EstrategiasTipo -Fila $fila -Xml $xml -IndiceUnificado $IndiceUnificado -NodosEvidencia $nodosEvidencia -ProgramaPrincipalNode $programaPrincipalNode -SourcePrograma $sourcePrograma -VariableSdt '' -FaltantesExportar $faltantesExportar -SelectoresExportar $selectoresExportar -FQN $fullyQualifiedName
                         }
                     }
                 } catch {}
@@ -255,11 +264,13 @@ function Validar-CompletitudServicio {
                 if ($salida.NoResuelta) {
                     if ($salida.MotivoNoResuelta -match 'SDT\s+([^\s]+)\s+no está exportada') {
                         Agregar-Faltante -Nombre (Obtener-NombreObjeto -FQN $Matches[1]) -FaltantesExportar $faltantesExportar -IndiceUnificado $IndiceUnificado
+                        Agregar-SelectorExportacion -Tipo 'SDT' -FQN $Matches[1] -SelectoresExportar $selectoresExportar
                     }
                 } else {
-                    Procesar-FilasPendientes -Filas $salida.Salida -Tablas $salida.EstructurasSalida -FaltantesExportar $faltantesExportar -Xml $xml -IndiceUnificado $IndiceUnificado -NodosEvidencia $nodosEvidencia -SourcePrograma $sourcePrograma -ProgramaPrincipalNode $programaPrincipalNode -VariableSdt '' -FQN $fullyQualifiedName
+                    Procesar-FilasPendientes -Filas $salida.Salida -Tablas $salida.EstructurasSalida -FaltantesExportar $faltantesExportar -SelectoresExportar $selectoresExportar -Xml $xml -IndiceUnificado $IndiceUnificado -NodosEvidencia $nodosEvidencia -SourcePrograma $sourcePrograma -ProgramaPrincipalNode $programaPrincipalNode -VariableSdt '' -FQN $fullyQualifiedName
                     foreach ($faltante in $salida.Faltantes) {
                         Agregar-Faltante -Nombre (Obtener-NombreObjeto -FQN $faltante.NombreSdt) -FaltantesExportar $faltantesExportar -IndiceUnificado $IndiceUnificado
+                        Agregar-SelectorExportacion -Tipo 'SDT' -FQN $faltante.NombreSdt -SelectoresExportar $selectoresExportar
                     }
                 }
             } catch {
@@ -267,15 +278,17 @@ function Validar-CompletitudServicio {
                     $nombreFaltante = [regex]::Match($_.Exception.Message, 'SDT\s+([^\s]+)').Groups[1].Value
                     if ($nombreFaltante) {
                         Agregar-Faltante -Nombre (Obtener-NombreObjeto -FQN $nombreFaltante) -FaltantesExportar $faltantesExportar -IndiceUnificado $IndiceUnificado
+                        Agregar-SelectorExportacion -Tipo 'SDT' -FQN $nombreFaltante -SelectoresExportar $selectoresExportar
                     }
                 }
             }
         }
     } catch {
         Agregar-Faltante -Nombre (Obtener-NombreObjeto -FQN $fullyQualifiedName) -FaltantesExportar $faltantesExportar -IndiceUnificado $IndiceUnificado
+        Agregar-SelectorExportacion -Tipo 'Procedure' -FQN $fullyQualifiedName -SelectoresExportar $selectoresExportar
     }
 
-    return Construir-ResultadoValidacion -WS $fullyQualifiedName -Faltantes $faltantesExportar.ToArray()
+    return Construir-ResultadoValidacion -WS $fullyQualifiedName -Faltantes $faltantesExportar.ToArray() -Selectores $selectoresExportar.ToArray()
 }
 
 function Obtener-NombreObjeto {
@@ -295,6 +308,54 @@ function Obtener-NombreObjeto {
     if (-not $FQN) { return '' }
     $partes = $FQN -split '\.'
     return $partes[-1]
+}
+
+function Construir-SelectorExportacion {
+    <#
+    Construye un selector estable para la tarea Export de GeneXus.
+    El FQN se conserva completo para evitar colisiones entre modulos.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$Tipo,
+        [Parameter(Mandatory = $true)][string]$FQN
+    )
+
+    if (-not $FQN) { return '' }
+    return ($Tipo + ':' + $FQN)
+}
+
+function Resolver-FqnObjetoFaltante {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$Nombre,
+        [Parameter(Mandatory = $true)][string]$WrapperFQN
+    )
+
+    if (-not $Nombre) { return '' }
+    if ($Nombre.Contains('.')) { return $Nombre }
+
+    $ultimoPunto = $WrapperFQN.LastIndexOf('.')
+    if ($ultimoPunto -gt 0) {
+        return ($WrapperFQN.Substring(0, $ultimoPunto) + '.' + $Nombre)
+    }
+
+    return $Nombre
+}
+
+function Agregar-SelectorExportacion {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$Tipo,
+        [Parameter(Mandatory = $true)][string]$FQN,
+        [System.Collections.Generic.List[string]]$SelectoresExportar
+    )
+
+    if ($null -eq $SelectoresExportar -or -not $FQN) { return }
+    $selector = Construir-SelectorExportacion -Tipo $Tipo -FQN $FQN
+    if ($selector -and $SelectoresExportar -notcontains $selector) {
+        [void]$SelectoresExportar.Add($selector)
+    }
 }
 
 function Es-ObjetoEnIndice {
@@ -351,6 +412,7 @@ function Procesar-FilasPendientes {
         $Filas,
         $Tablas,
         [System.Collections.Generic.List[string]]$FaltantesExportar,
+        [System.Collections.Generic.List[string]]$SelectoresExportar,
         $Xml,
         $IndiceUnificado,
         $NodosEvidencia,
@@ -363,7 +425,7 @@ function Procesar-FilasPendientes {
     $procesar = [scriptblock]{
         param($fila)
         if ($fila.Tipo -match '^PENDIENTE') {
-            Aplicar-EstrategiasTipo -Fila $fila -Xml $Xml -IndiceUnificado $IndiceUnificado -NodosEvidencia $NodosEvidencia -ProgramaPrincipalNode $ProgramaPrincipalNode -SourcePrograma $SourcePrograma -VariableSdt $VariableSdt -FaltantesExportar $FaltantesExportar -FQN $FQN
+            Aplicar-EstrategiasTipo -Fila $fila -Xml $Xml -IndiceUnificado $IndiceUnificado -NodosEvidencia $NodosEvidencia -ProgramaPrincipalNode $ProgramaPrincipalNode -SourcePrograma $SourcePrograma -VariableSdt $VariableSdt -FaltantesExportar $FaltantesExportar -SelectoresExportar $SelectoresExportar -FQN $FQN
         }
     }
 
@@ -387,6 +449,7 @@ function Aplicar-EstrategiasTipo {
         $SourcePrograma,
         $VariableSdt,
         [System.Collections.Generic.List[string]]$FaltantesExportar,
+        [System.Collections.Generic.List[string]]$SelectoresExportar,
         $FQN
     )
 
@@ -434,6 +497,11 @@ function Aplicar-EstrategiasTipo {
     }
     if ($nombreObjeto) {
         Agregar-Faltante -Nombre $nombreObjeto -FaltantesExportar $FaltantesExportar -IndiceUnificado $IndiceUnificado
+        if ($sdtFqn) {
+            Agregar-SelectorExportacion -Tipo 'SDT' -FQN $sdtFqn -SelectoresExportar $SelectoresExportar
+        } else {
+            Agregar-SelectorExportacion -Tipo 'Procedure' -FQN $ProgramaPrincipalNode.GetAttribute('fullyQualifiedName') -SelectoresExportar $SelectoresExportar
+        }
     }
 }
 
@@ -441,7 +509,8 @@ function Construir-ResultadoValidacion {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)][string]$WS,
-        [string[]]$Faltantes = @()
+        [string[]]$Faltantes = @(),
+        [string[]]$Selectores = @()
     )
 
     $esPendiente = $Faltantes.Count -gt 0
@@ -450,6 +519,7 @@ function Construir-ResultadoValidacion {
         ws = $WS
         esPendiente = $esPendiente
         faltantes = @($Faltantes)
+        selectores = @($Selectores)
     }
 }
 
@@ -519,6 +589,7 @@ function Write-ReporteValidacion {
             [pscustomobject]@{
                 servicio = $_.ws
                 exportar = @($_.faltantes)
+                selectores = if ($_.PSObject.Properties['selectores']) { @($_.selectores) } else { @() }
             }
         })
         objectList = $objectList
@@ -554,12 +625,8 @@ try {
         Write-Host ("  Servicios ignorados (serviciosIgnorados en configuracion.json): " + $endpointsIgnorados.Count) -ForegroundColor DarkGray
     }
 
-    $xpzComplementarios = Descubrir-XPZComplementarios -RutaXpzPrincipal $configuracion.XpzPath
-
-    $indiceUnificado = Construir-IndiceMultiXPZ -RutaXpzPrincipal $configuracion.XpzPath -XpzComplementarios $xpzComplementarios
-
-    $aperturaPrincipal = Abrir-XPZ -RutaXpz $configuracion.XpzPath
-    $indiceUnificado | Add-Member -MemberType NoteProperty -Name 'XmlPrincipal' -Value $aperturaPrincipal.Xml -Force
+    $indiceUnificado = Cargar-IndiceMultiXPZ -RutaXpzPrincipal $configuracion.XpzPath
+    $xpzComplementarios = @($indiceUnificado.RutasXpz | Select-Object -Skip 1)
 
     $rutaRelativaXpzPrincipal = $configuracion.XpzPath
     if ($rutaRelativaXpzPrincipal.StartsWith($RaizRepositorio, [System.StringComparison]::OrdinalIgnoreCase)) {

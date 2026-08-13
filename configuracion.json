@@ -1,11 +1,18 @@
 {
-  "xpz": "xpz/SEGUROS_COMERCIAL_APIGLM_v1_0.xpz",
-  "packagename": "glmsuit.comercial.",
-  "cliente": "Trunk",
-  "serviciosIgnorados": [
-    "APIGLM.WSRedireccionHome",
-    "APIGLM.Comun.WSLiberarSolicitud",
-    "APIGLM.Test.WSTestMaxi",
-    "APIGLM.WSEjemplo"
-  ]
+    "xpz":  "xpz/SEGUROS_COMERCIAL_APIGLM_20260812_162424514.xpz",
+    "packagename":  "glmsuit.comercial.",
+    "cliente":  "Trunk",
+    "serviciosIgnorados":  [
+                               "APIGLM.WSRedireccionHome",
+                               "APIGLM.Comun.WSLiberarSolicitud",
+                               "APIGLM.Test.WSTestMaxi",
+                               "APIGLM.WSEjemplo"
+                           ],
+    "herramientas":  {
+                         "geneXusProgramDir":  "C:/Program Files (x86)/GeneXus/GeneXus18",
+                         "kbPath":  "C:/KBs/SEGUROS_COMERCIAL_TRUNK",
+                         "msbuildPath":  "C:/Windows/Microsoft.NET/Framework/v4.0.30319/MSBuild.exe",
+                         "pandocPath":  "binary/tools/pandoc.exe",
+                         "typstPath":  "binary/tools/typst.exe"
+                     }
 }

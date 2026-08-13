@@ -33,18 +33,19 @@ function Cargar-Configuracion {
 
     $configuracionRaw = Get-Content -LiteralPath $ConfigPath -Raw | ConvertFrom-Json
 
-    $rutaXpzRelativa = [string]$configuracionRaw.xpz
-    if (-not $rutaXpzRelativa) {
-        throw 'La configuracion no define la propiedad xpz.'
-    }
-
-    $rutaXpzResuelta = (Resolve-Path (Join-Path $raizRepositorio $rutaXpzRelativa)).Path
-
     if ($XpzPath) {
         if (-not (Test-Path -LiteralPath $XpzPath)) {
             throw ("No se encontro el XPZ indicado en -XpzPath: " + $XpzPath)
         }
         $rutaXpzResuelta = (Resolve-Path -LiteralPath $XpzPath).Path
+    }
+    else {
+        $rutaXpzRelativa = [string]$configuracionRaw.xpz
+        if (-not $rutaXpzRelativa) {
+            throw 'La configuracion no define la propiedad xpz.'
+        }
+
+        $rutaXpzResuelta = (Resolve-Path (Join-Path $raizRepositorio $rutaXpzRelativa)).Path
     }
 
     $packageName = [string]$configuracionRaw.packagename
@@ -57,12 +58,23 @@ function Cargar-Configuracion {
         $serviciosIgnorados = @($configuracionRaw.serviciosIgnorados | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } | ForEach-Object { [string]$_ })
     }
 
+    $herramientasRaw = $configuracionRaw.herramientas
+    $herramientas = [pscustomobject]@{
+        GeneXusProgramDir = [string]$herramientasRaw.geneXusProgramDir
+        KbPath = [string]$herramientasRaw.kbPath
+        MsbuildPath = [string]$herramientasRaw.msbuildPath
+        PandocPath = [string]$herramientasRaw.pandocPath
+        TypstPath = [string]$herramientasRaw.typstPath
+        EdgePath = [string]$herramientasRaw.edgePath
+    }
+
     return [pscustomobject]@{
         ConfigPath = $ConfigPath
         XpzPath = $rutaXpzResuelta
         PackageName = $packageName
         Cliente = [string]$configuracionRaw.cliente
         ServiciosIgnorados = $serviciosIgnorados
+        Herramientas = $herramientas
         RaizRepositorio = $raizRepositorio
     }
 }

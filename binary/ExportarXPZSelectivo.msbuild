@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<Project DefaultTargets="ExportarAPIGLM"
+<Project DefaultTargets="ExportarObjetosSelectivos"
          xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
 
   <Import Project="$(GX_PROGRAM_DIR)\Genexus.Tasks.targets" />
@@ -9,6 +9,8 @@
            Text="No se definio la propiedad KBPath." />
     <Error Condition="'$(XPZFile)' == ''"
            Text="No se definio la propiedad XPZFile." />
+    <Error Condition="'$(ObjectList)' == ''"
+           Text="No se definio la propiedad ObjectList." />
 
     <Message Text="Abriendo Knowledge Base: $(KBPath)" Importance="high" />
     <OpenKnowledgeBase Directory="$(KBPath)" />
@@ -17,10 +19,10 @@
     </PropertyGroup>
   </Target>
 
-  <Target Name="ExportarAPIGLM" DependsOnTargets="AbrirKnowledgeBase">
-    <Message Text="Exportando Module:APIGLM con referencias minimas." Importance="high" />
+  <Target Name="ExportarObjetosSelectivos" DependsOnTargets="AbrirKnowledgeBase">
+    <Message Text="Exportando objetos selectivos con referencias minimas: $(ObjectList)" Importance="high" />
     <Export File="$(XPZFile)"
-            Objects="Module:APIGLM"
+            Objects="$(ObjectList)"
             IncludeChildren="true"
             DependencyType="ReferencesTo"
             ReferenceType="Minimal"
@@ -32,14 +34,14 @@
   </Target>
 
   <Target Name="CerrarKnowledgeBase"
-          AfterTargets="ExportarAPIGLM"
+          AfterTargets="ExportarObjetosSelectivos"
           Condition="'$(KnowledgeBaseOpened)' == 'true'">
     <Message Text="Cerrando Knowledge Base." Importance="high" />
     <CloseKnowledgeBase />
     <PropertyGroup>
       <KnowledgeBaseOpened>false</KnowledgeBaseOpened>
     </PropertyGroup>
-    <Message Text="Cierre de Knowledge Base confirmado." Importance="high" />
+    <Message Text="Cierre de la Knowledge Base confirmado." Importance="high" />
   </Target>
 
 </Project>

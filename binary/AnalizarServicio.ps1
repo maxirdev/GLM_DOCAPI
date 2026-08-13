@@ -1390,7 +1390,7 @@ function Resolver-Campo {
         $tipo = if ($esColeccion) { 'Colección de Estructura ' + $nombre } else { 'Estructura ' + $nombre }
         $descripcion = $Item.GetAttribute('description')
         if (-not $descripcion -and $levelInfo) { $descripcion = $levelInfo.GetAttribute('description') }
-        if (-not $descripcion) { $descripcion = 'PENDIENTE DE CONFIRMACIÓN: descripcion del campo ' + $nombre + '.' }
+        if (-not $descripcion) { $descripcion = $nombre }
         return [pscustomobject]@{
             Campo = $nombre
             Tipo = $tipo
@@ -1412,7 +1412,9 @@ function Resolver-Campo {
 
     $descripcion = Obtener-DescripcionCampo -Xml $Xml -Item $Item -Indice $Indice
     if (-not $descripcion) {
-        $descripcion = 'PENDIENTE DE CONFIRMACIÓN: descripcion del campo ' + $nombre + '.'
+        # Convención final: el nombre queda como descripción estable cuando el
+        # XPZ no aporta una descripción explícita.
+        $descripcion = $nombre
     }
 
     return [pscustomobject]@{
@@ -1578,7 +1580,7 @@ function Resolver-EntradaGetTipos {
         if ($variableNodo) { $descripcion = Obtener-DescripcionCampo -Xml $Xml -Item $variableNodo -Indice $Indice }
         if (-not $descripcion) { $descripcion = Resolver-DescripcionPorSource -Xml $Xml -ProgramaPrincipal $ProgramaPrincipal -Source $Source -Variable $variable -Indice $Indice }
         if (-not $descripcion) {
-            $descripcion = 'PENDIENTE DE CONFIRMACIÓN: descripcion del campo ' + $variable + '.'
+            $descripcion = $variable
         }
 
         $entrada.Add([pscustomobject]@{
@@ -2552,7 +2554,7 @@ function Resolver-SalidaEscalar {
             }
         }
         if (-not $tipo) { return $null }
-        if (-not $descripcion) { $descripcion = 'PENDIENTE DE CONFIRMACIÓN: descripcion del campo ' + $Nombre + '.' }
+        if (-not $descripcion) { $descripcion = $Nombre }
         return [pscustomobject]@{ Campo = $Nombre; RutaJson = $Nombre; VariableSalida = $Nombre; Tipo = $tipo; Descripcion = $descripcion }
     } catch { return $null }
 }
@@ -3378,6 +3380,20 @@ function Agregar-DetallePendiente {
     }
 }
 
+function Aplicar-FallbackTipoInteger {
+    <# Aplica la convención final para campos escalares sin tipo resoluble. #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)][object[]]$Filas = @()
+    )
+
+    foreach ($fila in $Filas) {
+        if ($fila.Tipo -match '^PENDIENTE DE CONFIRMACIÓN: tipo del campo') {
+            $fila.Tipo = 'Integer'
+        }
+    }
+}
+
 function Analizar-Servicio {
     <#
     .SYNOPSIS
@@ -3474,6 +3490,10 @@ function Analizar-Servicio {
                 if ($tipoLectura) { $filaEntrada.Tipo = $tipoLectura }
             }
         }
+        Aplicar-FallbackTipoInteger -Filas @($expandido.Filas)
+        foreach ($tablaEntradaFallback in $expandido.Tablas) {
+            Aplicar-FallbackTipoInteger -Filas @($tablaEntradaFallback.Filas)
+        }
         $entrada = @($expandido.Filas | ForEach-Object {
             [pscustomobject]@{ Orden = 0; Campo = $_.Campo; RutaJson = $_.RutaJson; SdtFqn = $_.SdtFqn; RutaSdt = $_.RutaSdt; Tipo = $_.Tipo; Obligatorio = $_.Obligatorio; Descripcion = $_.Descripcion; DetallePendiente = $_.DetallePendiente; ReferenciaRecursiva = $_.ReferenciaRecursiva }
         })
@@ -3490,6 +3510,7 @@ function Analizar-Servicio {
         $posiciones = Resolver-EntradaGet -Source $source
         $posicionesTipos = Resolver-EntradaGetTipos -Xml $Xml -ProgramaPrincipal $programaPrincipal -Source $source -Posiciones @($posiciones) -Indice $Indice
         Aplicar-Obligatorio -Source $source -Filas @($posicionesTipos) -SourcesAdicionales $fuentesObligatorio -Xml $Xml -ProgramaPrincipal $programaPrincipal -Indice $Indice
+        Aplicar-FallbackTipoInteger -Filas @($posicionesTipos)
         $entrada = @($posicionesTipos | ForEach-Object {
             [pscustomobject]@{ Orden = $_.Posicion; Campo = $_.Campo; RutaJson = $_.Campo; Tipo = $_.Tipo; Obligatorio = $_.Obligatorio; Descripcion = $_.Descripcion; DetallePendiente = $_.DetallePendiente }
         })
@@ -3537,6 +3558,10 @@ function Analizar-Servicio {
                 if ($tipoHijo) { $hijoSalida.Tipo = $tipoHijo }
             }
         }
+    }
+    Aplicar-FallbackTipoInteger -Filas @($salida.Salida)
+    foreach ($estructuraSalidaFallback in $salida.EstructurasSalida) {
+        Aplicar-FallbackTipoInteger -Filas @($estructuraSalidaFallback.Hijos)
     }
     $nodosDiagnostico = @()
     try { $nodosDiagnostico = Obtener-NodosEvidencia -Xml $Xml -ProgramaPrincipal $programaPrincipal -Indice $Indice -IncluirSufijos -ProfundidadMaxima 5 } catch { $nodosDiagnostico = @() }

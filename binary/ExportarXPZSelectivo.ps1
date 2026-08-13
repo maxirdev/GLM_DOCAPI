@@ -1,0 +1,507 @@
+# ExportarXPZSelectivo.ps1
+# Selecciona la receta de exportacion producida por ValidarXPZ.ps1.
+# Ejecuta MSBuild, genera un complemento numerado y valida el XPZ resultante.
+
+[CmdletBinding()]
+param(
+    [string]$ConfigPath,
+    [string]$XpzPath,
+    [string]$ReportePath,
+    [string]$MsbuildPath,
+    [string]$ProjectFile,
+    [string]$GxProgramDir,
+    [string]$KbPath,
+    [string]$XpzFile,
+    [string]$LogFile
+)
+
+$ErrorActionPreference = 'Stop'
+$RaizRepositorio = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
+$DirectorioLogs = Join-Path $RaizRepositorio 'Logs'
+
+. (Join-Path $PSScriptRoot 'CargarConfiguracion.ps1')
+
+function Resolver-RutaRepositorio {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$Ruta,
+        [Parameter(Mandatory = $true)][string]$Raiz
+    )
+
+    if ([System.IO.Path]::IsPathRooted($Ruta)) {
+        return [System.IO.Path]::GetFullPath($Ruta)
+    }
+
+    return [System.IO.Path]::GetFullPath((Join-Path $Raiz $Ruta))
+}
+
+function Obtener-RutaXpzReportada {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]$Reporte,
+        [Parameter(Mandatory = $true)]$Configuracion
+    )
+
+    if (-not $Reporte.ejecucion -or -not $Reporte.ejecucion.xpz) {
+        throw 'El reporte no contiene ejecucion.xpz.'
+    }
+
+    return Resolver-RutaRepositorio -Ruta ([string]$Reporte.ejecucion.xpz) -Raiz $Configuracion.RaizRepositorio
+}
+
+function Obtener-ObjetosDeReporte {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]$Reporte
+    )
+
+    $objetos = New-Object System.Collections.Generic.List[string]
+
+    if ($Reporte.solicitudes) {
+        foreach ($solicitud in @($Reporte.solicitudes)) {
+            foreach ($objeto in @($solicitud.exportar)) {
+                $valor = ([string]$objeto).Trim()
+                if ($valor -and $objetos -notcontains $valor) {
+                    [void]$objetos.Add($valor)
+                }
+            }
+        }
+    }
+
+    if ($objetos.Count -gt 0) {
+        return @($objetos)
+    }
+
+    if ($Reporte.objectList) {
+        foreach ($objeto in ([string]$Reporte.objectList -split ',')) {
+            $nombre = $objeto.Trim()
+            if ($nombre -and $objetos -notcontains $nombre) {
+                [void]$objetos.Add($nombre)
+            }
+        }
+    }
+
+    if ($objetos.Count -eq 0 -and $Reporte.solicitudes) {
+        foreach ($solicitud in @($Reporte.solicitudes)) {
+            foreach ($selector in @($solicitud.selectores)) {
+                $partes = ([string]$selector).Split(':', 2)
+                $nombre = if ($partes.Count -eq 2) { $partes[1].Trim().Split('.')[-1] } else { ([string]$selector).Trim() }
+                if ($nombre -and $objetos -notcontains $nombre) {
+                    [void]$objetos.Add($nombre)
+                }
+            }
+        }
+    }
+
+    return @($objetos)
+}
+
+function Validar-SelectoresExportacion {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string[]]$Selectores
+    )
+
+    foreach ($selector in $Selectores) {
+        if ($selector -notmatch '^[^:]+:.+$') {
+            throw ('El reporte contiene un selector sin tipo y FQN: ' + $selector)
+        }
+    }
+}
+
+function Leer-ReporteValidacion {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$RutaReporte,
+        [Parameter(Mandatory = $true)]$Configuracion
+    )
+
+    if (-not (Test-Path -LiteralPath $RutaReporte -PathType Leaf)) {
+        throw ('No se encontro el reporte de validacion: ' + $RutaReporte)
+    }
+
+    try {
+        $contenido = Get-Content -LiteralPath $RutaReporte -Raw -Encoding UTF8
+        $reporte = $contenido | ConvertFrom-Json
+    } catch {
+        throw ('El reporte de validacion no es JSON valido: ' + $RutaReporte + '. ' + $_.Exception.Message)
+    }
+
+    $rutaXpzReportada = Obtener-RutaXpzReportada -Reporte $reporte -Configuracion $Configuracion
+    $rutaXpzConfigurada = [System.IO.Path]::GetFullPath($Configuracion.XpzPath)
+    if (-not [System.StringComparer]::OrdinalIgnoreCase.Equals($rutaXpzReportada, $rutaXpzConfigurada)) {
+        throw ('El reporte corresponde a otro XPZ. Reportado: ' + $rutaXpzReportada + '. Configurado: ' + $rutaXpzConfigurada + '.')
+    }
+
+    $objetos = @(Obtener-ObjetosDeReporte -Reporte $reporte)
+    if ($objetos.Count -eq 0) {
+        throw ('El reporte no contiene objetos pendientes de exportacion: ' + $RutaReporte)
+    }
+
+    $selectoresDeclarados = @($reporte.solicitudes | ForEach-Object { @($_.selectores) } | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })
+    if ($selectoresDeclarados.Count -gt 0) {
+        Validar-SelectoresExportacion -Selectores $selectoresDeclarados
+    }
+
+    return [pscustomobject]@{
+        Ruta = (Resolve-Path -LiteralPath $RutaReporte).Path
+        Reporte = $reporte
+        Objetos = $objetos
+        XpzPrincipal = $rutaXpzConfigurada
+    }
+}
+
+function Seleccionar-ReporteValidacion {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]$Configuracion,
+        [string]$RutaReporte
+    )
+
+    if ($RutaReporte) {
+        $rutaExplicita = Resolver-RutaRepositorio -Ruta $RutaReporte -Raiz $Configuracion.RaizRepositorio
+        return Leer-ReporteValidacion -RutaReporte $rutaExplicita -Configuracion $Configuracion
+    }
+
+    if (-not (Test-Path -LiteralPath $DirectorioLogs -PathType Container)) {
+        throw ('No se encontro la carpeta de logs: ' + $DirectorioLogs)
+    }
+
+    $reportes = @(Get-ChildItem -LiteralPath $DirectorioLogs -Filter '*-validacion-xpz.json' -File | Sort-Object LastWriteTime -Descending)
+    if ($reportes.Count -eq 0) {
+        throw ('No se encontraron reportes *-validacion-xpz.json en: ' + $DirectorioLogs)
+    }
+
+    $errores = New-Object System.Collections.Generic.List[string]
+    foreach ($archivo in $reportes) {
+        try {
+            return Leer-ReporteValidacion -RutaReporte $archivo.FullName -Configuracion $Configuracion
+        } catch {
+            [void]$errores.Add($archivo.Name + ': ' + $_.Exception.Message)
+        }
+    }
+
+    throw ('No se encontro un reporte compatible con el XPZ configurado. ' + ($errores -join ' | '))
+}
+
+function Mostrar-RecetaSeleccionada {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]$Seleccion
+    )
+
+    Write-Host ('Reporte seleccionado: ' + $Seleccion.Ruta) -ForegroundColor DarkGray
+    Write-Host ('Objetos pendientes: ' + $Seleccion.Objetos.Count) -ForegroundColor Yellow
+    foreach ($objeto in $Seleccion.Objetos) {
+        Write-Host ('  ' + $objeto) -ForegroundColor DarkGray
+    }
+}
+
+function Seleccionar-SiguienteXpzComplementario {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$RutaXpzPrincipal
+    )
+
+    $directorio = [System.IO.Path]::GetDirectoryName($RutaXpzPrincipal)
+    $base = [System.IO.Path]::GetFileNameWithoutExtension($RutaXpzPrincipal)
+    $extension = [System.IO.Path]::GetExtension($RutaXpzPrincipal)
+    if (-not $extension) { $extension = '.xpz' }
+
+    $numero = 1
+    while ($true) {
+        $nombre = $base + '_' + $numero.ToString() + $extension
+        $rutaCandidata = Join-Path $directorio $nombre
+        if (-not (Test-Path -LiteralPath $rutaCandidata)) {
+            return [pscustomobject]@{
+                Ruta = [System.IO.Path]::GetFullPath($rutaCandidata)
+                Nombre = $nombre
+                Numero = $numero
+            }
+        }
+
+        if ($numero -eq [int]::MaxValue) {
+            throw ('No hay un numero disponible para un XPZ complementario junto a: ' + $RutaXpzPrincipal)
+        }
+        $numero++
+    }
+}
+
+function Quote-ProcessArgument {
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)][string]$Valor)
+
+    return ('"' + $Valor.Replace('"', '\"') + '"')
+}
+
+function Validar-RutasEjecucion {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]$Configuracion,
+        [Parameter(Mandatory = $true)][string]$RutaMsbuild,
+        [Parameter(Mandatory = $true)][string]$RutaProyecto,
+        [Parameter(Mandatory = $true)][string]$DirectorioGeneXus,
+        [Parameter(Mandatory = $true)][string]$RutaKnowledgeBase,
+        [Parameter(Mandatory = $true)][string]$RutaXpzSalida,
+        [Parameter(Mandatory = $true)][string]$RutaLog
+    )
+
+    $rutasArchivo = @(
+        [pscustomobject]@{ Ruta = $RutaMsbuild; Descripcion = 'MSBuild' },
+        [pscustomobject]@{ Ruta = $RutaProyecto; Descripcion = 'proyecto MSBuild' },
+        [pscustomobject]@{ Ruta = (Join-Path $DirectorioGeneXus 'Genexus.Tasks.targets'); Descripcion = 'Genexus.Tasks.targets' }
+    )
+
+    foreach ($item in $rutasArchivo) {
+        if (-not (Test-Path -LiteralPath $item.Ruta -PathType Leaf)) {
+            throw ('No se encontro ' + $item.Descripcion + ': ' + $item.Ruta)
+        }
+    }
+
+    if (-not (Test-Path -LiteralPath $RutaKnowledgeBase -PathType Container)) {
+        throw ('No se encontro la carpeta de la Knowledge Base: ' + $RutaKnowledgeBase)
+    }
+    if (@(Get-ChildItem -LiteralPath $RutaKnowledgeBase -Filter '*.gxw' -File).Count -eq 0) {
+        throw ('No se encontro ningun archivo .gxw en la Knowledge Base: ' + $RutaKnowledgeBase)
+    }
+
+    $directorioSalida = [System.IO.Path]::GetDirectoryName($RutaXpzSalida)
+    if (-not (Test-Path -LiteralPath $directorioSalida -PathType Container)) {
+        New-Item -ItemType Directory -Path $directorioSalida -Force | Out-Null
+    }
+
+    $directorioLog = [System.IO.Path]::GetDirectoryName($RutaLog)
+    if (-not (Test-Path -LiteralPath $directorioLog -PathType Container)) {
+        New-Item -ItemType Directory -Path $directorioLog -Force | Out-Null
+    }
+}
+
+function Test-XpzFile {
+    [CmdletBinding()]
+    param([Parameter(Mandatory = $true)][string]$Ruta)
+
+    if (-not (Test-Path -LiteralPath $Ruta -PathType Leaf)) {
+        return [pscustomobject]@{ Valido = $false; Error = 'no se encontro el archivo XPZ esperado' }
+    }
+
+    $zip = $null
+    try {
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+        $zip = [System.IO.Compression.ZipFile]::OpenRead($Ruta)
+        $entradasXml = @($zip.Entries | Where-Object { $_.Name -like '*.xml' })
+        if ($entradasXml.Count -ne 1) {
+            return [pscustomobject]@{ Valido = $false; Error = ('el XPZ contiene ' + $entradasXml.Count + ' archivos XML; se esperaba uno') }
+        }
+
+        $lector = New-Object System.IO.StreamReader($entradasXml[0].Open())
+        try {
+            $xml = New-Object System.Xml.XmlDocument
+            $xml.LoadXml($lector.ReadToEnd())
+        } finally {
+            $lector.Dispose()
+        }
+
+        if ($xml.DocumentElement.LocalName -ne 'ExportFile') {
+            return [pscustomobject]@{ Valido = $false; Error = ('la raiz XML es ' + $xml.DocumentElement.LocalName + '; se esperaba ExportFile') }
+        }
+
+        return [pscustomobject]@{ Valido = $true; Error = '' }
+    } catch {
+        return [pscustomobject]@{ Valido = $false; Error = ('el XPZ no es valido: ' + $_.Exception.Message) }
+    } finally {
+        if ($null -ne $zip) { $zip.Dispose() }
+    }
+}
+
+function Obtener-ProcesosDescendientes {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][int]$IdProcesoRaiz,
+        [Parameter(Mandatory = $true)][datetime]$IniciadoDespues
+    )
+
+    $resultado = New-Object System.Collections.Generic.List[int]
+    $pendientes = New-Object System.Collections.Generic.Queue[int]
+    $pendientes.Enqueue($IdProcesoRaiz)
+    $procesos = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue)
+
+    while ($pendientes.Count -gt 0) {
+        $idPadre = $pendientes.Dequeue()
+        foreach ($proceso in ($procesos | Where-Object { $_.ParentProcessId -eq $idPadre })) {
+            $fechaCreacion = $null
+            try {
+                if ($proceso.CreationDate -is [datetime]) {
+                    $fechaCreacion = [datetime]$proceso.CreationDate
+                } else {
+                    $fechaCreacion = [System.Management.ManagementDateTimeConverter]::ToDateTime([string]$proceso.CreationDate)
+                }
+            } catch {}
+
+            if ($null -ne $fechaCreacion -and $fechaCreacion -lt $IniciadoDespues.AddSeconds(-2)) { continue }
+            if (-not $resultado.Contains([int]$proceso.ProcessId)) {
+                $resultado.Add([int]$proceso.ProcessId)
+                $pendientes.Enqueue([int]$proceso.ProcessId)
+            }
+        }
+    }
+
+    return @($resultado)
+}
+
+function Crear-ProyectoMsbuildTemporal {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$RutaProyectoBase,
+        [Parameter(Mandatory = $true)][string[]]$Selectores
+    )
+
+    $contenido = Get-Content -LiteralPath $RutaProyectoBase -Raw -Encoding UTF8
+    $inicioProyecto = $contenido.IndexOf('<Project')
+    $posicionCierreProyecto = if ($inicioProyecto -ge 0) { $contenido.IndexOf('>', $inicioProyecto) } else { -1 }
+    if ($posicionCierreProyecto -lt 0) {
+        throw ('El proyecto MSBuild no tiene una etiqueta Project valida: ' + $RutaProyectoBase)
+    }
+
+    $listaEscapada = [System.Security.SecurityElement]::Escape(($Selectores -join ','))
+    $propiedades = "`r`n  <PropertyGroup>`r`n    <ObjectList>$listaEscapada</ObjectList>`r`n  </PropertyGroup>"
+    $contenido = $contenido.Insert($posicionCierreProyecto + 1, $propiedades)
+
+    $nombreTemporal = 'ExportarXPZSelectivo_' + [System.Guid]::NewGuid().ToString('N') + '.msbuild'
+    $rutaTemporal = Join-Path ([System.IO.Path]::GetTempPath()) $nombreTemporal
+    [System.IO.File]::WriteAllText($rutaTemporal, $contenido, (New-Object System.Text.UTF8Encoding($false)))
+    return $rutaTemporal
+}
+
+function Ejecutar-ExportacionSelectiva {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$RutaMsbuild,
+        [Parameter(Mandatory = $true)][string]$RutaProyecto,
+        [Parameter(Mandatory = $true)][string]$DirectorioGeneXus,
+        [Parameter(Mandatory = $true)][string]$RutaKnowledgeBase,
+        [Parameter(Mandatory = $true)][string[]]$Selectores,
+        [Parameter(Mandatory = $true)][string]$RutaXpzSalida,
+        [Parameter(Mandatory = $true)][string]$RutaLog
+    )
+
+    $rutaProyectoTemporal = Crear-ProyectoMsbuildTemporal -RutaProyectoBase $RutaProyecto -Selectores $Selectores
+    $argumentos = @(
+        (Quote-ProcessArgument -Valor $rutaProyectoTemporal),
+        '/t:ExportarObjetosSelectivos',
+        (Quote-ProcessArgument -Valor ("/p:GX_PROGRAM_DIR=$DirectorioGeneXus")),
+        (Quote-ProcessArgument -Valor ("/p:KBPath=$RutaKnowledgeBase")),
+        (Quote-ProcessArgument -Valor ("/p:XPZFile=$RutaXpzSalida")),
+        '/nologo',
+        '/verbosity:minimal',
+        '/fl',
+        (Quote-ProcessArgument -Valor ("/flp:logfile=$RutaLog;verbosity=normal"))
+    )
+
+    $informacionInicio = New-Object System.Diagnostics.ProcessStartInfo
+    $informacionInicio.FileName = $RutaMsbuild
+    $informacionInicio.Arguments = $argumentos -join ' '
+    $informacionInicio.WorkingDirectory = Split-Path -Parent $RutaProyecto
+    $informacionInicio.UseShellExecute = $false
+    $informacionInicio.CreateNoWindow = $true
+    $informacionInicio.RedirectStandardOutput = $true
+    $informacionInicio.RedirectStandardError = $true
+
+    $proceso = New-Object System.Diagnostics.Process
+    $proceso.StartInfo = $informacionInicio
+    $idProceso = 0
+    $horaInicio = Get-Date
+    $salida = ''
+    $errorSalida = ''
+
+    try {
+        Write-Host 'Iniciando exportacion selectiva en GeneXus...' -ForegroundColor Gray
+        $horaInicio = Get-Date
+        if (-not $proceso.Start()) { throw 'No se pudo iniciar MSBuild.' }
+        $idProceso = $proceso.Id
+        $tareaSalida = $proceso.StandardOutput.ReadToEndAsync()
+        $tareaError = $proceso.StandardError.ReadToEndAsync()
+        $proceso.WaitForExit()
+        $salida = $tareaSalida.GetAwaiter().GetResult()
+        $errorSalida = $tareaError.GetAwaiter().GetResult()
+
+        $textoLog = @($salida, $errorSalida, (Get-Content -LiteralPath $RutaLog -Raw -ErrorAction SilentlyContinue)) -join "`n"
+        $validacionXpz = Test-XpzFile -Ruta $RutaXpzSalida
+        $exportacionConfirmada = $textoLog -match 'Export Success'
+        $cierreConfirmado = $textoLog -match 'Close Knowledge Base Task Success'
+        $mensajesError = @($textoLog -split "`r?`n" | Where-Object {
+            $_ -match '(?i)^\s*(error\b|msb\d{4}\b|exception\b|fatal\b)' -or
+            $_ -match '(?i)\s(error|fatal|exception)\s*:'
+        } | ForEach-Object { $_.Trim() } | Select-Object -Unique)
+        $objetosNoEncontrados = @($textoLog -split "`r?`n" | Where-Object {
+            $_ -match '(?i)(was not found in the Knowledge Base|no se encontr[oó].*Knowledge Base|no se encontr[oó].*base de conocimiento)'
+        } | ForEach-Object { $_.Trim() } | Select-Object -Unique)
+
+        if ($salida -or $errorSalida) {
+            [System.IO.File]::AppendAllText($RutaLog, (@($salida, $errorSalida) -join "`n"), (New-Object System.Text.UTF8Encoding($false)))
+        }
+
+        if ($proceso.ExitCode -ne 0 -or -not $exportacionConfirmada -or -not $cierreConfirmado -or -not $validacionXpz.Valido -or $mensajesError.Count -gt 0 -or $objetosNoEncontrados.Count -gt 0) {
+            $detalle = if ($objetosNoEncontrados.Count -gt 0) { $objetosNoEncontrados -join ' | ' } elseif ($mensajesError.Count -gt 0) { $mensajesError -join ' | ' } elseif (-not $validacionXpz.Valido) { $validacionXpz.Error } else { 'GeneXus no confirmo una exportacion completa.' }
+            throw ('La exportacion selectiva fallo: ' + $detalle)
+        }
+
+        return $validacionXpz
+    } finally {
+        if ($idProceso -gt 0) {
+            if (-not $proceso.HasExited) {
+                if (-not $proceso.WaitForExit(5000)) {
+                    & "$env:SystemRoot\System32\taskkill.exe" /PID $idProceso /T /F 2>&1 | Out-Null
+                    $proceso.WaitForExit(5000) | Out-Null
+                }
+            }
+
+            $descendientes = @(Obtener-ProcesosDescendientes -IdProcesoRaiz $idProceso -IniciadoDespues $horaInicio)
+            foreach ($idDescendiente in ($descendientes | Sort-Object -Descending)) {
+                Stop-Process -Id $idDescendiente -Force -ErrorAction SilentlyContinue
+            }
+        }
+        $proceso.Dispose()
+        if (Test-Path -LiteralPath $rutaProyectoTemporal -PathType Leaf) {
+            Remove-Item -LiteralPath $rutaProyectoTemporal -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
+try {
+    $parametrosConfiguracion = @{ ConfigPath = $ConfigPath }
+    if ($XpzPath) { $parametrosConfiguracion.XpzPath = $XpzPath }
+    $configuracion = Cargar-Configuracion @parametrosConfiguracion
+    $seleccion = Seleccionar-ReporteValidacion -Configuracion $configuracion -RutaReporte $ReportePath
+    Mostrar-RecetaSeleccionada -Seleccion $seleccion
+    $complemento = Seleccionar-SiguienteXpzComplementario -RutaXpzPrincipal $seleccion.XpzPrincipal
+    $rutaMsbuildEfectiva = if ($MsbuildPath) { $MsbuildPath } else { Join-Path $env:SystemRoot 'Microsoft.NET\Framework\v4.0.30319\MSBuild.exe' }
+    $rutaProyectoEfectiva = if ($ProjectFile) { $ProjectFile } else { Join-Path $PSScriptRoot 'ExportarXPZSelectivo.msbuild' }
+    if (-not $GxProgramDir) { throw 'Debe indicar -GxProgramDir para ejecutar la exportacion selectiva.' }
+    if (-not $KbPath) { throw 'Debe indicar -KbPath para ejecutar la exportacion selectiva.' }
+    $rutaXpzSalida = if ($XpzFile) { [System.IO.Path]::GetFullPath($XpzFile) } else { $complemento.Ruta }
+    if ($XpzFile) {
+        $directorioPrincipal = [System.IO.Path]::GetFullPath([System.IO.Path]::GetDirectoryName($seleccion.XpzPrincipal))
+        $directorioSalidaExplicito = [System.IO.Path]::GetFullPath([System.IO.Path]::GetDirectoryName($rutaXpzSalida))
+        if (-not [System.StringComparer]::OrdinalIgnoreCase.Equals($directorioPrincipal, $directorioSalidaExplicito)) {
+            throw ('El XPZ selectivo debe quedar junto al XPZ principal: ' + $directorioPrincipal)
+        }
+        if (Test-Path -LiteralPath $rutaXpzSalida) {
+            throw ('El archivo de salida ya existe y no se sobrescribira: ' + $rutaXpzSalida)
+        }
+    }
+    $marcaTemporal = (Get-Date).ToString('yyyyMMdd_HHmmssfff')
+    $rutaLogEfectiva = if ($LogFile) { [System.IO.Path]::GetFullPath($LogFile) } else { Join-Path $DirectorioLogs ('exportarXPZSelectivo_' + $marcaTemporal + '.log') }
+    Validar-RutasEjecucion -Configuracion $configuracion -RutaMsbuild $rutaMsbuildEfectiva -RutaProyecto $rutaProyectoEfectiva -DirectorioGeneXus $GxProgramDir -RutaKnowledgeBase $KbPath -RutaXpzSalida $rutaXpzSalida -RutaLog $rutaLogEfectiva
+    Write-Host ('Complemento de salida: ' + $rutaXpzSalida) -ForegroundColor DarkGray
+    Write-Host ('Log de ejecucion: ' + $rutaLogEfectiva) -ForegroundColor DarkGray
+    Write-Host ('Nombres de objetos: ' + ($seleccion.Objetos -join ',')) -ForegroundColor DarkGray
+    Ejecutar-ExportacionSelectiva -RutaMsbuild $rutaMsbuildEfectiva -RutaProyecto $rutaProyectoEfectiva -DirectorioGeneXus $GxProgramDir -RutaKnowledgeBase $KbPath -Selectores $seleccion.Objetos -RutaXpzSalida $rutaXpzSalida -RutaLog $rutaLogEfectiva | Out-Null
+    Write-Host ('XPZ complementario generado correctamente: ' + $rutaXpzSalida) -ForegroundColor Green
+    exit 0
+} catch {
+    if ($rutaXpzSalida -and (Test-Path -LiteralPath $rutaXpzSalida -PathType Leaf)) {
+        Remove-Item -LiteralPath $rutaXpzSalida -Force -ErrorAction SilentlyContinue
+    }
+    Write-Host ('ERROR: ' + $_.Exception.Message) -ForegroundColor Red
+    exit 1
+}

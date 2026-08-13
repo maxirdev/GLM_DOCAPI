@@ -21,20 +21,45 @@ function Start-Phase {
         [Parameter(Mandatory = $true)][string]$Name
     )
 
-    Write-Host ("[{0}/5] {1} ... |" -f $Number, $Name) -NoNewline
+    # Cada fase debe terminar en salto de linea para que el proceso padre
+    # la muestre inmediatamente, incluso cuando la salida esta redirigida.
+    Write-Host ("[{0}/5] {1} ..." -f $Number, $Name)
 }
 
 function Update-Spinner {
     param([int]$Position)
 
-    $spinner = @('|', '/', '-', '\')
-    Write-Host ("`b{0}" -f $spinner[$Position % $spinner.Count]) -NoNewline
+    # No usar retrocesos ni -NoNewline: la salida se consume desde otro
+    # proceso de PowerShell y esos caracteres retrasan la visualizacion.
 }
 
 function Finish-Phase {
     param([ValidateSet('OK', 'ERROR')][string]$Result)
 
-    Write-Host ("`b{0}" -f $Result)
+    Write-Host ("    Resultado: " + $Result)
+}
+
+function Update-ProcessOutput {
+    param(
+        [Parameter(Mandatory = $true)]$State,
+        [Parameter(Mandatory = $true)][System.Text.StringBuilder]$Buffer
+    )
+
+    while ($null -ne $State.Task -and $State.Task.IsCompleted) {
+        try {
+            $line = $State.Task.GetAwaiter().GetResult()
+        } catch {
+            $line = $null
+        }
+
+        if ($null -eq $line) {
+            $State.Task = $null
+            break
+        }
+
+        [void]$Buffer.AppendLine($line)
+        $State.Task = $State.Reader.ReadLineAsync()
+    }
 }
 
 function Get-RecentOutputText {
@@ -64,8 +89,75 @@ function Get-RecentOutputText {
     }
 }
 
-$stdoutFile = "$LogFile.stdout.tmp"
-$stderrFile = "$LogFile.stderr.tmp"
+function Test-XpzFile {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        return [pscustomobject]@{ Valid = $false; Error = 'no se encontro el archivo XPZ esperado' }
+    }
+
+    $zip = $null
+    try {
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+        $zip = [System.IO.Compression.ZipFile]::OpenRead($Path)
+        $xmlEntries = @($zip.Entries | Where-Object { $_.Name -like '*.xml' })
+        if ($xmlEntries.Count -ne 1) {
+            return [pscustomobject]@{ Valid = $false; Error = "el XPZ contiene $($xmlEntries.Count) archivos XML; se esperaba uno" }
+        }
+
+        $reader = New-Object System.IO.StreamReader($xmlEntries[0].Open())
+        try {
+            $xml = New-Object System.Xml.XmlDocument
+            $xml.LoadXml($reader.ReadToEnd())
+        } finally {
+            $reader.Dispose()
+        }
+
+        if ($xml.DocumentElement.LocalName -ne 'ExportFile') {
+            return [pscustomobject]@{ Valid = $false; Error = "la raiz XML es $($xml.DocumentElement.LocalName); se esperaba ExportFile" }
+        }
+
+        return [pscustomobject]@{ Valid = $true; Error = '' }
+    } catch {
+        return [pscustomobject]@{ Valid = $false; Error = "el XPZ no es valido: $($_.Exception.Message)" }
+    } finally {
+        if ($null -ne $zip) { $zip.Dispose() }
+    }
+}
+
+function Get-DescendantProcessIds {
+    param(
+        [Parameter(Mandatory = $true)][int]$RootProcessId,
+        [Parameter(Mandatory = $true)][datetime]$StartedAfter
+    )
+
+    $result = New-Object System.Collections.Generic.List[int]
+    $pending = New-Object System.Collections.Generic.Queue[int]
+    $pending.Enqueue($RootProcessId)
+    $processes = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue)
+
+    while ($pending.Count -gt 0) {
+        $parentId = $pending.Dequeue()
+        foreach ($child in $processes | Where-Object { $_.ParentProcessId -eq $parentId }) {
+            $created = $null
+            try {
+                if ($child.CreationDate -is [datetime]) {
+                    $created = [datetime]$child.CreationDate
+                } else {
+                    $created = [System.Management.ManagementDateTimeConverter]::ToDateTime([string]$child.CreationDate)
+                }
+            } catch {}
+            if ($null -ne $created -and $created -lt $StartedAfter.AddSeconds(-2)) { continue }
+            if (-not $result.Contains([int]$child.ProcessId)) {
+                $result.Add([int]$child.ProcessId)
+                $pending.Enqueue([int]$child.ProcessId)
+            }
+        }
+    }
+
+    return @($result)
+}
+
 $arguments = @(
     (Quote-ProcessArgument $ProjectFile),
     '/t:ExportarAPIGLM',
@@ -89,39 +181,72 @@ $phaseNumber = 1
 $spinnerPosition = 0
 $phaseCheckCounter = 0
 $process = $null
+$stdoutState = $null
+$stderrState = $null
+$processOutput = New-Object System.Text.StringBuilder
+$processStartedAt = Get-Date
+$processId = 0
+$scriptExitCode = 1
 
 try {
     Start-Phase -Number $phaseNumber -Name $phaseNames[$phaseNumber - 1]
 
-    $process = Start-Process `
-        -FilePath $MsbuildPath `
-        -ArgumentList $arguments `
-        -WorkingDirectory (Split-Path -Parent $ProjectFile) `
-        -RedirectStandardOutput $stdoutFile `
-        -RedirectStandardError $stderrFile `
-        -WindowStyle Hidden `
-        -PassThru
+    $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+    $startInfo.FileName = $MsbuildPath
+    $startInfo.Arguments = $arguments -join ' '
+    $startInfo.WorkingDirectory = Split-Path -Parent $ProjectFile
+    $startInfo.UseShellExecute = $false
+    $startInfo.CreateNoWindow = $true
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+
+    $process = New-Object System.Diagnostics.Process
+    $process.StartInfo = $startInfo
+    $processStartedAt = Get-Date
+    if (-not $process.Start()) {
+        throw 'No se pudo iniciar MSBuild.'
+    }
+    $processId = $process.Id
+    $stdoutState = [pscustomobject]@{
+        Reader = $process.StandardOutput
+        Task = $process.StandardOutput.ReadLineAsync()
+    }
+    $stderrState = [pscustomobject]@{
+        Reader = $process.StandardError
+        Task = $process.StandardError.ReadLineAsync()
+    }
 
     while (-not $process.HasExited) {
+        Update-ProcessOutput -State $stdoutState -Buffer $processOutput
+        Update-ProcessOutput -State $stderrState -Buffer $processOutput
+
         if ($phaseCheckCounter -eq 0) {
-            $recentText = (Get-RecentOutputText -Paths @($stdoutFile, $stderrFile)) -join "`n"
+            $recentText = ((Get-RecentOutputText -Paths @($LogFile)) -join "`n") + "`n" + $processOutput.ToString()
             $nextPhase = $phaseNumber
 
-            if ($recentText -match 'Open Knowledge Base Task started') {
+            if ($recentText -match 'Open Knowledge Base Task started|Abriendo Knowledge Base:') {
                 $nextPhase = [Math]::Max($nextPhase, 2)
             }
-            if ($recentText -match 'Export started') {
+            if ($recentText -match 'Export started|Exportando Module:APIGLM|Exporting Module.*APIGLM') {
                 $nextPhase = [Math]::Max($nextPhase, 3)
             }
-            if ($recentText -match 'Compressing output file') {
+            if ($recentText -match 'Compressing output file|Comprimiendo el archivo') {
                 $nextPhase = [Math]::Max($nextPhase, 4)
             }
-            if ($recentText -match 'Close Knowledge Base Task started') {
+            if ($recentText -match 'Close Knowledge Base Task started|Cerrando Knowledge Base') {
                 $nextPhase = [Math]::Max($nextPhase, 5)
             }
 
             while ($phaseNumber -lt $nextPhase) {
-                Finish-Phase -Result 'OK'
+                $phaseResult = 'OK'
+                if ($nextPhase -ge 5) {
+                    if ($phaseNumber -eq 4 -and ($recentText -notmatch 'Export Success' -or -not (Test-Path -LiteralPath $XpzFile -PathType Leaf))) {
+                        $phaseResult = 'ERROR'
+                    } elseif ($phaseNumber -eq 3 -and $recentText -notmatch 'Compressing output file') {
+                        $phaseResult = 'ERROR'
+                    }
+                }
+                Finish-Phase -Result $phaseResult
                 $phaseNumber++
                 Start-Phase -Number $phaseNumber -Name $phaseNames[$phaseNumber - 1]
             }
@@ -135,49 +260,97 @@ try {
     }
 
     $process.WaitForExit()
-    $allLines = @()
-    foreach ($path in @($stdoutFile, $stderrFile)) {
-        if (Test-Path -LiteralPath $path) {
-            $allLines += @(Get-Content -LiteralPath $path -ErrorAction SilentlyContinue)
+    while ($null -ne $stdoutState.Task -or $null -ne $stderrState.Task) {
+        Update-ProcessOutput -State $stdoutState -Buffer $processOutput
+        Update-ProcessOutput -State $stderrState -Buffer $processOutput
+        if ($null -ne $stdoutState.Task -or $null -ne $stderrState.Task) {
+            Start-Sleep -Milliseconds 10
         }
     }
+    $processExitCode = $process.ExitCode
+    $allText = @($processOutput.ToString(), (Get-Content -LiteralPath $LogFile -Raw -ErrorAction SilentlyContinue)) -join "`n"
+    $allLines = $allText -split "`r?`n"
 
-    $finalText = $allLines -join "`n"
+    $finalText = $allText
     $finalPhase = $phaseNumber
-    if ($finalText -match 'Open Knowledge Base Task started') { $finalPhase = [Math]::Max($finalPhase, 2) }
-    if ($finalText -match 'Export started') { $finalPhase = [Math]::Max($finalPhase, 3) }
-    if ($finalText -match 'Compressing output file') { $finalPhase = [Math]::Max($finalPhase, 4) }
-    if ($finalText -match 'Close Knowledge Base Task started') { $finalPhase = [Math]::Max($finalPhase, 5) }
+    if ($finalText -match 'Open Knowledge Base Task started|Abriendo Knowledge Base:') { $finalPhase = [Math]::Max($finalPhase, 2) }
+    if ($finalText -match 'Export started|Exportando Module:APIGLM|Exporting Module.*APIGLM') { $finalPhase = [Math]::Max($finalPhase, 3) }
+    if ($finalText -match 'Compressing output file|Comprimiendo el archivo') { $finalPhase = [Math]::Max($finalPhase, 4) }
+    if ($finalText -match 'Close Knowledge Base Task started|Cerrando Knowledge Base') { $finalPhase = [Math]::Max($finalPhase, 5) }
     while ($phaseNumber -lt $finalPhase) {
-        Finish-Phase -Result 'OK'
+        $phaseResult = 'OK'
+        if ($finalPhase -ge 5) {
+            if ($phaseNumber -eq 4 -and ($finalText -notmatch 'Export Success' -or -not (Test-Path -LiteralPath $XpzFile -PathType Leaf))) {
+                $phaseResult = 'ERROR'
+            } elseif ($phaseNumber -eq 3 -and $finalText -notmatch 'Compressing output file') {
+                $phaseResult = 'ERROR'
+            }
+        }
+        Finish-Phase -Result $phaseResult
         $phaseNumber++
         Start-Phase -Number $phaseNumber -Name $phaseNames[$phaseNumber - 1]
     }
 
-    $successDetected = @($allLines | Where-Object { $_ -match 'Export Success' }).Count -gt 0
+    $exportSuccess = $finalText -match 'Export Success'
+    $closeSuccess = $finalText -match 'Close Knowledge Base Task Success'
+    $xpzValidation = Test-XpzFile -Path $XpzFile
     $errors = @($allLines | Where-Object {
         $_ -match '(?i)^\s*(error\b|msb\d{4}\b|exception\b|fatal\b)' -or
         $_ -match '(?i)\s(error|fatal|exception)\s*:'
-    } | Select-Object -Unique)
-    $exitCode = if ($process.ExitCode -eq 0 -and $successDetected -and $errors.Count -eq 0) { 0 } else { 1 }
+    } | ForEach-Object { $_.Trim() } | Select-Object -Unique)
+    $scriptExitCode = if ($processExitCode -eq 0 -and $exportSuccess -and $closeSuccess -and $xpzValidation.Valid -and $errors.Count -eq 0) { 0 } else { 1 }
 
-    if ($exitCode -eq 0) { Finish-Phase -Result 'OK' } else { Finish-Phase -Result 'ERROR' }
+    $lastPhaseResult = if ($phaseNumber -eq 5 -and $closeSuccess) { 'OK' } elseif ($scriptExitCode -eq 0) { 'OK' } else { 'ERROR' }
+    Finish-Phase -Result $lastPhaseResult
+
+    if ($processExitCode -ne 0) {
+        Write-Host "MSBuild termino con codigo $processExitCode." -ForegroundColor Red
+    }
+    if (-not $exportSuccess) {
+        Write-Host 'No se encontro la confirmacion de exportacion de GeneXus.' -ForegroundColor Red
+    }
+    if (-not $closeSuccess) {
+        Write-Host 'No se encontro la confirmacion de cierre de la Knowledge Base.' -ForegroundColor Red
+    }
+    if (-not $xpzValidation.Valid) {
+        Write-Host ("El XPZ no supero la validacion: " + $xpzValidation.Error + '.') -ForegroundColor Red
+    }
 
     if ($errors.Count -gt 0) {
         Write-Host 'Mensajes de error detectados:' -ForegroundColor Red
         $errors | ForEach-Object { Write-Host "  $_" -ForegroundColor Red }
     }
 
-    exit $exitCode
+} catch {
+    if ($phaseNumber -ge 1) { Finish-Phase -Result 'ERROR' }
+    Write-Host ("Error durante la exportacion: " + $_.Exception.Message) -ForegroundColor Red
+    $scriptExitCode = 1
 } finally {
     if ($null -ne $process) {
-        $process.Refresh()
-        if (-not $process.HasExited) {
-            $process.Kill()
-            $process.WaitForExit()
+        if ($processId -gt 0) {
+            if (-not $process.HasExited) {
+                if (-not $process.WaitForExit(5000)) {
+                    & "$env:SystemRoot\System32\taskkill.exe" /PID $processId /T /F 2>&1 | Out-Null
+                    $process.WaitForExit(5000) | Out-Null
+                }
+            }
         }
         $process.Dispose()
     }
 
-    Remove-Item -LiteralPath $stdoutFile, $stderrFile -Force -ErrorAction SilentlyContinue
+    if ($processId -gt 0) {
+        $descendants = @(Get-DescendantProcessIds -RootProcessId $processId -StartedAfter $processStartedAt)
+        foreach ($descendantId in ($descendants | Sort-Object -Descending)) {
+            Stop-Process -Id $descendantId -Force -ErrorAction SilentlyContinue
+        }
+
+        if ($descendants.Count -gt 0) { Start-Sleep -Milliseconds 250 }
+        $remainingDescendants = @(Get-DescendantProcessIds -RootProcessId $processId -StartedAfter $processStartedAt)
+        if ($remainingDescendants.Count -gt 0) {
+            Write-Host ("No se pudieron cerrar los procesos descendientes: " + ($remainingDescendants -join ', ') + '.') -ForegroundColor Red
+            $scriptExitCode = 1
+        }
+    }
 }
+
+exit $scriptExitCode

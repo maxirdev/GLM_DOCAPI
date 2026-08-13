@@ -1,13 +1,14 @@
 ﻿# GenerarDocumento.ps1
 # Orquestador del generador de documentacion de servicios APIGLM.
 # Carga la configuracion, lee el inventario endpoints.json, presenta un menu
-# con 3 modos (particular, multiple, todos) y encadena analisis -> redaccion -> salida.
+# con 3 modos (particular, multiple, todos) y encadena analisis -> redaccion -> Markdown.
 # Requiere configuracion.json en la raiz del proyecto.
 
 [CmdletBinding()]
 param(
     [string]$ConfigPath,
-    [string]$XpzPath
+    [string]$XpzPath,
+    [switch]$Todos
 )
 
 $ErrorActionPreference = 'Stop'
@@ -98,6 +99,7 @@ try {
     $faseActual = 'carga-modulos'
     . (Join-Path $PSScriptRoot 'CargarConfiguracion.ps1')
     . (Join-Path $PSScriptRoot 'AnalizarServicio.ps1')
+    . (Join-Path $PSScriptRoot 'CargarMultiXPZ.ps1')
     . (Join-Path $PSScriptRoot 'RedactarDocumento.ps1')
     . (Join-Path $PSScriptRoot 'EscribirSalidas.ps1')
 
@@ -106,7 +108,14 @@ try {
     $cargarConfiguracionParametros = @{ ConfigPath = $ConfigPath }
     if ($XpzPath) { $cargarConfiguracionParametros.XpzPath = $XpzPath }
     $configuracion = Cargar-Configuracion @cargarConfiguracionParametros
-    Write-Host ("  XPZ: " + $configuracion.XpzPath) -ForegroundColor DarkGray
+    $xpzComplementariosDetectados = @(Descubrir-XPZComplementariosCompartido -RutaXpzPrincipal $configuracion.XpzPath)
+    if ($xpzComplementariosDetectados.Count -gt 0) {
+        Write-Host ("  XPZ principal: " + $configuracion.XpzPath) -ForegroundColor DarkGray
+        Write-Host ("  Fuente: multi-XPZ (" + ($xpzComplementariosDetectados.Count + 1) + " archivos)") -ForegroundColor DarkGray
+        Write-Host ("  Complementos detectados: " + (($xpzComplementariosDetectados | ForEach-Object { [System.IO.Path]::GetFileName($_) }) -join ', ')) -ForegroundColor DarkGray
+    } else {
+        Write-Host ("  XPZ: " + $configuracion.XpzPath + " (único archivo)") -ForegroundColor DarkGray
+    }
     Write-Host ("  PackageName: " + $configuracion.PackageName) -ForegroundColor DarkGray
     if ($configuracion.Cliente) {
         Write-Host ("  Cliente: " + $configuracion.Cliente) -ForegroundColor DarkGray
@@ -138,25 +147,34 @@ try {
 
     $faseActual = 'apertura-xpz'
     Write-Step 2 'Abriendo XPZ y construyendo indices...'
-    $aperturaXpz = Abrir-XPZ -RutaXpz $configuracion.XpzPath
-    $indices = Construir-Indices -Xml $aperturaXpz.Xml
-    Write-Host ("  XPZ abierto y " + $aperturaXpz.Xml.SelectNodes('//Object').Count + " objetos indexados") -ForegroundColor DarkGray
+    $indices = Cargar-IndiceMultiXPZ -RutaXpzPrincipal $configuracion.XpzPath
+    $xmlAnalisis = $indices.XmlUnificado
+    Write-Host ("  XPZ abierto y " + $xmlAnalisis.SelectNodes('//Object').Count + " objetos indexados") -ForegroundColor DarkGray
+    if (@($indices.NombresXpz).Count -gt 1) {
+        Write-Host ("  Complementos incluidos: " + ((@($indices.NombresXpz) | Select-Object -Skip 1) -join ', ')) -ForegroundColor DarkGray
+    }
 
     $faseActual = 'seleccion-servicios'
-    Write-Host ''
-    Write-Host '  Modos de generacion:' -ForegroundColor Cyan
-    Write-Host '    1. Servicio particular (seleccion individual)'
-    Write-Host '    2. Multiples servicios (seleccion con ventana grafica)'
-    Write-Host '    3. TODOS los servicios (procesar el inventario completo)'
-    Write-Host ''
     $modoSeleccionado = 0
-    while ($modoSeleccionado -lt 1 -or $modoSeleccionado -gt 3) {
-        $texto = Read-Host 'Seleccione un modo [1-3]'
-        $modoSeleccionado = 0
-        $parseado = 0
-        if ([int]::TryParse($texto, [ref]$parseado)) { $modoSeleccionado = $parseado }
-        if ($modoSeleccionado -lt 1 -or $modoSeleccionado -gt 3) {
-            Write-Host ('  Seleccion invalida. Ingrese 1, 2 o 3.') -ForegroundColor Yellow
+    if ($Todos) {
+        $modoSeleccionado = 3
+        Write-Host ''
+        Write-Host '  Modo automatico: TODOS los servicios.' -ForegroundColor DarkGray
+    } else {
+        Write-Host ''
+        Write-Host '  Modos de generacion:' -ForegroundColor Cyan
+        Write-Host '    1. Servicio particular (seleccion individual)'
+        Write-Host '    2. Multiples servicios (seleccion con ventana grafica)'
+        Write-Host '    3. TODOS los servicios (procesar el inventario completo)'
+        Write-Host ''
+        while ($modoSeleccionado -lt 1 -or $modoSeleccionado -gt 3) {
+            $texto = Read-Host 'Seleccione un modo [1-3]'
+            $modoSeleccionado = 0
+            $parseado = 0
+            if ([int]::TryParse($texto, [ref]$parseado)) { $modoSeleccionado = $parseado }
+            if ($modoSeleccionado -lt 1 -or $modoSeleccionado -gt 3) {
+                Write-Host ('  Seleccion invalida. Ingrese 1, 2 o 3.') -ForegroundColor Yellow
+            }
         }
     }
     Write-Host ("  Modo seleccionado: " + $modoSeleccionado) -ForegroundColor DarkGray
@@ -249,7 +267,7 @@ try {
             $progreso = [math]::Floor(($contador / $totalServicios) * 100)
             Write-Progress -Activity 'Generando documentacion de servicio' -PercentComplete $progreso -Status "Procesando $contador de $totalServicios"
         }
-        $resultado = Procesar-Servicio -Endpoint $servicio -PackageName $configuracion.PackageName -Xml $aperturaXpz.Xml -Indice $indices -DirectorioSalida $DirectorioSalida -ListaDiagnosticos $diagnosticosIA -RaizRepositorio $RaizRepositorio -Silencioso:($modoSeleccionado -ne 1)
+        $resultado = Procesar-Servicio -Endpoint $servicio -PackageName $configuracion.PackageName -Xml $xmlAnalisis -Indice $indices -DirectorioSalida $DirectorioSalida -ListaDiagnosticos $diagnosticosIA -RaizRepositorio $RaizRepositorio -Silencioso:($modoSeleccionado -ne 1)
         $resultados.Add($resultado)
         if ($resultado.Estado -eq 'OK') {
             $okCount++
@@ -274,18 +292,9 @@ try {
         $warningCount++
     }
 
-    foreach ($resultado in $resultados) {
-        if ($resultado.Estado -ne 'ERROR') { continue }
-        if (-not $resultado.FullyQualifiedName) { continue }
-        $ultimoPunto = $resultado.FullyQualifiedName.LastIndexOf('.')
-        if ($ultimoPunto -le 0) { continue }
-        $nombreArchivo = $resultado.FullyQualifiedName.Substring($ultimoPunto + 1).ToLowerInvariant() + '.md'
-        $rutaDocumentoError = Join-Path $DirectorioSalida $nombreArchivo
-        if (Test-Path -LiteralPath $rutaDocumentoError) {
-            Remove-Item -LiteralPath $rutaDocumentoError -Force
-            Write-Host ("  [ELIMINADO] " + $rutaDocumentoError + " (servicio en ERROR: " + $resultado.FullyQualifiedName + ")") -ForegroundColor Yellow
-        }
-    }
+    # Un servicio que termina en ERROR no debe borrar su documentación previa.
+    # Solo Escribir-Salidas reemplaza el archivo cuando el servicio seleccionado
+    # pudo analizarse y redactarse correctamente.
 
     Write-Host ''
     Write-Host ("Completado: $okCount OK, $warningCount WARNING, $errorCount ERROR, $omitidoCount OMITIDO.") -ForegroundColor Cyan
