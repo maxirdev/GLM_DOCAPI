@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ExportFile>
+  <Objects>
+    <Object fullyQualifiedName="APIGLM.Cotizacion.ObtenerProductorAnidado" moduleGuid="aaaaaaaa-0000-0000-0000-0000000000a0" guid="aaaaaaaa-0000-0000-0000-000000000061" name="ObtenerProductorAnidado" type="84a12160-f59b-4ad7-a683-ea4481ac23e9" description="Obtener Productor Anidado">
+      <Part type="528d1c06-a9c2-420d-bd35-21dca83f12ff">
+        <Source><![CDATA[
+&colQueryParams = ObtenerParametrosQueryParams(&APIGLMRequestIn.QueryParams)
+if &colQueryParams.Count > 0
+    &EmpCod = &colQueryParams.Item(1).ToNumeric()
+    &ProCod = &colQueryParams.Item(3).ToString()
+    &fechaVigencia = ConvertirQueryParamAFecha(&colQueryParams.Item(4).ToString().Trim())
+    &ProductorAPI = new()
+    &ProductorAPI.Codigo = &EmpCod
+    &APIGLMResponse = GenerarAPIGLMResponse(HttpCode.OK, '', &ProductorAPI.ToJson())
+endif
+]]></Source>
+        <Properties />
+      </Part>
+      <Part type="9b0a32a3-de6d-4be1-a4dd-1b85d3741534">
+        <Source><![CDATA[parm(in:&APIGLMRequestIn, out:&APIGLMResponse);
+]]></Source>
+        <Properties />
+      </Part>
+      <Part type="e4c4ade7-53f0-4a56-bdfd-843735b66f47">
+        <Variable Name="colQueryParams">
+          <Properties><Property><Name>Name</Name><Value>colQueryParams</Value></Property></Properties>
+        </Variable>
+        <Variable Name="EmpCod">
+          <Properties><Property><Name>Name</Name><Value>EmpCod</Value></Property><Property><Name>Description</Name><Value>Código de Empresa</Value></Property><Property><Name>idBasedOn</Name><Value>Attribute:EmpCod</Value></Property></Properties>
+        </Variable>
+        <Variable Name="ProCod">
+          <Properties><Property><Name>Name</Name><Value>ProCod</Value></Property><Property><Name>Description</Name><Value>Código de Productor</Value></Property><Property><Name>idBasedOn</Name><Value>Attribute:ProCod</Value></Property></Properties>
+        </Variable>
+        <Variable Name="fechaVigencia">
+          <Properties><Property><Name>Name</Name><Value>fechaVigencia</Value></Property><Property><Name>Description</Name><Value>Fecha de Vigencia</Value></Property><Property><Name>ATTCUSTOMTYPE</Name><Value>bas:Date</Value></Property></Properties>
+        </Variable>
+        <Variable Name="ProductorAPI">
+          <Properties><Property><Name>Name</Name><Value>ProductorAPI</Value></Property><Property><Name>ATTCUSTOMTYPE</Name><Value>sdt:Productor, APIGLM.Cotizacion</Value></Property></Properties>
+        </Variable>
+        <Properties />
+      </Part>
+      <Properties><Property><Name>Name</Name><Value>ObtenerProductorAnidado</Value></Property><Property><Name>IsDefault</Name><Value>False</Value></Property></Properties>
+    </Object>
+    <Object fullyQualifiedName="EmpCod" moduleGuid="00000000-0000-0000-0000-000000000000" guid="aaaaaaaa-0000-0000-0000-000000000005" name="EmpCod" type="00972a17-9975-449e-aab1-d26165d51393" description="Código de Empresa">
+      <Part type="ad3ca970-19d0-44e1-a7b7-db05556e820c">
+        <Properties />
+      </Part>
+      <Properties><Property><Name>Name</Name><Value>EmpCod</Value></Property><Property><Name>Description</Name><Value>Código de Empresa</Value></Property><Property><Name>Length</Name><Value>7</Value></Property><Property><Name>Decimals</Name><Value>0</Value></Property><Property><Name>AttMaxLen</Name><Value>7</Value></Property><Property><Name>IsDefault</Name><Value>False</Value></Property></Properties>
+    </Object>
+    <Object fullyQualifiedName="ProCod" moduleGuid="00000000-0000-0000-0000-000000000000" guid="aaaaaaaa-0000-0000-0000-000000000006" name="ProCod" type="00972a17-9975-449e-aab1-d26165d51393" description="Código de Productor">
+      <Part type="ad3ca970-19d0-44e1-a7b7-db05556e820c">
+        <Properties />
+      </Part>
+      <Properties><Property><Name>Name</Name><Value>ProCod</Value></Property><Property><Name>Description</Name><Value>Código de Productor</Value></Property><Property><Name>Length</Name><Value>7</Value></Property><Property><Name>Decimals</Name><Value>0</Value></Property><Property><Name>AttMaxLen</Name><Value>7</Value></Property><Property><Name>IsDefault</Name><Value>False</Value></Property></Properties>
+    </Object>
+    <Object fullyQualifiedName="APIGLM.Cotizacion.Productor" moduleGuid="aaaaaaaa-0000-0000-0000-0000000000a0" guid="aaaaaaaa-0000-0000-0000-000000000003" name="Productor" type="447527b5-9210-4523-898b-5dccb17be60a" description="Productor">
+      <Part type="5c2aa9da-8fc4-4b6b-ae02-8db4fa48976a">
+        <Level Name="Productor">
+          <LevelInfo guid="aaaaaaaa-0000-0000-0000-00000000e301" name="Productor" type="a76e9340-bdb9-445d-8f81-cfd4ddd0b0f3" description="Productor">
+            <Properties><Property><Name>Name</Name><Value>Productor</Value></Property></Properties>
+          </LevelInfo>
+          <Item guid="aaaaaaaa-0000-0000-0000-00000000e302" name="Codigo" type="f76e9340-bdb9-445d-8f81-cfd4ddd0b0f3" description="Código">
+            <Properties><Property><Name>Name</Name><Value>Codigo</Value></Property><Property><Name>Length</Name><Value>7</Value></Property><Property><Name>AttMaxLen</Name><Value>7</Value></Property></Properties>
+          </Item>
+        </Level>
+        <Properties />
+      </Part>
+      <Properties><Property><Name>Name</Name><Value>Productor</Value></Property><Property><Name>IsDefault</Name><Value>False</Value></Property></Properties>
+    </Object>
+  </Objects>
+  <Attributes>
+    <Attribute fullyQualifiedName="EmpCod" moduleGuid="00000000-0000-0000-0000-000000000000" guid="aaaaaaaa-0000-0000-0000-000000000007" name="EmpCod" description="Código de Empresa">
+      <Properties><Property><Name>Name</Name><Value>EmpCod</Value></Property><Property><Name>Description</Name><Value>Código de Empresa</Value></Property><Property><Name>idBasedOn</Name><Value>Domain:EmpCod</Value></Property></Properties>
+    </Attribute>
+    <Attribute fullyQualifiedName="ProCod" moduleGuid="00000000-0000-0000-0000-000000000000" guid="aaaaaaaa-0000-0000-0000-000000000008" name="ProCod" description="Código de Productor">
+      <Properties><Property><Name>Name</Name><Value>ProCod</Value></Property><Property><Name>Description</Name><Value>Código de Productor</Value></Property><Property><Name>idBasedOn</Name><Value>Domain:ProCod</Value></Property></Properties>
+    </Attribute>
+  </Attributes>
+  <Dependencies />
+  <ObjectsIdentityMapping />
+</ExportFile>

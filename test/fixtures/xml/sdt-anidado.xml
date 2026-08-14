@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ExportFile>
+  <Objects>
+    <Object fullyQualifiedName="APIGLM.Cotizacion.Productor" moduleGuid="aaaaaaaa-0000-0000-0000-0000000000a0" guid="aaaaaaaa-0000-0000-0000-000000000003" name="Productor" type="447527b5-9210-4523-898b-5dccb17be60a" description="Productor">
+      <Part type="5c2aa9da-8fc4-4b6b-ae02-8db4fa48976a">
+        <Level Name="Productor">
+          <LevelInfo guid="aaaaaaaa-0000-0000-0000-00000000e301" name="Productor" type="a76e9340-bdb9-445d-8f81-cfd4ddd0b0f3" description="Productor">
+            <Properties><Property><Name>Name</Name><Value>Productor</Value></Property></Properties>
+          </LevelInfo>
+          <Item guid="aaaaaaaa-0000-0000-0000-00000000e302" name="Codigo" type="f76e9340-bdb9-445d-8f81-cfd4ddd0b0f3" description="Código">
+            <Properties><Property><Name>Name</Name><Value>Codigo</Value></Property><Property><Name>Length</Name><Value>7</Value></Property><Property><Name>AttMaxLen</Name><Value>7</Value></Property></Properties>
+          </Item>
+          <Item guid="aaaaaaaa-0000-0000-0000-00000000e303" name="Nombre" type="f76e9340-bdb9-445d-8f81-cfd4ddd0b0f3" description="Nombre">
+            <Properties><Property><Name>Name</Name><Value>Nombre</Value></Property><Property><Name>ATTCUSTOMTYPE</Name><Value>bas:VarChar</Value></Property><Property><Name>Length</Name><Value>60</Value></Property><Property><Name>AttMaxLen</Name><Value>60</Value></Property></Properties>
+          </Item>
+          <Item guid="aaaaaaaa-0000-0000-0000-00000000e304" name="CodigoPostal" type="f76e9340-bdb9-445d-8f81-cfd4ddd0b0f3" description="Código Postal">
+            <Properties><Property><Name>Name</Name><Value>CodigoPostal</Value></Property><Property><Name>ATTCUSTOMTYPE</Name><Value>sdt:CodigoPostal, APIGLM.Comun</Value></Property></Properties>
+          </Item>
+          <Level Name="Polizas" description="Polizas">
+            <LevelInfo guid="aaaaaaaa-0000-0000-0000-00000000e305" name="Polizas" type="a76e9340-bdb9-445d-8f81-cfd4ddd0b0f3" description="Polizas">
+              <Properties><Property><Name>Name</Name><Value>Polizas</Value></Property><Property><Name>AttCollection</Name><Value>True</Value></Property></Properties>
+            </LevelInfo>
+            <Item guid="aaaaaaaa-0000-0000-0000-00000000e306" name="NumeroPoliza" type="f76e9340-bdb9-445d-8f81-cfd4ddd0b0f3" description="Número de Póliza">
+              <Properties><Property><Name>Name</Name><Value>NumeroPoliza</Value></Property><Property><Name>Length</Name><Value>12</Value></Property><Property><Name>AttMaxLen</Name><Value>12</Value></Property></Properties>
+            </Item>
+          </Level>
+        </Level>
+        <Properties />
+      </Part>
+      <Properties><Property><Name>Name</Name><Value>Productor</Value></Property><Property><Name>IsDefault</Name><Value>False</Value></Property></Properties>
+    </Object>
+    <Object fullyQualifiedName="APIGLM.Comun.CodigoPostal" moduleGuid="aaaaaaaa-0000-0000-0000-0000000000a1" guid="aaaaaaaa-0000-0000-0000-000000000004" name="CodigoPostal" type="447527b5-9210-4523-898b-5dccb17be60a" description="Código Postal">
+      <Part type="5c2aa9da-8fc4-4b6b-ae02-8db4fa48976a">
+        <Level Name="CodigoPostal">
+          <LevelInfo guid="aaaaaaaa-0000-0000-0000-00000000e401" name="CodigoPostal" type="a76e9340-bdb9-445d-8f81-cfd4ddd0b0f3" description="Código Postal">
+            <Properties><Property><Name>Name</Name><Value>CodigoPostal</Value></Property></Properties>
+          </LevelInfo>
+          <Item guid="aaaaaaaa-0000-0000-0000-00000000e402" name="Codigo" type="f76e9340-bdb9-445d-8f81-cfd4ddd0b0f3" description="Código">
+            <Properties><Property><Name>Name</Name><Value>Codigo</Value></Property><Property><Name>Length</Name><Value>7</Value></Property><Property><Name>AttMaxLen</Name><Value>7</Value></Property></Properties>
+          </Item>
+          <Item guid="aaaaaaaa-0000-0000-0000-00000000e403" name="Descripcion" type="f76e9340-bdb9-445d-8f81-cfd4ddd0b0f3" description="Descripción">
+            <Properties><Property><Name>Name</Name><Value>Descripcion</Value></Property><Property><Name>ATTCUSTOMTYPE</Name><Value>bas:VarChar</Value></Property><Property><Name>Length</Name><Value>100</Value></Property><Property><Name>AttMaxLen</Name><Value>100</Value></Property></Properties>
+          </Item>
+        </Level>
+        <Properties />
+      </Part>
+      <Properties><Property><Name>Name</Name><Value>CodigoPostal</Value></Property><Property><Name>IsDefault</Name><Value>False</Value></Property></Properties>
+    </Object>
+  </Objects>
+  <Attributes />
+  <Dependencies />
+  <ObjectsIdentityMapping />
+</ExportFile>

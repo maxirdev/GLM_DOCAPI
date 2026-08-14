@@ -1,0 +1,19 @@
+{
+    "xpz":  "test/fixtures/xpz/SEGUROS_COMERCIAL_APIGLM_test.xpz",
+    "packagename":  "glmsuit.comercial.",
+    "cliente":  "Trunk",
+    "serviciosIgnorados":  [
+                               "APIGLM.Test.WSTestMaxi",
+                               "APIGLM.WSEjemplo"
+                           ],
+    "exportacion":  {
+                        "onlyModuleAPIGLM":  true
+                    },
+    "herramientas":  {
+                         "geneXusProgramDir":  "C:/Program Files (x86)/GeneXus/GeneXus18",
+                         "kbPath":  "C:/KBs/SEGUROS_COMERCIAL_TRUNK",
+                         "msbuildPath":  "C:/Windows/Microsoft.NET/Framework/v4.0.30319/MSBuild.exe",
+                         "pandocPath":  "binary/tools/pandoc.exe",
+                         "typstPath":  "binary/tools/typst.exe"
+                     }
+}

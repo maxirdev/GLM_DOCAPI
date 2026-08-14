@@ -1,0 +1,46 @@
+{
+    "meta": {
+        "generatedAt": "2026-08-09T10:00:00",
+        "source": "APIGLM.APIGLMMain",
+        "procedureTypeGuid": "84a12160-f59b-4ad7-a683-ea4481ac23e9",
+        "totalConfirmed": 6
+    },
+    "endpoints": [
+        {
+            "nombre": "WS - Obtener Productor",
+            "descripcion": "WSObtenerProductor",
+            "proceso": "APIGLM.Cotizacion.WSObtenerProductor",
+            "endpoint": "glmsuit.comercial.apiglm.cotizacion.awsobtenerproductor"
+        },
+        {
+            "nombre": "WS - Obtener Productor (Comun)",
+            "descripcion": "WSObtenerProductor",
+            "proceso": "APIGLM.Comun.WSObtenerProductor",
+            "endpoint": "glmsuit.comercial.apiglm.comun.awsobtenerproductor"
+        },
+        {
+            "nombre": "WS - Consultar Solicitud",
+            "descripcion": "WSConsultarSolicitud",
+            "proceso": "APIGLM.Emision.WSConsultarSolicitud",
+            "endpoint": "glmsuit.comercial.apiglm.emision.awsconsultarsolicitud"
+        },
+        {
+            "nombre": "WS - Servicio Sin Main",
+            "descripcion": "WSServicioSinMain",
+            "proceso": "APIGLM.Emision.WSServicioSinMain",
+            "endpoint": "glmsuit.comercial.apiglm.emision.awsserviciosinmain"
+        },
+        {
+            "nombre": "WS - Listar Estados",
+            "descripcion": "WSListarEstados",
+            "proceso": "APIGLM.Comun.WSListarEstados",
+            "endpoint": "glmsuit.comercial.apiglm.comun.awslistarestados"
+        },
+        {
+            "nombre": "WS - Test Maxi",
+            "descripcion": "WSTestMaxi",
+            "proceso": "APIGLM.Test.WSTestMaxi",
+            "endpoint": "glmsuit.comercial.apiglm.test.awstestmaxi"
+        }
+    ]
+}

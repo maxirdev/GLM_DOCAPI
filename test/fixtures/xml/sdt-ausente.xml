@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ExportFile>
+  <Objects>
+    <Object fullyQualifiedName="APIGLM.Comun.EntradaInexistente" moduleGuid="aaaaaaaa-0000-0000-0000-0000000000a1" guid="aaaaaaaa-0000-0000-0000-000000000051" name="EntradaInexistente" type="84a12160-f59b-4ad7-a683-ea4481ac23e9" description="Entrada Inexistente">
+      <Part type="528d1c06-a9c2-420d-bd35-21dca83f12ff">
+        <Source><![CDATA[
+&EntNoExiste.FromJson(&APIGLMRequestIn.Body)
+&APIGLMResponse = GenerarAPIGLMResponse(HttpCode.OK, '', '')
+]]></Source>
+        <Properties />
+      </Part>
+      <Part type="9b0a32a3-de6d-4be1-a4dd-1b85d3741534">
+        <Source><![CDATA[parm(in:&APIGLMRequestIn, out:&APIGLMResponse);
+]]></Source>
+        <Properties />
+      </Part>
+      <Part type="e4c4ade7-53f0-4a56-bdfd-843735b66f47">
+        <Variable Name="EntNoExiste">
+          <Properties><Property><Name>Name</Name><Value>EntNoExiste</Value></Property><Property><Name>ATTCUSTOMTYPE</Name><Value>sdt:NoExiste</Value></Property></Properties>
+        </Variable>
+        <Properties />
+      </Part>
+      <Properties><Property><Name>Name</Name><Value>EntradaInexistente</Value></Property><Property><Name>IsDefault</Name><Value>False</Value></Property></Properties>
+    </Object>
+    <Object fullyQualifiedName="APIGLM.Comun.SalidaInexistente" moduleGuid="aaaaaaaa-0000-0000-0000-0000000000a1" guid="aaaaaaaa-0000-0000-0000-000000000052" name="SalidaInexistente" type="84a12160-f59b-4ad7-a683-ea4481ac23e9" description="Salida Inexistente">
+      <Part type="528d1c06-a9c2-420d-bd35-21dca83f12ff">
+        <Source><![CDATA[
+&APIGLMResponse = GenerarAPIGLMResponse(HttpCode.OK, '', &SalidaNoExiste.ToJson())
+]]></Source>
+        <Properties />
+      </Part>
+      <Part type="9b0a32a3-de6d-4be1-a4dd-1b85d3741534">
+        <Source><![CDATA[parm(in:&APIGLMRequestIn, out:&APIGLMResponse);
+]]></Source>
+        <Properties />
+      </Part>
+      <Part type="e4c4ade7-53f0-4a56-bdfd-843735b66f47">
+        <Variable Name="SalidaNoExiste">
+          <Properties><Property><Name>Name</Name><Value>SalidaNoExiste</Value></Property><Property><Name>ATTCUSTOMTYPE</Name><Value>sdt:SalidaAusente</Value></Property></Properties>
+        </Variable>
+        <Properties />
+      </Part>
+      <Properties><Property><Name>Name</Name><Value>SalidaInexistente</Value></Property><Property><Name>IsDefault</Name><Value>False</Value></Property></Properties>
+    </Object>
+  </Objects>
+  <Attributes />
+  <Dependencies />
+  <ObjectsIdentityMapping />
+</ExportFile>

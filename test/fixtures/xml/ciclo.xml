@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ExportFile>
+  <Objects>
+    <Object fullyQualifiedName="APIGLM.Comun.NodoArbol" moduleGuid="aaaaaaaa-0000-0000-0000-0000000000a1" guid="aaaaaaaa-0000-0000-0000-000000000041" name="NodoArbol" type="447527b5-9210-4523-898b-5dccb17be60a" description="Nodo Arbol">
+      <Part type="5c2aa9da-8fc4-4b6b-ae02-8db4fa48976a">
+        <Level Name="NodoArbol">
+          <LevelInfo guid="aaaaaaaa-0000-0000-0000-00000000c101" name="NodoArbol" type="a76e9340-bdb9-445d-8f81-cfd4ddd0b0f3" description="Nodo Arbol">
+            <Properties><Property><Name>Name</Name><Value>NodoArbol</Value></Property></Properties>
+          </LevelInfo>
+          <Item guid="aaaaaaaa-0000-0000-0000-00000000c102" name="Descripcion" type="f76e9340-bdb9-445d-8f81-cfd4ddd0b0f3" description="Descripción">
+            <Properties><Property><Name>Name</Name><Value>Descripcion</Value></Property><Property><Name>ATTCUSTOMTYPE</Name><Value>bas:VarChar</Value></Property><Property><Name>Length</Name><Value>100</Value></Property><Property><Name>AttMaxLen</Name><Value>100</Value></Property></Properties>
+          </Item>
+          <Item guid="aaaaaaaa-0000-0000-0000-00000000c103" name="Padre" type="f76e9340-bdb9-445d-8f81-cfd4ddd0b0f3" description="Padre">
+            <Properties><Property><Name>Name</Name><Value>Padre</Value></Property><Property><Name>ATTCUSTOMTYPE</Name><Value>sdt:NodoArbol, APIGLM.Comun</Value></Property></Properties>
+          </Item>
+        </Level>
+        <Properties />
+      </Part>
+      <Properties><Property><Name>Name</Name><Value>NodoArbol</Value></Property><Property><Name>IsDefault</Name><Value>False</Value></Property></Properties>
+    </Object>
+  </Objects>
+  <Attributes />
+  <Dependencies />
+  <ObjectsIdentityMapping />
+</ExportFile>
