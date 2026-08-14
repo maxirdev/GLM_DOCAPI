@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ExportFile>
+  <Objects>
+    <Object fullyQualifiedName="DominioComplemento" moduleGuid="00000000-0000-0000-0000-000000000000" guid="bbbbbbbb-0000-0000-0000-000000000001" name="DominioComplemento" type="00972a17-9975-449e-aab1-d26165d51393" description="Dominio Complemento">
+      <Part type="ad3ca970-19d0-44e1-a7b7-db05556e820c">
+        <Properties />
+      </Part>
+      <Properties><Property><Name>Name</Name><Value>DominioComplemento</Value></Property><Property><Name>Description</Name><Value>Dominio Complemento</Value></Property><Property><Name>Length</Name><Value>3</Value></Property><Property><Name>Decimals</Name><Value>0</Value></Property><Property><Name>AttMaxLen</Name><Value>3</Value></Property><Property><Name>IsDefault</Name><Value>False</Value></Property></Properties>
+    </Object>
+    <Object fullyQualifiedName="APIGLM.Comun.ListarComplementos" moduleGuid="aaaaaaaa-0000-0000-0000-0000000000a1" guid="bbbbbbbb-0000-0000-0000-000000000002" name="ListarComplementos" type="84a12160-f59b-4ad7-a683-ea4481ac23e9" description="Listar Complementos">
+      <Part type="528d1c06-a9c2-420d-bd35-21dca83f12ff">
+        <Source><![CDATA[
+&APIGLMResponse = GenerarAPIGLMResponse(HttpCode.OK, 'Complementos listados correctamente', '')
+]]></Source>
+        <Properties />
+      </Part>
+      <Part type="9b0a32a3-de6d-4be1-a4dd-1b85d3741534">
+        <Source><![CDATA[parm(in:&APIGLMRequestIn, out:&APIGLMResponse);
+]]></Source>
+        <Properties />
+      </Part>
+      <Properties><Property><Name>Name</Name><Value>ListarComplementos</Value></Property><Property><Name>IsDefault</Name><Value>False</Value></Property></Properties>
+    </Object>
+    <Object fullyQualifiedName="EmpCod" moduleGuid="00000000-0000-0000-0000-000000000000" guid="bbbbbbbb-0000-0000-0000-000000000003" name="EmpCod" type="00972a17-9975-449e-aab1-d26165d51393" description="Código de Empresa duplicado">
+      <Part type="ad3ca970-19d0-44e1-a7b7-db05556e820c">
+        <Properties />
+      </Part>
+      <Properties><Property><Name>Name</Name><Value>EmpCod</Value></Property><Property><Name>Description</Name><Value>Dominio duplicado en el complemento</Value></Property><Property><Name>Length</Name><Value>9</Value></Property><Property><Name>Decimals</Name><Value>0</Value></Property><Property><Name>AttMaxLen</Name><Value>9</Value></Property><Property><Name>IsDefault</Name><Value>False</Value></Property></Properties>
+    </Object>
+    <Object fullyQualifiedName="APIGLM.Emision.Productor" moduleGuid="aaaaaaaa-0000-0000-0000-0000000000a2" guid="aaaaaaaa-0000-0000-0000-000000000003" name="Productor" type="447527b5-9210-4523-898b-5dccb17be60a" description="Productor duplicado por guid">
+      <Part type="5c2aa9da-8fc4-4b6b-ae02-8db4fa48976a">
+        <Level Name="Productor">
+          <LevelInfo guid="aaaaaaaa-0000-0000-0000-00000000e301" name="Productor" type="a76e9340-bdb9-445d-8f81-cfd4ddd0b0f3" description="Productor">
+            <Properties><Property><Name>Name</Name><Value>Productor</Value></Property></Properties>
+          </LevelInfo>
+          <Item guid="aaaaaaaa-0000-0000-0000-00000000e302" name="Codigo" type="f76e9340-bdb9-445d-8f81-cfd4ddd0b0f3" description="Código">
+            <Properties><Property><Name>Name</Name><Value>Codigo</Value></Property><Property><Name>Length</Name><Value>7</Value></Property><Property><Name>AttMaxLen</Name><Value>7</Value></Property></Properties>
+          </Item>
+        </Level>
+        <Properties />
+      </Part>
+      <Properties><Property><Name>Name</Name><Value>Productor</Value></Property><Property><Name>IsDefault</Name><Value>False</Value></Property></Properties>
+    </Object>
+  </Objects>
+  <Attributes>
+    <Attribute fullyQualifiedName="EmpCod" moduleGuid="00000000-0000-0000-0000-000000000000" guid="bbbbbbbb-0000-0000-0000-000000000004" name="EmpCod" description="Atributo duplicado en el complemento">
+      <Properties><Property><Name>Name</Name><Value>EmpCod</Value></Property><Property><Name>Description</Name><Value>Atributo duplicado en el complemento</Value></Property><Property><Name>idBasedOn</Name><Value>Domain:EmpCod</Value></Property></Properties>
+    </Attribute>
+  </Attributes>
+  <Dependencies />
+  <ObjectsIdentityMapping />
+</ExportFile>

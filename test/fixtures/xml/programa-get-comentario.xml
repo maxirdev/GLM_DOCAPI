@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ExportFile>
+  <Objects>
+    <Object fullyQualifiedName="APIGLM.Cotizacion.ObtenerDatosProductor" moduleGuid="aaaaaaaa-0000-0000-0000-0000000000a0" guid="aaaaaaaa-0000-0000-0000-000000000081" name="ObtenerDatosProductor" type="84a12160-f59b-4ad7-a683-ea4481ac23e9" description="Obtener Datos Productor">
+      <Part type="528d1c06-a9c2-420d-bd35-21dca83f12ff">
+        <Source><![CDATA[
+&colQueryParams = ObtenerParametrosQueryParams(&APIGLMRequestIn.QueryParams)
+if &colQueryParams.Count = 1
+	&EmpCod = &APIGLMRequestIn.EmpCod //&colQueryParams.Item(1).ToNumeric()
+	&ProCod = &colQueryParams.Item(1).ToNumeric()
+endif
+]]></Source>
+        <Properties />
+      </Part>
+      <Part type="9b0a32a3-de6d-4be1-a4dd-1b85d3741534">
+        <Source><![CDATA[parm(in:&APIGLMRequestIn, out:&APIGLMResponse);
+]]></Source>
+        <Properties />
+      </Part>
+      <Part type="e4c4ade7-53f0-4a56-bdfd-843735b66f47">
+        <Variable Name="colQueryParams">
+          <Properties><Property><Name>Name</Name><Value>colQueryParams</Value></Property></Properties>
+        </Variable>
+        <Variable Name="EmpCod">
+          <Properties><Property><Name>Name</Name><Value>EmpCod</Value></Property><Property><Name>Description</Name><Value>Código de Empresa</Value></Property><Property><Name>ATTCUSTOMTYPE</Name><Value>bas:Numeric</Value></Property><Property><Name>Length</Name><Value>2</Value></Property><Property><Name>Decimals</Name><Value>0</Value></Property></Properties>
+        </Variable>
+        <Variable Name="ProCod">
+          <Properties><Property><Name>Name</Name><Value>ProCod</Value></Property><Property><Name>Description</Name><Value>Código de Productor</Value></Property><Property><Name>ATTCUSTOMTYPE</Name><Value>bas:Numeric</Value></Property><Property><Name>Length</Name><Value>7</Value></Property><Property><Name>Decimals</Name><Value>0</Value></Property></Properties>
+        </Variable>
+        <Properties />
+      </Part>
+      <Properties><Property><Name>Name</Name><Value>ObtenerDatosProductor</Value></Property><Property><Name>IsDefault</Name><Value>False</Value></Property></Properties>
+    </Object>
+    <Object fullyQualifiedName="APIGLM.Cotizacion.ListarProductoresDeUsuario" moduleGuid="aaaaaaaa-0000-0000-0000-0000000000a0" guid="aaaaaaaa-0000-0000-0000-000000000082" name="ListarProductoresDeUsuario" type="84a12160-f59b-4ad7-a683-ea4481ac23e9" description="Listar Productores De Usuario">
+      <Part type="528d1c06-a9c2-420d-bd35-21dca83f12ff">
+        <Source><![CDATA[
+&colQueryParams = ObtenerParametrosQueryParams(&APIGLMRequestIn.QueryParams)
+if &colQueryParams.Count > 1
+	&EmpCod = &APIGLMRequestIn.EmpCod //&colQueryParams.Item(1).ToNumeric()
+	&UsuCod = &colQueryParams.Item(2).ToString().Trim()
+endif
+]]></Source>
+        <Properties />
+      </Part>
+      <Part type="9b0a32a3-de6d-4be1-a4dd-1b85d3741534">
+        <Source><![CDATA[parm(in:&APIGLMRequestIn, out:&APIGLMResponse);
+]]></Source>
+        <Properties />
+      </Part>
+      <Part type="e4c4ade7-53f0-4a56-bdfd-843735b66f47">
+        <Variable Name="colQueryParams">
+          <Properties><Property><Name>Name</Name><Value>colQueryParams</Value></Property></Properties>
+        </Variable>
+        <Variable Name="EmpCod">
+          <Properties><Property><Name>Name</Name><Value>EmpCod</Value></Property><Property><Name>Description</Name><Value>Código de Empresa</Value></Property><Property><Name>ATTCUSTOMTYPE</Name><Value>bas:Numeric</Value></Property><Property><Name>Length</Name><Value>2</Value></Property><Property><Name>Decimals</Name><Value>0</Value></Property></Properties>
+        </Variable>
+        <Variable Name="UsuCod">
+          <Properties><Property><Name>Name</Name><Value>UsuCod</Value></Property><Property><Name>Description</Name><Value>Código de Usuario</Value></Property><Property><Name>ATTCUSTOMTYPE</Name><Value>bas:VarChar</Value></Property><Property><Name>Length</Name><Value>10</Value></Property><Property><Name>AttMaxLen</Name><Value>10</Value></Property></Properties>
+        </Variable>
+        <Properties />
+      </Part>
+      <Properties><Property><Name>Name</Name><Value>ListarProductoresDeUsuario</Value></Property><Property><Name>IsDefault</Name><Value>False</Value></Property></Properties>
+    </Object>
+    <Object fullyQualifiedName="APIGLM.Cotizacion.ObtenerEmpresaSolo" moduleGuid="aaaaaaaa-0000-0000-0000-0000000000a0" guid="aaaaaaaa-0000-0000-0000-000000000083" name="ObtenerEmpresaSolo" type="84a12160-f59b-4ad7-a683-ea4481ac23e9" description="Obtener Empresa Solo">
+      <Part type="528d1c06-a9c2-420d-bd35-21dca83f12ff">
+        <Source><![CDATA[
+&colQueryParams = ObtenerParametrosQueryParams(&APIGLMRequestIn.QueryParams)
+if &colQueryParams.Count = 1
+	&EmpCod = &APIGLMRequestIn.EmpCod //&colQueryParams.Item(1).ToNumeric()
+endif
+]]></Source>
+        <Properties />
+      </Part>
+      <Part type="9b0a32a3-de6d-4be1-a4dd-1b85d3741534">
+        <Source><![CDATA[parm(in:&APIGLMRequestIn, out:&APIGLMResponse);
+]]></Source>
+        <Properties />
+      </Part>
+      <Part type="e4c4ade7-53f0-4a56-bdfd-843735b66f47">
+        <Variable Name="colQueryParams">
+          <Properties><Property><Name>Name</Name><Value>colQueryParams</Value></Property></Properties>
+        </Variable>
+        <Variable Name="EmpCod">
+          <Properties><Property><Name>Name</Name><Value>EmpCod</Value></Property><Property><Name>Description</Name><Value>Código de Empresa</Value></Property><Property><Name>ATTCUSTOMTYPE</Name><Value>bas:Numeric</Value></Property><Property><Name>Length</Name><Value>2</Value></Property><Property><Name>Decimals</Name><Value>0</Value></Property></Properties>
+        </Variable>
+        <Properties />
+      </Part>
+      <Properties><Property><Name>Name</Name><Value>ObtenerEmpresaSolo</Value></Property><Property><Name>IsDefault</Name><Value>False</Value></Property></Properties>
+    </Object>
+  </Objects>
+  <Attributes />
+  <Dependencies />
+  <ObjectsIdentityMapping />
+</ExportFile>

@@ -1,0 +1,28 @@
+{
+    "meta": {
+        "generatedAt": "2026-08-09T10:00:00",
+        "source": "APIGLM.APIGLMMain",
+        "procedureTypeGuid": "84a12160-f59b-4ad7-a683-ea4481ac23e9",
+        "totalConfirmed": 3
+    },
+    "endpoints": [
+        {
+            "nombre": "WS - Obtener Productor",
+            "descripcion": "WSObtenerProductor",
+            "proceso": "APIGLM.Cotizacion.WSObtenerProductor",
+            "endpoint": "glmsuit.comercial.apiglm.cotizacion.awsobtenerproductor"
+        },
+        {
+            "nombre": "WS - Consultar Solicitud",
+            "descripcion": "WSConsultarSolicitud",
+            "proceso": "APIGLM.Emision.WSConsultarSolicitud",
+            "endpoint": "glmsuit.comercial.apiglm.emision.awsconsultarsolicitud"
+        },
+        {
+            "nombre": "WS - Listar Estados",
+            "descripcion": "WSListarEstados",
+            "proceso": "APIGLM.Comun.WSListarEstados",
+            "endpoint": "glmsuit.comercial.apiglm.comun.awslistarestados"
+        }
+    ]
+}

@@ -1,6 +1,6 @@
 # SPEC 13 — Lanzador unificado de exportación, Markdown y PDF bajo demanda
 
-> **Estado:** Aprobado
+> **Estado:** Implementado
 > **Depende de:** SPEC 04, SPEC 11, SPEC 12
 > **Fecha:** 2026-08-12
 > **Objetivo:** Crear `GenerarDocumentosGLM.cmd` como entrada interactiva única para validar dependencias, completar el XPZ mediante exportación selectiva, generar la documentación de servicios en Markdown y convertirla a PDF bajo demanda.

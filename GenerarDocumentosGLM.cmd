@@ -26,11 +26,13 @@ if "%XPZ_CANTIDAD%"=="0" goto menu_sin_xpz
 echo  1. Exportar segun configuracion (APIGLM/KB) y completar el XPZ
 echo  2. Seleccionar XPZ principal
 echo  3. Generar PDF con el XPZ seleccionado
-echo  4. Salir
+echo  4. Ejecutar pruebas locales (test\Run-Tests.ps1)
+echo  5. Salir
 echo.
 
-choice /C 1234 /N /M "Seleccione una opcion [1-4]: "
-if errorlevel 4 goto salir
+choice /C 12345 /N /M "Seleccione una opcion [1-5]: "
+if errorlevel 5 goto salir
+if errorlevel 4 goto test
 if errorlevel 3 goto pdf
 if errorlevel 2 goto seleccion_xpz
 goto exportacion
@@ -73,6 +75,11 @@ if errorlevel 1 (
 call :esperar_retorno
 goto menu
 
+:test
+call :ejecutar_test
+call :esperar_retorno
+goto menu
+
 :operacion_pendiente
 set "ULTIMO_ESTADO=PENDIENTE"
 set "ULTIMO_CODIGO=0"
@@ -82,6 +89,24 @@ echo   %~1
 echo ==============================================================
 echo.
 echo Esta operacion sera integrada en los siguientes pasos.
+exit /b 0
+
+:ejecutar_test
+set "ULTIMO_ESTADO=OPERANDO"
+set "ULTIMO_CODIGO=1"
+echo.
+echo ==============================================================
+echo   EJECUTAR PRUEBAS LOCALES (test\Run-Tests.ps1)
+echo ==============================================================
+echo.
+%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%test\Run-Tests.ps1"
+if errorlevel 1 (
+    set "ULTIMO_ESTADO=ERROR"
+    set "ULTIMO_CODIGO=1"
+    exit /b 1
+)
+set "ULTIMO_ESTADO=COMPLETADO"
+set "ULTIMO_CODIGO=0"
 exit /b 0
 
 :ejecutar_exportacion

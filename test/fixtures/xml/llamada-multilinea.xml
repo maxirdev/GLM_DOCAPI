@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ExportFile>
+  <Objects>
+    <Object fullyQualifiedName="APIGLM.Comun.RegistrarSolicitud" moduleGuid="aaaaaaaa-0000-0000-0000-0000000000a1" guid="aaaaaaaa-0000-0000-0000-000000000021" name="RegistrarSolicitud" type="84a12160-f59b-4ad7-a683-ea4481ac23e9" description="Registrar Solicitud">
+      <Part type="528d1c06-a9c2-420d-bd35-21dca83f12ff">
+        <Source><![CDATA[
+&EntSolicitud.FromJson(
+    &APIGLMRequestIn.Body
+    )
+if &EntSolicitud.Numero > 0
+    &APIGLMResponse = GenerarAPIGLMResponse(HttpCode.OK, '', &EntSolicitud.ToJson())
+else
+    &APIGLMResponse = GenerarAPIGLMResponse(HttpCode.BadRequest, 'Solicitud sin numero', '')
+endif
+]]></Source>
+        <Properties />
+      </Part>
+      <Part type="9b0a32a3-de6d-4be1-a4dd-1b85d3741534">
+        <Source><![CDATA[parm(in:&APIGLMRequestIn, out:&APIGLMResponse);
+]]></Source>
+        <Properties />
+      </Part>
+      <Part type="e4c4ade7-53f0-4a56-bdfd-843735b66f47">
+        <Variable Name="EntSolicitud">
+          <Properties><Property><Name>Name</Name><Value>EntSolicitud</Value></Property><Property><Name>ATTCUSTOMTYPE</Name><Value>sdt:Solicitud, APIGLM.Emision</Value></Property></Properties>
+        </Variable>
+        <Properties />
+      </Part>
+      <Properties><Property><Name>Name</Name><Value>RegistrarSolicitud</Value></Property><Property><Name>IsDefault</Name><Value>False</Value></Property></Properties>
+    </Object>
+    <Object fullyQualifiedName="APIGLM.Emision.Solicitud" moduleGuid="aaaaaaaa-0000-0000-0000-0000000000a2" guid="aaaaaaaa-0000-0000-0000-00000000000d" name="Solicitud" type="447527b5-9210-4523-898b-5dccb17be60a" description="Solicitud">
+      <Part type="5c2aa9da-8fc4-4b6b-ae02-8db4fa48976a">
+        <Level Name="Solicitud">
+          <LevelInfo guid="aaaaaaaa-0000-0000-0000-00000000d101" name="Solicitud" type="a76e9340-bdb9-445d-8f81-cfd4ddd0b0f3" description="Solicitud">
+            <Properties><Property><Name>Name</Name><Value>Solicitud</Value></Property></Properties>
+          </LevelInfo>
+          <Item guid="aaaaaaaa-0000-0000-0000-00000000d102" name="Numero" type="f76e9340-bdb9-445d-8f81-cfd4ddd0b0f3" description="Número de Solicitud">
+            <Properties><Property><Name>Name</Name><Value>Numero</Value></Property><Property><Name>Length</Name><Value>10</Value></Property><Property><Name>AttMaxLen</Name><Value>10</Value></Property></Properties>
+          </Item>
+        </Level>
+        <Properties />
+      </Part>
+      <Properties><Property><Name>Name</Name><Value>Solicitud</Value></Property><Property><Name>IsDefault</Name><Value>False</Value></Property></Properties>
+    </Object>
+  </Objects>
+  <Attributes />
+  <Dependencies />
+  <ObjectsIdentityMapping />
+</ExportFile>

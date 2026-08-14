@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ExportFile>
+  <Objects>
+    <Object fullyQualifiedName="APIGLM.Cotizacion.WSObtenerProductor" moduleGuid="aaaaaaaa-0000-0000-0000-0000000000a0" guid="aaaaaaaa-0000-0000-0000-000000000001" name="WSObtenerProductor" type="84a12160-f59b-4ad7-a683-ea4481ac23e9" description="WS Obtener Productor">
+      <Part type="528d1c06-a9c2-420d-bd35-21dca83f12ff">
+        <Source><![CDATA[
+&APIGLMResponse = ObtenerProductor(&APIGLMRequestIn)
+]]></Source>
+        <Properties />
+      </Part>
+      <Part type="e4c4ade7-53f0-4a56-bdfd-843735b66f47">
+        <Variable Name="APIGLMRequestIn">
+          <Properties><Property><Name>Name</Name><Value>APIGLMRequestIn</Value></Property><Property><Name>ATTCUSTOMTYPE</Name><Value>sdt:APIGLMRequestIn, APIGLM</Value></Property></Properties>
+        </Variable>
+        <Variable Name="APIGLMResponse">
+          <Properties><Property><Name>Name</Name><Value>APIGLMResponse</Value></Property><Property><Name>ATTCUSTOMTYPE</Name><Value>sdt:APIGLMResponse, APIGLM</Value></Property></Properties>
+        </Variable>
+        <Variable Name="APIGLMParameters">
+          <Properties><Property><Name>Name</Name><Value>APIGLMParameters</Value></Property><Property><Name>ATTCUSTOMTYPE</Name><Value>sdt:APIGLMParameters, APIGLM</Value></Property></Properties>
+        </Variable>
+        <Properties />
+      </Part>
+      <Properties><Property><Name>Name</Name><Value>WSObtenerProductor</Value></Property><Property><Name>IsMain</Name><Value>True</Value></Property><Property><Name>CALL_PROTOCOL</Name><Value>HTTP</Value></Property><Property><Name>IsDefault</Name><Value>False</Value></Property></Properties>
+    </Object>
+    <Object fullyQualifiedName="APIGLM.Cotizacion.ObtenerProductor" moduleGuid="aaaaaaaa-0000-0000-0000-0000000000a0" guid="aaaaaaaa-0000-0000-0000-000000000002" name="ObtenerProductor" type="84a12160-f59b-4ad7-a683-ea4481ac23e9" description="Obtener Productor">
+      <Part type="528d1c06-a9c2-420d-bd35-21dca83f12ff">
+        <Source><![CDATA[
+&APIGLMResponse = GenerarAPIGLMResponse(HttpCode.OK, '', &ProductorAPI.ToJson())
+]]></Source>
+        <Properties />
+      </Part>
+      <Part type="9b0a32a3-de6d-4be1-a4dd-1b85d3741534">
+        <Source><![CDATA[parm(in:&APIGLMRequestIn, out:&APIGLMResponse);
+]]></Source>
+        <Properties />
+      </Part>
+      <Part type="e4c4ade7-53f0-4a56-bdfd-843735b66f47">
+        <Variable Name="ProductorAPI">
+          <Properties><Property><Name>Name</Name><Value>ProductorAPI</Value></Property><Property><Name>ATTCUSTOMTYPE</Name><Value>sdt:Productor, APIGLM.Cotizacion</Value></Property></Properties>
+        </Variable>
+        <Properties />
+      </Part>
+      <Properties><Property><Name>Name</Name><Value>ObtenerProductor</Value></Property><Property><Name>IsDefault</Name><Value>False</Value></Property></Properties>
+    </Object>
+  </Objects>
+  <Attributes />
+  <Dependencies />
+  <ObjectsIdentityMapping />
+</ExportFile>
