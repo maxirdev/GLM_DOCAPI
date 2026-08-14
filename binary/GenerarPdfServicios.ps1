@@ -13,6 +13,11 @@ $StartTime = Get-Date
 $RaizRepositorio = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 if (-not $ConfigPath) { $ConfigPath = Join-Path $RaizRepositorio 'configuracion.json' }
 
+$script:spinnerActivo = $false
+$script:spinnerEstado = $null
+$script:spinnerRunspace = $null
+$script:spinnerToken = $null
+
 function Seleccionar-Documentos {
     param([Parameter(Mandatory = $true)][object[]]$Documentos)
 
@@ -55,6 +60,58 @@ function Seleccionar-Documentos {
     }
 
     return @($Documentos)
+}
+
+function Iniciar-Spinner {
+    param(
+        [Parameter(Mandatory = $true)][hashtable]$Estado,
+        [Parameter(Mandatory = $true)][string[]]$Secuencias
+    )
+
+    $runspace = [powershell]::Create()
+    [void]$runspace.AddScript({
+        param($EstadoSpinner, $Marcos)
+        $indice = 0
+        while ($EstadoSpinner.Activo) {
+            if (-not $EstadoSpinner.Pausa) {
+                $marco = $Marcos[$indice % $Marcos.Count]
+                [Console]::Write("`rGenerando PDF... $marco")
+                $indice++
+            }
+            Start-Sleep -Milliseconds 120
+        }
+        [Console]::Write("`r" + (' ' * 30) + "`r")
+    }).AddArgument($Estado).AddArgument($Secuencias)
+    return $runspace
+}
+
+function Detener-Spinner {
+    if (-not $script:spinnerActivo) { return }
+    if ($null -ne $script:spinnerRunspace) {
+        $script:spinnerEstado.Activo = $false
+        try { $script:spinnerRunspace.EndInvoke($script:spinnerToken) } catch { }
+        $script:spinnerRunspace.Dispose()
+    }
+    $script:spinnerRunspace = $null
+    $script:spinnerEstado = $null
+    $script:spinnerToken = $null
+    $script:spinnerActivo = $false
+}
+
+function Write-ResultadoPdf {
+    param(
+        [Parameter(Mandatory = $true)][string]$Texto,
+        [Parameter(Mandatory = $true)][string]$Color
+    )
+
+    if ($script:spinnerActivo -and $null -ne $script:spinnerEstado) {
+        $script:spinnerEstado.Pausa = $true
+        [Console]::Write("`r" + (' ' * 30) + "`r")
+    }
+    Write-Host $Texto -ForegroundColor $Color
+    if ($script:spinnerActivo -and $null -ne $script:spinnerEstado) {
+        $script:spinnerEstado.Pausa = $false
+    }
 }
 
 try {
@@ -102,24 +159,33 @@ try {
     $ok = 0
     $errores = 0
     $duraciones = New-Object System.Collections.Generic.List[double]
+
+    if (-not [Console]::IsOutputRedirected) {
+        $script:spinnerActivo = $true
+        $script:spinnerEstado = @{ Activo = $true; Pausa = $false }
+        $script:spinnerRunspace = Iniciar-Spinner -Estado $script:spinnerEstado -Secuencias @('|', '/', '-', '\')
+        $script:spinnerToken = $script:spinnerRunspace.BeginInvoke()
+    }
+
     foreach ($documento in $seleccionados) {
         $nombre = [System.IO.Path]::GetFileNameWithoutExtension($documento.Name)
         $rutaPdf = Join-Path $directorioServicios ($nombre + '.pdf')
         try {
-            Write-Host ('  [OPERANDO] ' + $documento.Name + ' -> ' + [System.IO.Path]::GetFileName($rutaPdf)) -ForegroundColor Cyan
             $markdown = [System.IO.File]::ReadAllText($documento.FullName)
             $cronometro = [Diagnostics.Stopwatch]::StartNew()
             Convertir-MarkdownAPdf -Markdown $markdown -RutaSalida $rutaPdf -RutaPandoc $rutaPandoc -RutaTypst $rutaTypst | Out-Null
             $cronometro.Stop()
             $segundos = [math]::Round($cronometro.Elapsed.TotalSeconds, 2)
             $duraciones.Add($segundos)
-            Write-Host ('  [OK] ' + $rutaPdf + ' (' + $segundos + ' s)') -ForegroundColor Green
+            Write-ResultadoPdf -Texto ('  [OK] ' + $nombre + '.pdf (' + $segundos + ' s)') -Color 'Green'
             $ok++
         } catch {
-            Write-Host ('  [ERROR] ' + $documento.Name + ': ' + $_.Exception.Message) -ForegroundColor Red
+            Write-ResultadoPdf -Texto ('  [ERROR] ' + $documento.Name + ': ' + $_.Exception.Message) -Color 'Red'
             $errores++
         }
     }
+
+    Detener-Spinner
 
     Write-Host ''
     $promedio = 0
@@ -137,6 +203,7 @@ try {
     Write-Host ('ERROR: ' + $_.Exception.Message) -ForegroundColor Red
     exit 1
 } finally {
+    Detener-Spinner
     Write-Host ''
     Write-Host ('Fin: ' + ((Get-Date) - $StartTime).ToString('mm\:ss')) -ForegroundColor DarkGray
 }

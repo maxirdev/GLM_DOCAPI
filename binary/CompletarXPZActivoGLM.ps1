@@ -96,6 +96,8 @@ function Invocar-Script {
         $lineas.Add($texto)
         if ($_ -is [System.Management.Automation.ErrorRecord]) {
             Write-Host $texto -ForegroundColor Red
+        } elseif ($texto -match '(?i)^\s*error\s*:') {
+            Write-Host $texto -ForegroundColor Red
         } else {
             Write-Host $texto
         }
@@ -122,7 +124,7 @@ function Preguntar-Continuar {
     param([string]$Motivo)
 
     Write-Host ''
-    Write-Host ('Motivo: ' + $Motivo) -ForegroundColor Yellow
+    Write-Host ('Motivo: ' + $Motivo) -ForegroundColor Red
     if ($script:objetosPendientes.Count -gt 0) {
         Write-Host 'Objetos que siguen pendientes de exportacion:' -ForegroundColor Yellow
         foreach ($objeto in $script:objetosPendientes) {
@@ -130,7 +132,7 @@ function Preguntar-Continuar {
         }
     }
     Write-Host ''
-    Write-Host 'Algunos servicios no se documentaran por no contar con toda la informacion.' -ForegroundColor Yellow
+    Write-Host 'ADVERTENCIA: Algunos servicios no se documentaran por no contar con toda la informacion.' -ForegroundColor Yellow
     $respuesta = Read-Host 'Desea continuar de todas formas? [S/N]'
     if ($respuesta -match '^(?i:s|si|sí|y|yes)$') {
         Write-Host 'Continuando con la documentacion disponible.' -ForegroundColor Green

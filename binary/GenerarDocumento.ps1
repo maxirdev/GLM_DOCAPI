@@ -121,7 +121,7 @@ try {
         Write-Host ("  Cliente: " + $configuracion.Cliente) -ForegroundColor DarkGray
     }
     if (-not (Test-Path -LiteralPath $RutaInventario)) {
-        throw ("No se encontro el inventario en: " + $RutaInventario + ". Ejecute primero GenerarDocumentacion.cmd para regenerarlo desde el XPZ.")
+        throw ("No se encontro el inventario en: " + $RutaInventario + ". Regenerelo desde la opcion 3 de GenerarDocumentosGLM.cmd o invocando GenerarListaEndpoints.ps1.")
     }
     $inventario = Get-Content -LiteralPath $RutaInventario -Raw | ConvertFrom-Json
     $endpoints = @($inventario.endpoints)

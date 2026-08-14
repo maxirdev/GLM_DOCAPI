@@ -17,20 +17,15 @@ call :preflight
 
 :menu
 cls
+color
 call :mostrar_encabezado
 echo.
 if "%CONFIGURACION_INVALIDA%"=="1" goto menu_solo_salida
 call :obtener_xpz_principales
 if "%XPZ_CANTIDAD%"=="0" goto menu_sin_xpz
 
-echo  1. Exportar segun configuracion (APIGLM/KB) y completar el XPZ
-echo  2. Seleccionar XPZ principal
-echo  3. Generar PDF con el XPZ seleccionado
-echo  4. Ejecutar pruebas locales (test\Run-Tests.ps1)
-echo  5. Salir
-echo.
-
-choice /C 12345 /N /M "Seleccione una opcion [1-5]: "
+%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Write-Host '  1. Exportar segun configuracion (APIGLM/KB) y completar el XPZ' -ForegroundColor White; Write-Host '  2. Seleccionar XPZ principal' -ForegroundColor White; Write-Host '  3. Generar PDF con el XPZ seleccionado' -ForegroundColor White; Write-Host '  4. Ejecutar pruebas locales (test\Run-Tests.ps1)' -ForegroundColor White; Write-Host '  5. Salir' -ForegroundColor White; Write-Host ''; Write-Host -NoNewline 'Seleccione una opcion [1-5]: ' -ForegroundColor White"
+choice /C 12345 /N
 if errorlevel 5 goto salir
 if errorlevel 4 goto test
 if errorlevel 3 goto pdf
@@ -38,17 +33,14 @@ if errorlevel 2 goto seleccion_xpz
 goto exportacion
 
 :menu_sin_xpz
-echo  1. Exportar APIGLMMain
-echo  2. Salir
-echo.
-choice /C 12 /N /M "Seleccione una opcion [1-2]: "
+%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Write-Host '  1. Exportar APIGLMMain' -ForegroundColor White; Write-Host '  2. Salir' -ForegroundColor White; Write-Host ''; Write-Host -NoNewline 'Seleccione una opcion [1-2]: ' -ForegroundColor White"
+choice /C 12 /N
 if errorlevel 2 goto salir
 goto exportacion
 
 :menu_solo_salida
-echo  1. Salir
-echo.
-choice /C 1 /N /M "Presione 1 para salir: "
+%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Write-Host '  1. Salir' -ForegroundColor White; Write-Host ''; Write-Host -NoNewline 'Presione 1 para salir: ' -ForegroundColor White"
+choice /C 1 /N
 goto salir
 
 :exportacion
@@ -242,8 +234,8 @@ for %%F in ("!XPZ_ELEGIDO!") do (
     set "XPZ_ACTIVO_ESTABLECIDO=1"
     echo.
     echo XPZ activo de la sesion: %%~nxF
-    echo ADVERTENCIA: El packagename de configuracion.json no se modifica al cambiar de XPZ.
-    echo El endpoint publicado podria no corresponder al XPZ seleccionado.
+    %SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Write-Host 'ADVERTENCIA: El packagename de configuracion.json no se modifica al cambiar de XPZ.' -ForegroundColor Yellow"
+    %SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Write-Host 'El endpoint publicado podria no corresponder al XPZ seleccionado.' -ForegroundColor Yellow"
     exit /b 0
 )
 
@@ -331,12 +323,7 @@ if not "%CONFIGURACION_INVALIDA%"=="1" if not defined XPZ_ACTIVO_ESTABLECIDO cal
 exit /b 0
 
 :mostrar_encabezado
-echo ==============================================================
-echo   GESTION DE DOCUMENTOS APIGLM
-echo   %DATE% %TIME%
-echo ==============================================================
-echo Estado de sesion: %ULTIMO_ESTADO%
-echo XPZ activo: %XPZ_ACTIVO_NOMBRE%
+%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Write-Host '==============================================================' -ForegroundColor Cyan; Write-Host '  GESTION DE DOCUMENTOS APIGLM' -ForegroundColor Cyan; Write-Host '  %DATE% %TIME%' -ForegroundColor Cyan; Write-Host '==============================================================' -ForegroundColor Cyan; Write-Host 'XPZ activo: %XPZ_ACTIVO_NOMBRE%' -ForegroundColor Green"
 exit /b 0
 
 :salir

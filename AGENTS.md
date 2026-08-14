@@ -15,8 +15,8 @@ Ambas carpetas están en `.gitignore`: son referencias locales, no parte del pro
 
 En la raíz del repo:
 
-- `binary/` — scripts del generador: `GenerarDocumento.ps1` (orquestador), `AnalizarServicio.ps1`, `RedactarDocumento.ps1`, `EscribirSalidas.ps1`, `CargarConfiguracion.ps1`, `DiagnosticoIA.ps1` y `ObtenerDocumento.cmd`.
-- `exportarXPZ.cmd`, `binary/ExportarXPZProgreso.ps1` y `binary/ExportarXPZ.msbuild` — utilidad opcional para exportar `Module:APIGLM` desde la KB local y generar un XPZ fechado.
+- `binary/` — scripts del generador: `GenerarDocumento.ps1` (orquestador), `AnalizarServicio.ps1`, `RedactarDocumento.ps1`, `EscribirSalidas.ps1`, `CargarConfiguracion.ps1`, `DiagnosticoIA.ps1`.
+- `binary/ExportarXPZProgreso.ps1` y `binary/ExportarXPZ.msbuild` — ejecutan la exportación de `Module:APIGLM` desde la KB local; los invoca `EjecutarExportacionGLM.ps1` (opción 1 del lanzador).
 - `binary/CompletarXPZActivoGLM.ps1` — completa el XPZ activo antes de documentar: valida con `ValidarXPZ.ps1` y exporta selectivos cuando faltan componentes (hasta cinco ciclos), preguntando si continuar cuando falla o se detiene con pendientes. Lo invoca la opción 3 (Generar PDF con el XPZ seleccionado) de `GenerarDocumentosGLM.cmd`.
 - `Logs/*-diagnostico-ia.json` — diagnóstico estructurado de excepciones con fase, ruta relativa, sentencia y stack trace. Se genera solo ante errores; revisar primero el más reciente al investigar fallos del pipeline.
 
@@ -28,9 +28,9 @@ En `documentacion/` (commiteada):
 - `Endpoints/assets/analisisEndpoint.md` — cómo reproducir el inventario de endpoints desde `APIGLM.APIGLMMain`.
 - `Endpoints/assets/endpoints.md` — inventario esperado de endpoints (aún no existe en el repo).
 - `Endpoints/assets/` — salidas del inventario (`endpoints.json`, `endpoints.md`, ambas ignoradas).
-- `Endpoints/binary/` — scripts: `GenerarListaEndpoints.ps1` (inventario), `GenerarVistaHTML.ps1` (visor) y `ObtenerEndpoints.cmd`.
+- `Endpoints/binary/` — scripts: `GenerarListaEndpoints.ps1` (inventario) y `GenerarVistaHTML.ps1` (visor).
 - `Endpoints/web/` — visor estático: `APIServicios.html` (generado e ignorado), `style.css`, `app.js`.
-- `GenerarDocumentacion.cmd` (raíz del repo) — orquestador que regenera inventario y visor.
+- `GenerarDocumentosGLM.cmd` (raíz del repo) — entrada principal: valida la configuración, permite elegir el XPZ, exporta y completa el XPZ, y genera los PDF con el XPZ seleccionado.
 - `configuracion.json` (raíz del repo) — configuración operativa: ruta del XPZ, `packagename` constante del endpoint publicado por XPZ, `serviciosIgnorados` (lista de FQN referenciados que no se documentan) y rutas de GeneXus, Knowledge Base, MSBuild y Edge.
 - `servicios/` — documentos Markdown por servicio (p. ej. `wsobtenertotalessolicitud.md`). La conversión a PDF se ejecuta bajo demanda desde `binary/GenerarPdfServicios.ps1` mediante Pandoc + Typst portable; la plantilla normativa continúa en `templateDoc.md`.
 
