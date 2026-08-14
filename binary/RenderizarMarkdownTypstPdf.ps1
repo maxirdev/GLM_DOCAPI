@@ -113,8 +113,8 @@ function Agregar-PieDePaginaTypst {
     $pieDePagina = @'
 #let ws-nombre = "{NOMBRE}"
 #set page(footer: context {
-  let total-pages = counter(page).final()
-  let current-page = counter(page).get()
+  let total-pages = counter(page).final().first()
+  let current-page = counter(page).get().first()
   grid(
     columns: (1fr, auto),
     [

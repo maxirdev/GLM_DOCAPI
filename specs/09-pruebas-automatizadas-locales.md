@@ -1,6 +1,6 @@
 # SPEC 09 — Pruebas locales del pipeline, analizador y visor
 
-> **Estado:** Aprobado
+> **Estado:** Implementado
 > **Depende de:** SPEC 05, SPEC 06, SPEC 07
 > **Fecha:** 2026-08-09
 > **Nota (actualización):** 2026-08-13 — la spec cubre los cambios del pipeline desde su versión original: carga multi-XPZ (`CargarMultiXPZ.ps1`) con descubrimiento de complementos y cascada, el estado `OMITIDO` por `serviciosIgnorados`, la nueva ruta del visor (`documentacion/Endpoints/web/`) y el esquema ampliado de `configuracion.json` (`cliente`, `exportacion`, `herramientas`).

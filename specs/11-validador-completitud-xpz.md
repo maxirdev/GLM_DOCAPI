@@ -1,6 +1,6 @@
 # SPEC 11 — Validador de completitud multi-XPZ
 
-> **Estado:** Aprobado
+> **Estado:** Implementado
 > **Depende de:** SPEC 03, SPEC 06
 > **Fecha:** 2026-08-11
 > **Nota:** Actualizado 2026-08-11 — el reporte pasó de `completos`/`incompletos`/`excluidos` a la receta de exportación (`solicitudes` + `objectList`) con nombres reales de objetos.

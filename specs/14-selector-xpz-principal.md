@@ -1,6 +1,6 @@
 # SPEC 14 — Selector de XPZ principal en el lanzador
 
-> **Estado:** Aprobado
+> **Estado:** Implementado
 > **Depende de:** SPEC 13
 > **Fecha:** 2026-08-12
 > **Objetivo:** Mostrar al inicio de pantalla el XPZ activo de la sesión y ofrecer una opción de menú para seleccionar cuál de los XPZ principales de la carpeta `xpz/` se usará para operar, listados del más viejo al más nuevo con nombre, fecha `DD-MM-YYYY HH:MM` y un tag que indique el último.

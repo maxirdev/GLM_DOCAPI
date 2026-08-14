@@ -1,6 +1,6 @@
 # SPEC 12 — Exportación selectiva de XPZ complementarios
 
-> **Estado:** Aprobado
+> **Estado:** Implementado
 > **Depende de:** SPEC 11
 > **Fecha:** 2026-08-12
 > **Objetivo:** Crear un procedimiento que lea el último reporte de validación, exporte sus objetos faltantes con referencias mínimas y genere complementos XPZ numerados que el validador pueda consumir junto al XPZ principal.

@@ -922,7 +922,12 @@ function Resolver-EntradaGet {
     Resuelve la entrada GET por posiciones de QueryParams (analisisXPZ.md seccion 2).
     .DESCRIPTION
     Localiza el parser posicional ObtenerParametrosQueryParams(&APIGLMRequestIn.QueryParams)
-    y documenta las variables asignadas desde cada posicion, conservando orden y posiciones.
+    y documenta las variables que consumen cada posicion, conservando orden y posiciones.
+    Reconoce las posiciones en asignacion directa (&v = &col.Item(N)), anidadas en
+    llamadas de conversion (&v = Fn(&col.Item(N))) y en forma de metodo sobre la
+    variable (&v.Metodo(&col.Item(N))). Ignora las posiciones que aparecen en
+    comentarios y secciones Java (Source limpio) y descarta a la propia coleccion
+    como campo.
     #>
     [CmdletBinding()]
     param(
@@ -930,16 +935,18 @@ function Resolver-EntradaGet {
     )
 
     $entrada = New-Object System.Collections.Generic.List[object]
+    $sourceLimpio = Obtener-SourceLimpio -Source $Source
     $patronParser = [regex]::new('&([A-Za-z_][A-Za-z0-9_]*)\s*=\s*[A-Za-z_][A-Za-z0-9_.]*\(\s*&APIGLMRequestIn\.QueryParams')
-    $coincidenciaParser = $patronParser.Match($Source)
+    $coincidenciaParser = $patronParser.Match($sourceLimpio)
     if (-not $coincidenciaParser.Success) {
         return $entrada.ToArray()
     }
     $variableColeccion = $coincidenciaParser.Groups[1].Value
-    $patronPosicion = [regex]::new('&([A-Za-z_][A-Za-z0-9_]*)\s*=\s*&' + [regex]::Escape($variableColeccion) + '\.Item\(\s*(\d+)\s*\)')
-    foreach ($coincidencia in $patronPosicion.Matches($Source)) {
+    $patronPosicion = [regex]::new('&([A-Za-z_][A-Za-z0-9_]*)(?:\.[A-Za-z_][A-Za-z0-9_]*)*\s*\(?[^&\r\n]*?&' + [regex]::Escape($variableColeccion) + '\.Item\(\s*(\d+)\s*\)')
+    foreach ($coincidencia in $patronPosicion.Matches($sourceLimpio)) {
         $posicion = [int]$coincidencia.Groups[2].Value
         $variable = $coincidencia.Groups[1].Value
+        if ($variable -eq $variableColeccion) { continue }
         $existe = $false
         foreach ($item in $entrada) {
             if ($item.Posicion -eq $posicion) { $existe = $true; break }

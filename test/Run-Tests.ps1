@@ -384,6 +384,67 @@ function Ejecutar-CasosPosicionesGet {
         @($posicionesAnidadas | Where-Object { $_.Posicion -eq 1 -and $_.Campo -eq 'EmpCod' }).Count -eq 1 -and
         @($posicionesAnidadas | Where-Object { $_.Posicion -eq 3 -and $_.Campo -eq 'ProCod' }).Count -eq 1
     ) -DetalleExito 'Una posicion con Item(N) anidado en una conversion tambien se documenta.' -DetalleFallo 'La posicion con Item(N) anidado no se detecto.'
+
+    $xmlMetodo = Cargar-XmlFixture -Nombre 'programa-get-metodo.xml'
+    $indiceMetodo = Construir-Indices -Xml $xmlMetodo
+    $mainMetodo = Obtener-Objeto -Xml $xmlMetodo -NombreCompleto 'APIGLM.Comun.ListarCobranzas' -Indice $indiceMetodo
+    $sourceMetodo = Obtener-Source -ProgramaPrincipal $mainMetodo
+    $posicionesMetodo = @(Resolver-EntradaGet -Source $sourceMetodo)
+    Test-Asercion -Id 'get.posicionesMetodo' -Condicion (
+        @($posicionesMetodo).Count -eq 5 -and
+        @($posicionesMetodo | Where-Object { $_.Posicion -eq 3 -and $_.Campo -eq 'FechaDesde' }).Count -eq 1 -and
+        @($posicionesMetodo | Where-Object { $_.Posicion -eq 4 -and $_.Campo -eq 'FechaHasta' }).Count -eq 1 -and
+        @($posicionesMetodo | Where-Object { $_.Posicion -eq 1 -and $_.Campo -eq 'Usuario' }).Count -eq 1 -and
+        @($posicionesMetodo | Where-Object { $_.Posicion -eq 2 -and $_.Campo -eq 'Productor' }).Count -eq 1 -and
+        @($posicionesMetodo | Where-Object { $_.Posicion -eq 5 -and $_.Campo -eq 'Estado' }).Count -eq 1
+    ) -DetalleExito 'Las posiciones consumidas con Item(N) en forma metodo se documentan con su campo.' -DetalleFallo 'Una posicion en forma metodo no se detecto.'
+
+    $tiposMetodo = @(Resolver-EntradaGetTipos -Xml $xmlMetodo -ProgramaPrincipal $mainMetodo -Source $sourceMetodo -Posiciones $posicionesMetodo -Indice $indiceMetodo)
+    $fechaDesdeTipo = @($tiposMetodo | Where-Object { $_.Campo -eq 'FechaDesde' })
+    Test-Asercion -Id 'get.posicionesMetodoTipos' -Condicion (
+        $fechaDesdeTipo.Count -eq 1 -and $fechaDesdeTipo[0].Tipo -eq 'Date (YYYY-MM-DD)'
+    ) -DetalleExito 'El campo consumido en forma metodo conserva su tipo canonico desde la declaracion.' -DetalleFallo 'El tipo del campo en forma metodo no se resolvio.'
+
+    $xmlSalto = Cargar-XmlFixture -Nombre 'programa-get-salto-inicial.xml'
+    $indiceSalto = Construir-Indices -Xml $xmlSalto
+    $mainSalto = Obtener-Objeto -Xml $xmlSalto -NombreCompleto 'APIGLM.Cotizacion.ValidarInicioVigencia' -Indice $indiceSalto
+    $sourceSalto = Obtener-Source -ProgramaPrincipal $mainSalto
+    $posicionesSalto = @(Resolver-EntradaGet -Source $sourceSalto)
+    Test-Asercion -Id 'get.posicionesSinPosicionInicial' -Condicion (
+        @($posicionesSalto).Count -eq 4 -and
+        @($posicionesSalto | Where-Object { $_.Posicion -eq 1 }).Count -eq 0 -and
+        @($posicionesSalto | Where-Object { $_.Posicion -eq 2 -and $_.Campo -eq 'UsuCod' }).Count -eq 1 -and
+        @($posicionesSalto | Where-Object { $_.Posicion -eq 3 -and $_.Campo -eq 'RamCod' }).Count -eq 1 -and
+        @($posicionesSalto | Where-Object { $_.Posicion -eq 4 -and $_.Campo -eq 'ProCod' }).Count -eq 1 -and
+        @($posicionesSalto | Where-Object { $_.Posicion -eq 5 -and $_.Campo -eq 'VigenciaDesde' }).Count -eq 1
+    ) -DetalleExito 'Un GET cuyas posiciones no arrancan en 1 documenta exactamente las presentes, sin inventar la 1.' -DetalleFallo 'Se invento la posicion 1 o faltan posiciones presentes.'
+
+    $xmlComentario = Cargar-XmlFixture -Nombre 'programa-get-comentario.xml'
+    $indiceComentario = Construir-Indices -Xml $xmlComentario
+
+    $mainDatosProductor = Obtener-Objeto -Xml $xmlComentario -NombreCompleto 'APIGLM.Cotizacion.ObtenerDatosProductor' -Indice $indiceComentario
+    $sourceDatosProductor = Obtener-Source -ProgramaPrincipal $mainDatosProductor
+    $posicionesDatosProductor = @(Resolver-EntradaGet -Source $sourceDatosProductor)
+    Test-Asercion -Id 'get.posicionesPredefinidoOmitido' -Condicion (
+        @($posicionesDatosProductor).Count -eq 1 -and
+        @($posicionesDatosProductor | Where-Object { $_.Posicion -eq 1 -and $_.Campo -eq 'ProCod' }).Count -eq 1 -and
+        @($posicionesDatosProductor | Where-Object { $_.Campo -eq 'APIGLMRequestIn' }).Count -eq 0 -and
+        @($posicionesDatosProductor | Where-Object { $_.Campo -eq 'EmpCod' }).Count -eq 0
+    ) -DetalleExito 'El primer parametro predefinido (&APIGLMRequestIn.EmpCod, sin Item) no se documenta y se conserva la posicion real del parametro activo.' -DetalleFallo 'Se documento el parametro predefinido o se perdio la posicion activa.'
+
+    $mainProductores = Obtener-Objeto -Xml $xmlComentario -NombreCompleto 'APIGLM.Cotizacion.ListarProductoresDeUsuario' -Indice $indiceComentario
+    $sourceProductores = Obtener-Source -ProgramaPrincipal $mainProductores
+    $posicionesProductores = @(Resolver-EntradaGet -Source $sourceProductores)
+    Test-Asercion -Id 'get.posicionesComentarioIgnorado' -Condicion (
+        @($posicionesProductores).Count -eq 1 -and
+        @($posicionesProductores | Where-Object { $_.Posicion -eq 2 -and $_.Campo -eq 'UsuCod' }).Count -eq 1 -and
+        @($posicionesProductores | Where-Object { $_.Posicion -eq 1 }).Count -eq 0
+    ) -DetalleExito 'Una posicion Item(N) dentro de un comentario no se documenta; se muestra desde la posicion 2 con su posicion real.' -DetalleFallo 'Una posicion comentada se documento o falta la posicion activa.'
+
+    $mainEmpresaSolo = Obtener-Objeto -Xml $xmlComentario -NombreCompleto 'APIGLM.Cotizacion.ObtenerEmpresaSolo' -Indice $indiceComentario
+    $sourceEmpresaSolo = Obtener-Source -ProgramaPrincipal $mainEmpresaSolo
+    $posicionesEmpresaSolo = @(Resolver-EntradaGet -Source $sourceEmpresaSolo)
+    Test-Asercion -Id 'get.posicionesSoloComentadas' -Condicion (@($posicionesEmpresaSolo).Count -eq 0) -DetalleExito 'Si el unico Item(N) esta comentado, no se documenta ninguna posicion.' -DetalleFallo 'Se documento una posicion que solo existia en un comentario.'
 }
 
 function Ejecutar-CasosMultiXpz {
