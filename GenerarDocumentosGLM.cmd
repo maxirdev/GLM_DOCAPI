@@ -132,6 +132,20 @@ if errorlevel 1 (
     exit /b 1
 )
 
+echo.
+echo Validando la completitud del XPZ y completando los elementos necesarios...
+%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%binary\CompletarXPZActivoGLM.ps1" -Repositorio "%REPOSITORY_PATH%" -XpzActivo "%XPZ_ACTIVO%"
+if errorlevel 3 (
+    set "ULTIMO_ESTADO=ABORTADO"
+    set "ULTIMO_CODIGO=0"
+    exit /b 0
+)
+if errorlevel 1 (
+    set "ULTIMO_ESTADO=ERROR"
+    set "ULTIMO_CODIGO=1"
+    exit /b 1
+)
+
 %SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%binary\GenerarDocumento.ps1" -ConfigPath "%SCRIPT_DIR%configuracion.json" -XpzPath "%XPZ_ACTIVO%" -Todos
 set "GENERACION_MD_CODIGO=%ERRORLEVEL%"
 

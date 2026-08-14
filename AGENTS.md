@@ -17,6 +17,7 @@ En la raíz del repo:
 
 - `binary/` — scripts del generador: `GenerarDocumento.ps1` (orquestador), `AnalizarServicio.ps1`, `RedactarDocumento.ps1`, `EscribirSalidas.ps1`, `CargarConfiguracion.ps1`, `DiagnosticoIA.ps1` y `ObtenerDocumento.cmd`.
 - `exportarXPZ.cmd`, `binary/ExportarXPZProgreso.ps1` y `binary/ExportarXPZ.msbuild` — utilidad opcional para exportar `Module:APIGLM` desde la KB local y generar un XPZ fechado.
+- `binary/CompletarXPZActivoGLM.ps1` — completa el XPZ activo antes de documentar: valida con `ValidarXPZ.ps1` y exporta selectivos cuando faltan componentes (hasta cinco ciclos), preguntando si continuar cuando falla o se detiene con pendientes. Lo invoca la opción 3 (Generar PDF con el XPZ seleccionado) de `GenerarDocumentosGLM.cmd`.
 - `Logs/*-diagnostico-ia.json` — diagnóstico estructurado de excepciones con fase, ruta relativa, sentencia y stack trace. Se genera solo ante errores; revisar primero el más reciente al investigar fallos del pipeline.
 
 En `documentacion/` (commiteada):
