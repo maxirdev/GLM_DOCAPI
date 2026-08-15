@@ -23,6 +23,27 @@ function Test-PdfValido {
     }
 }
 
+function Reemplazar-PdfValidado {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$RutaTemporal,
+        [Parameter(Mandatory = $true)][string]$RutaVigente
+    )
+
+    if (Test-Path -LiteralPath $RutaVigente -PathType Leaf) {
+        $rutaRespaldo = $RutaVigente + '.' + [Guid]::NewGuid().ToString('N') + '.bak'
+        try {
+            [System.IO.File]::Replace($RutaTemporal, $RutaVigente, $rutaRespaldo)
+        } finally {
+            if (Test-Path -LiteralPath $rutaRespaldo -PathType Leaf) {
+                Remove-Item -LiteralPath $rutaRespaldo -Force -ErrorAction SilentlyContinue
+            }
+        }
+    } else {
+        Move-Item -LiteralPath $RutaTemporal -Destination $RutaVigente
+    }
+}
+
 function Resaltar-MetodoHttpTypst {
     param([Parameter(Mandatory = $true)][string]$Contenido)
 
@@ -194,9 +215,8 @@ function Convertir-MarkdownAPdf {
     if (-not (Test-Path -LiteralPath $directorioSalida -PathType Container)) {
         New-Item -ItemType Directory -Path $directorioSalida -Force | Out-Null
     }
-    if (Test-Path -LiteralPath $RutaSalida -PathType Leaf) {
-        Remove-Item -LiteralPath $RutaSalida -Force
-    }
+    $nombrePdfTemporal = '.' + [System.IO.Path]::GetFileNameWithoutExtension($RutaSalida) + '.' + [Guid]::NewGuid().ToString('N') + '.tmp.pdf'
+    $rutaPdfTemporal = Join-Path $directorioSalida $nombrePdfTemporal
 
     $directorioTemporal = Join-Path ([System.IO.Path]::GetTempPath()) ('APIGLM-PDF-' + [Guid]::NewGuid().ToString('N'))
     $rutaMarkdown = Join-Path $directorioTemporal 'documento.md'
@@ -245,14 +265,18 @@ function Convertir-MarkdownAPdf {
             '--font-path',
             $rutaFuentes,
             $rutaFuenteTypst,
-            $RutaSalida
+            $rutaPdfTemporal
         ))
 
-        if (-not (Test-PdfValido -Ruta $RutaSalida)) {
+        if (-not (Test-PdfValido -Ruta $rutaPdfTemporal)) {
             throw 'Typst termino correctamente, pero no genero un PDF valido.'
         }
+        Reemplazar-PdfValidado -RutaTemporal $rutaPdfTemporal -RutaVigente $RutaSalida
         return $RutaSalida
     } finally {
+        if (Test-Path -LiteralPath $rutaPdfTemporal -PathType Leaf) {
+            Remove-Item -LiteralPath $rutaPdfTemporal -Force -ErrorAction SilentlyContinue
+        }
         if (Test-Path -LiteralPath $directorioTemporal -PathType Container) {
             Remove-Item -LiteralPath $directorioTemporal -Recurse -Force -ErrorAction SilentlyContinue
         }

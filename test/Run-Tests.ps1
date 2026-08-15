@@ -153,6 +153,7 @@ function Cargar-ModulosProduccion {
         (Join-Path $DirectorioBinario 'CargarMultiXPZ.ps1')
         (Join-Path $DirectorioBinario 'RedactarDocumento.ps1')
         (Join-Path $DirectorioBinario 'EscribirSalidas.ps1')
+        (Join-Path $DirectorioBinario 'ControlVersiones.ps1')
     )
 }
 
@@ -1275,6 +1276,47 @@ function Resolver-CodigoSalida {
     return 0
 }
 
+function Ejecutar-CasosFinalesLineaArchivosCmd {
+    <#
+    .SYNOPSIS
+    Verifica la convencion CRLF de los archivos CMD versionados.
+    .DESCRIPTION
+    Comprueba que .gitattributes declare la convencion y que cada archivo CMD
+    contenga exclusivamente pares CRLF, sin saltos LF o CR aislados.
+    #>
+    [CmdletBinding()]
+    param()
+
+    $rutaAtributos = Join-Path $RaizRepositorio '.gitattributes'
+    $atributosValidos = $false
+    if (Test-Path -LiteralPath $rutaAtributos -PathType Leaf) {
+        $contenidoAtributos = [System.IO.File]::ReadAllText($rutaAtributos)
+        $atributosValidos = $contenidoAtributos -match '(?m)^\*\.cmd\s+text\s+eol=crlf\s*$'
+    }
+    Test-Asercion -Id 'finalesLinea.reglaCmd' -Condicion $atributosValidos -DetalleExito 'La convencion CRLF de los archivos CMD esta declarada en .gitattributes.' -DetalleFallo 'Falta la declaracion *.cmd text eol=crlf en .gitattributes.'
+
+    $archivosCmd = @(Get-ChildItem -LiteralPath $RaizRepositorio -Filter '*.cmd' -File -Recurse | Where-Object { $_.FullName -notlike ((Join-Path $RaizRepositorio '.git') + '\*') })
+    $archivosValidos = $archivosCmd.Count -gt 0
+    $archivoInvalido = ''
+    foreach ($archivoCmd in $archivosCmd) {
+        $bytes = [System.IO.File]::ReadAllBytes($archivoCmd.FullName)
+        for ($indiceByte = 0; $indiceByte -lt $bytes.Length; $indiceByte++) {
+            if ($bytes[$indiceByte] -eq 10 -and ($indiceByte -eq 0 -or $bytes[$indiceByte - 1] -ne 13)) {
+                $archivosValidos = $false
+                $archivoInvalido = $archivoCmd.FullName
+                break
+            }
+            if ($bytes[$indiceByte] -eq 13 -and ($indiceByte + 1 -ge $bytes.Length -or $bytes[$indiceByte + 1] -ne 10)) {
+                $archivosValidos = $false
+                $archivoInvalido = $archivoCmd.FullName
+                break
+            }
+        }
+        if (-not $archivosValidos) { break }
+    }
+    Test-Asercion -Id 'finalesLinea.archivosCmd' -Condicion $archivosValidos -DetalleExito 'Todos los archivos CMD usan exclusivamente finales de linea CRLF.' -DetalleFallo ('El archivo CMD no usa exclusivamente CRLF: ' + $archivoInvalido)
+}
+
 function Cargar-XmlFixture {
     <#
     .SYNOPSIS
@@ -1441,8 +1483,49 @@ function Ejecutar-PipelinePrueba {
     }
 }
 
+function Ejecutar-CasosIntegridadTransaccional {
+    [CmdletBinding()]
+    param()
+
+    $rutaFixture = Join-Path $DirectorioFixturesJson 'control-versiones-esquema2.json'
+    $controlFixture = Get-Content -LiteralPath $rutaFixture -Raw | ConvertFrom-Json
+    Test-Asercion -Id 'integridad.controlEsquema2' -Condicion (
+        (Validar-ControlVersiones -ControlVersiones $controlFixture) -and
+        $controlFixture.schemaVersion -eq 2 -and
+        $controlFixture.services.'APIGLM.Fixture.WSValido'.pdfHash
+    ) -DetalleExito 'El fixture de control cumple el esquema 2 con hashes Markdown y PDF.' -DetalleFallo 'El fixture de control no cumple el esquema 2.'
+
+    $controlEsquema1 = $controlFixture | ConvertTo-Json -Depth 10 | ConvertFrom-Json
+    $controlEsquema1.schemaVersion = 1
+    Test-AsercionLanzaError -Id 'integridad.rechazaEsquema1' -Bloque { Validar-ControlVersiones -ControlVersiones $controlEsquema1 } -PatronMensaje 'schemaVersion no soportado' -DetalleExito 'Un control de esquema 1 se rechaza sin migracion automatica.'
+
+    $controlVersionInvalida = $controlFixture | ConvertTo-Json -Depth 10 | ConvertFrom-Json
+    $controlVersionInvalida.services.'APIGLM.Fixture.WSValido'.version = '2.1'
+    Test-AsercionLanzaError -Id 'integridad.rechazaVersionIncoherente' -Bloque { Validar-ControlVersiones -ControlVersiones $controlVersionInvalida } -PatronMensaje 'version incoherente' -DetalleExito 'El control rechaza una version que no coincide con revision.'
+
+    $rutaControlPrueba = Join-Path $DirectorioTmp 'control-versiones-esquema2.json'
+    Escribir-ControlVersionesAtomico -ControlVersiones $controlFixture -RutaControl $rutaControlPrueba | Out-Null
+    $controlLeido = Leer-ControlVersiones -RutaControl $rutaControlPrueba
+    Test-Asercion -Id 'integridad.persistenciaEsquema2' -Condicion (
+        $controlLeido.schemaVersion -eq 2 -and
+        $controlLeido.services.'APIGLM.Fixture.WSValido'.documentHash -eq 'fixture-document-hash' -and
+        $controlLeido.services.'APIGLM.Fixture.WSValido'.pdfHash -eq 'fixture-pdf-hash' -and
+        -not (Get-ChildItem -LiteralPath $DirectorioTmp -Filter 'control-versiones-esquema2.json.*.tmp' -File -ErrorAction SilentlyContinue)
+    ) -DetalleExito 'El control esquema 2 se escribe y relee atomically sin temporales residuales.' -DetalleFallo 'La persistencia del control esquema 2 no es valida.'
+
+    $rutaActualizador = Join-Path $DirectorioBinario 'ActualizarServicios.ps1'
+    $contenidoActualizador = Get-Content -LiteralPath $rutaActualizador -Raw
+    Test-Asercion -Id 'integridad.promocionConjunta' -Condicion (
+        $contenidoActualizador -match 'Promover-ServicioArtefactos' -and
+        $contenidoActualizador -match 'estadoMarkdown' -and
+        $contenidoActualizador -match 'estadoPdf' -and
+        $contenidoActualizador -match 'FileShare\]::None'
+    ) -DetalleExito 'El actualizador contiene promocion conjunta, review final y lock exclusivo.' -DetalleFallo 'El actualizador no contiene todos los contratos transaccionales esperados.'
+}
+
 try {
     New-DirectorioSiNoExiste -Directorio $DirectorioTmp | Out-Null
+    Ejecutar-CasosFinalesLineaArchivosCmd
     foreach ($rutaModulo in Cargar-ModulosProduccion) {
         . $rutaModulo
     }
@@ -1454,6 +1537,7 @@ try {
 
     # Los grupos de casos se incorporan en los pasos 5 a 10 del plan.
     Ejecutar-CasosConfiguracion
+    Ejecutar-CasosIntegridadTransaccional
     Ejecutar-CasosPipeline
     Ejecutar-CasosPosicionesGet
     Ejecutar-CasosMultiXpz

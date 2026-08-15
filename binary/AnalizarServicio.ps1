@@ -6,6 +6,129 @@ $ErrorActionPreference = 'Stop'
 
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 
+function Obtener-ClaveObjetoTraza {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][System.Xml.XmlNode]$Nodo
+    )
+
+    $tipo = 'Object'
+    if ($Nodo.LocalName -eq 'Attribute') {
+        $tipo = 'Attribute'
+    } else {
+        switch ($Nodo.GetAttribute('type')) {
+            '84a12160-f59b-4ad7-a683-ea4481ac23e9' { $tipo = 'Procedure' }
+            '447527b5-9210-4523-898b-5dccb17be60a' { $tipo = 'SDT' }
+            '00972a17-9975-449e-aab1-d26165d51393' { $tipo = 'Domain' }
+        }
+    }
+
+    $identificador = [string]$Nodo.GetAttribute('guid')
+    if (-not $identificador) { $identificador = [string]$Nodo.GetAttribute('fullyQualifiedName') }
+    if (-not $identificador) { return $null }
+    return $tipo + ':' + $identificador
+}
+
+function Inicializar-TrazaEvidencia {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$Servicio
+    )
+
+    return [pscustomobject]@{
+        Servicio = $Servicio
+        NodosPorClave = @{}
+        AristasResolucion = New-Object System.Collections.Generic.List[object]
+    }
+}
+
+function Registrar-NodoTrazaEvidencia {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)]$Indice,
+        [Parameter(Mandatory = $true)][System.Xml.XmlNode]$Nodo,
+        [Parameter(Mandatory = $true)][string]$Motivo
+    )
+
+    if (-not $Indice -or -not $Indice.PSObject.Properties['TrazaEvidenciaActiva']) { return }
+    $traza = $Indice.TrazaEvidenciaActiva
+    if (-not $traza) { return }
+
+    $clave = Obtener-ClaveObjetoTraza -Nodo $Nodo
+    if (-not $clave) { return }
+    if (-not $traza.NodosPorClave.ContainsKey($clave)) {
+        $traza.NodosPorClave[$clave] = [pscustomobject]@{
+            Clave = $clave
+            Tipo = $clave.Substring(0, $clave.IndexOf(':'))
+            Guid = [string]$Nodo.GetAttribute('guid')
+            FullyQualifiedName = [string]$Nodo.GetAttribute('fullyQualifiedName')
+            Motivos = New-Object System.Collections.Generic.List[string]
+        }
+    }
+    if (-not $traza.NodosPorClave[$clave].Motivos.Contains($Motivo)) {
+        [void]$traza.NodosPorClave[$clave].Motivos.Add($Motivo)
+    }
+
+    if ($Indice.PSObject.Properties['ServiciosPorObjeto'] -and $Indice.ServiciosPorObjeto.ContainsKey($clave)) {
+        $servicios = $Indice.ServiciosPorObjeto[$clave]
+        if (-not $servicios.Contains($traza.Servicio)) { [void]$servicios.Add($traza.Servicio) }
+    }
+}
+
+function Registrar-AristaTrazaEvidencia {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)]$Indice,
+        [Parameter(Mandatory = $true)][System.Xml.XmlNode]$Origen,
+        [Parameter(Mandatory = $true)][System.Xml.XmlNode]$Destino,
+        [Parameter(Mandatory = $true)][string]$Motivo
+    )
+
+    if (-not $Indice -or -not $Indice.PSObject.Properties['TrazaEvidenciaActiva']) { return }
+    $traza = $Indice.TrazaEvidenciaActiva
+    if (-not $traza) { return }
+    $claveOrigen = Obtener-ClaveObjetoTraza -Nodo $Origen
+    $claveDestino = Obtener-ClaveObjetoTraza -Nodo $Destino
+    if (-not $claveOrigen -or -not $claveDestino) { return }
+    Registrar-NodoTrazaEvidencia -Indice $Indice -Nodo $Origen -Motivo 'origen de resolucion'
+    Registrar-NodoTrazaEvidencia -Indice $Indice -Nodo $Destino -Motivo $Motivo
+    $claveArista = $claveOrigen + '|' + $claveDestino + '|' + $Motivo
+    foreach ($arista in $traza.AristasResolucion) {
+        if ($arista.Clave -eq $claveArista) { return }
+    }
+    $traza.AristasResolucion.Add([pscustomobject]@{
+        Clave = $claveArista
+        Origen = $claveOrigen
+        Destino = $claveDestino
+        Motivo = $Motivo
+    })
+}
+
+function Devolver-ReferenciaConTraza {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)]$Indice,
+        [Parameter(Mandatory = $true)][System.Xml.XmlNode]$Nodo,
+        [Parameter(Mandatory = $true)][string]$Tipo
+    )
+
+    Registrar-NodoTrazaEvidencia -Indice $Indice -Nodo $Nodo -Motivo ('referencia de ' + $Tipo + ' resuelta')
+    return $Nodo
+}
+
+function Finalizar-TrazaEvidencia {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]$Traza
+    )
+
+    return [pscustomobject]@{
+        Servicio = $Traza.Servicio
+        NodosConsultados = @($Traza.NodosPorClave.Values)
+        AristasResolucion = $Traza.AristasResolucion.ToArray()
+    }
+}
+
 function Abrir-XPZ {
     <#
     .SYNOPSIS
@@ -180,7 +303,9 @@ function Obtener-Objeto {
     )
 
     if ($Indice -and $Indice.PorFqn -and $Indice.PorFqn.ContainsKey($NombreCompleto)) {
-        return $Indice.PorFqn[$NombreCompleto]
+        $objetoIndexado = $Indice.PorFqn[$NombreCompleto]
+        Registrar-NodoTrazaEvidencia -Indice $Indice -Nodo $objetoIndexado -Motivo 'consulta por FQN'
+        return $objetoIndexado
     }
 
     $nodos = @($Xml.SelectNodes("//Object[@fullyQualifiedName='" + $NombreCompleto + "']"))
@@ -190,10 +315,12 @@ function Obtener-Objeto {
     if ($nodos.Count -gt 1) {
         $procedimientos = @($nodos | Where-Object { $_.GetAttribute('type') -eq '84a12160-f59b-4ad7-a683-ea4481ac23e9' })
         if ($procedimientos.Count -eq 1) {
+            Registrar-NodoTrazaEvidencia -Indice $Indice -Nodo $procedimientos[0] -Motivo 'consulta por FQN'
             return $procedimientos[0]
         }
         throw ('El objeto ' + $NombreCompleto + ' aparece ' + $nodos.Count + ' veces en el XPZ sin un unico Procedure.')
     }
+    Registrar-NodoTrazaEvidencia -Indice $Indice -Nodo $nodos[0] -Motivo 'consulta por FQN'
     return $nodos[0]
 }
 
@@ -1012,6 +1139,7 @@ function Resolver-EntradaPost {
     if (-not $sdt) {
         throw ('La entrada del SDT ' + $nombreSdt + ' no está exportada en el XPZ configurado. No puede inferirse.')
     }
+    Registrar-AristaTrazaEvidencia -Indice $Indice -Origen $ProgramaPrincipal -Destino $sdt -Motivo 'SDT de entrada POST resuelto por FromJson'
     return [pscustomobject]@{
         VariableSdt = $variableSdt
         NombreSdt = $nombreSdt
@@ -1067,16 +1195,16 @@ function Obtener-Referencia {
 
     $candidatos = [array]$indiceNombres[$Nombre]
     if ($candidatos.Count -eq 0) { return $null }
-    if ($candidatos.Count -eq 1) { return $candidatos[0] }
+    if ($candidatos.Count -eq 1) { return (Devolver-ReferenciaConTraza -Indice $Indice -Nodo $candidatos[0] -Tipo $Tipo) }
 
     if ($Tipo -eq 'Attribute') {
         $atributos = @($candidatos | Where-Object { $_.LocalName -eq 'Attribute' })
-        if ($atributos.Count -eq 1) { return $atributos[0] }
+        if ($atributos.Count -eq 1) { return (Devolver-ReferenciaConTraza -Indice $Indice -Nodo $atributos[0] -Tipo $Tipo) }
     }
 
     if ($Tipo -eq 'Domain' -and -not $Modulo) {
         $deRaiz = @($candidatos | Where-Object { $_.GetAttribute('fullyQualifiedName') -eq $Nombre })
-        if ($deRaiz.Count -eq 1) { return $deRaiz[0] }
+        if ($deRaiz.Count -eq 1) { return (Devolver-ReferenciaConTraza -Indice $Indice -Nodo $deRaiz[0] -Tipo $Tipo) }
     }
 
     if ($Modulo) {
@@ -1084,12 +1212,12 @@ function Obtener-Referencia {
             $nombreCompleto = $_.GetAttribute('fullyQualifiedName')
             $nombreCompleto -and ($nombreCompleto -eq $Modulo -or $nombreCompleto.StartsWith($Modulo + '.'))
         })
-        if ($porModulo.Count -eq 1) { return $porModulo[0] }
+        if ($porModulo.Count -eq 1) { return (Devolver-ReferenciaConTraza -Indice $Indice -Nodo $porModulo[0] -Tipo $Tipo) }
     }
 
     if ($Tipo -eq 'Attribute') {
         $conTipo = @($candidatos | Where-Object { Obtener-Propiedad -Nodo $_ -Nombre 'ATTCUSTOMTYPE' })
-        if ($conTipo.Count -eq 1) { return $conTipo[0] }
+        if ($conTipo.Count -eq 1) { return (Devolver-ReferenciaConTraza -Indice $Indice -Nodo $conTipo[0] -Tipo $Tipo) }
     }
 
     return $null
@@ -1502,6 +1630,7 @@ function Expandir-EstructuraSdt {
                 $faltantes.Add([pscustomobject]@{ NombreSdt = $resuelto.NombreSdt; RutaJson = $rutaCampo })
                 continue
             }
+            Registrar-AristaTrazaEvidencia -Indice $Indice -Origen $Sdt -Destino $sdtHijo -Motivo 'SDT anidado resuelto por tipo de campo'
             if ((Obtener-SdtEsColeccion -Sdt $sdtHijo) -and -not $resuelto.EsColeccion) {
                 $resuelto.EsColeccion = $true
                 $resuelto.Tipo = 'Colección de Estructura ' + $resuelto.Campo
@@ -2354,6 +2483,7 @@ function Resolver-Salida {
             if (-not $enlaceResponse) { continue }
             try {
                 $sourceDelegado = Obtener-Source -ProgramaPrincipal $objetoDelegado
+                Registrar-AristaTrazaEvidencia -Indice $Indice -Origen $ProgramaPrincipal -Destino $objetoDelegado -Motivo 'procedure delegado de salida HTTP 200'
                 $visitadosDelegado = @($Visitados + $fqnDelegado)
                 $resueltoDelegado = Resolver-Salida -Xml $Xml -ProgramaPrincipal $objetoDelegado -Source $sourceDelegado -Indice $Indice -Visitados $visitadosDelegado
                 if (-not $resueltoDelegado.NoResuelta) { return $resueltoDelegado }
@@ -2445,6 +2575,7 @@ function Resolver-Salida {
         }
     }
 
+    Registrar-AristaTrazaEvidencia -Indice $Indice -Origen $ProgramaPrincipal -Destino $sdt -Motivo 'SDT de salida resuelto por variable de respuesta'
     $esColeccionSalida = $datosTipo.EsColeccion -or (Obtener-SdtEsColeccion -Sdt $sdt)
     $expandido = Expandir-EstructuraSdt -Xml $Xml -Sdt $sdt -Indice $Indice
     $salida = New-Object System.Collections.Generic.List[object]
@@ -2771,6 +2902,7 @@ function Obtener-NodosEvidencia {
         while ($cola.Count -gt 0) {
             $actual = $cola.Dequeue()
             $nodos.Add($actual.Nodo)
+            Registrar-NodoTrazaEvidencia -Indice $Indice -Nodo $actual.Nodo -Motivo 'procedure de evidencia alcanzable'
             if ($actual.Profundidad -ge $ProfundidadMaxima) { continue }
             $source = $null
             try { $source = Obtener-Source -ProgramaPrincipal $actual.Nodo } catch { $source = $null }
@@ -2781,6 +2913,7 @@ function Obtener-NodosEvidencia {
                 $fqn = $objeto.GetAttribute('fullyQualifiedName')
                 if ($vistos -contains $fqn) { continue }
                 $vistos.Add($fqn)
+                Registrar-AristaTrazaEvidencia -Indice $Indice -Origen $actual.Nodo -Destino $objeto -Motivo 'llamada de procedure de evidencia'
                 $cola.Enqueue([pscustomobject]@{ Nodo = $objeto; Profundidad = $actual.Profundidad + 1 })
             }
         }
@@ -3416,8 +3549,22 @@ function Analizar-Servicio {
         [Parameter(Mandatory = $true)][System.Xml.XmlDocument]$Xml,
         [Parameter(Mandatory = $true)][string]$NombreCompletoWrapper,
         [Parameter(Mandatory = $true)][string]$PackageName,
-        [Parameter(Mandatory = $false)]$Indice
+        [Parameter(Mandatory = $false)]$Indice,
+        [Parameter(Mandatory = $false)][switch]$IncluirTrazaEvidencia
     )
+
+    $trazaEvidencia = $null
+    if ($Indice) {
+        if (-not $Indice.PSObject.Properties['TrazaEvidenciaActiva']) {
+            $Indice | Add-Member -MemberType NoteProperty -Name 'TrazaEvidenciaActiva' -Value $null -Force
+        } else {
+            $Indice.TrazaEvidenciaActiva = $null
+        }
+        if ($IncluirTrazaEvidencia) {
+            $trazaEvidencia = Inicializar-TrazaEvidencia -Servicio $NombreCompletoWrapper
+            $Indice.TrazaEvidenciaActiva = $trazaEvidencia
+        }
+    }
 
     $wrapper = Obtener-Objeto -Xml $Xml -NombreCompleto $NombreCompletoWrapper -Indice $Indice
     if (-not $wrapper) {
@@ -3431,6 +3578,7 @@ function Analizar-Servicio {
         if (-not $programaPrincipal) {
             throw ('No se encontro el programa principal ' + $nombreMain + ' en el XPZ.')
         }
+        Registrar-AristaTrazaEvidencia -Indice $Indice -Origen $wrapper -Destino $programaPrincipal -Motivo 'delegacion del wrapper al programa principal'
     } else {
         $wrapperSource = Obtener-Source -ProgramaPrincipal $wrapper
         if (-not (Confirmar-LogicaREST -Source $wrapperSource)) {
@@ -3619,6 +3767,12 @@ function Analizar-Servicio {
         if ($campo.DetallePendiente) { $pendientes.Add($campo.DetallePendiente) }
     }
 
+    $trazaFinal = $null
+    if ($trazaEvidencia) {
+        $trazaFinal = Finalizar-TrazaEvidencia -Traza $trazaEvidencia
+        $Indice.TrazaEvidenciaActiva = $null
+    }
+
     return [pscustomobject]@{
         FqWrapper = $NombreCompletoWrapper
         ProgramaPrincipal = $(if ($nombreMain) { $nombreMain } else { $NombreCompletoWrapper })
@@ -3641,5 +3795,6 @@ function Analizar-Servicio {
         Pendientes = $pendientes.ToArray()
         FaltantesEntrada = $faltantesEntrada
         CiclosEntrada = $ciclosEntrada
+        TrazaEvidencia = $trazaFinal
     }
 }

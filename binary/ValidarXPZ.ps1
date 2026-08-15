@@ -6,7 +6,8 @@
 [CmdletBinding()]
 param(
     [string]$ConfigPath,
-    [string]$XpzPath
+    [string]$XpzPath,
+    [string]$ManifiestoPath
 )
 
 $ErrorActionPreference = 'Stop'
@@ -17,6 +18,9 @@ $DirectorioLogs = Join-Path $RaizRepositorio 'Logs'
 . (Join-Path $PSScriptRoot 'CargarConfiguracion.ps1')
 . (Join-Path $PSScriptRoot 'AnalizarServicio.ps1')
 . (Join-Path $PSScriptRoot 'CargarMultiXPZ.ps1')
+. (Join-Path $PSScriptRoot 'ManifiestoEjecucion.ps1')
+
+$ejecucionId = ''
 
 function Descubrir-XPZComplementarios {
     <#
@@ -564,7 +568,9 @@ function Write-ReporteValidacion {
         [Parameter(Mandatory = $true)][string]$RutaReporte,
         [Parameter(Mandatory = $true)][datetime]$StartTime,
         [Parameter(Mandatory = $true)][datetime]$FinEjecucion,
-        [Parameter(Mandatory = $true)]$IndiceUnificado
+        [Parameter(Mandatory = $true)]$IndiceUnificado,
+        [Parameter(Mandatory = $true)][string]$EjecucionId,
+        [Parameter(Mandatory = $false)][string]$RutaManifiesto = ''
     )
 
     $pendientes = @($Resultados | Where-Object { $_.esPendiente })
@@ -578,7 +584,9 @@ function Write-ReporteValidacion {
     $reporte = [pscustomobject]@{
         schemaVersion = 2
         ejecucion = [pscustomobject]@{
+            id = $EjecucionId
             xpz = $xpzPrincipal
+            manifiesto = $RutaManifiesto
             inicio = $StartTime.ToString('s')
             fin = $FinEjecucion.ToString('s')
             total = $Resultados.Count
@@ -606,6 +614,13 @@ function Write-ReporteValidacion {
 }
 
 try {
+    if ($ManifiestoPath) {
+        $manifiestoEjecucion = Leer-ManifiestoEjecucion -RutaManifiesto $ManifiestoPath
+        $XpzPath = [string]$manifiestoEjecucion.xpz
+        $ejecucionId = [string]$manifiestoEjecucion.ejecucionId
+    } else {
+        $ejecucionId = Obtener-NuevoIdentificadorEjecucion
+    }
     $cargarConfiguracionParametros = @{ ConfigPath = $ConfigPath }
     if ($XpzPath) { $cargarConfiguracionParametros.XpzPath = $XpzPath }
     $configuracion = Cargar-Configuracion @cargarConfiguracionParametros
@@ -652,9 +667,9 @@ try {
 
     $finEjecucion = Get-Date
     $marcaTemporal = $finEjecucion.ToString('yyyyMMdd-HHmmss')
-    $rutaReporte = Join-Path $DirectorioLogs ($marcaTemporal + '-validacion-xpz.json')
+    $rutaReporte = Join-Path $DirectorioLogs ($ejecucionId + '-validacion-xpz.json')
 
-    Write-ReporteValidacion -Resultados $resultados -RutaReporte $rutaReporte -StartTime $StartTime -FinEjecucion $finEjecucion -IndiceUnificado $indiceUnificado
+    Write-ReporteValidacion -Resultados $resultados -RutaReporte $rutaReporte -StartTime $StartTime -FinEjecucion $finEjecucion -IndiceUnificado $indiceUnificado -EjecucionId $ejecucionId -RutaManifiesto $ManifiestoPath
 
     $ok = @($resultados | Where-Object { -not $_.esPendiente }).Count
     $pendientes = @($resultados | Where-Object { $_.esPendiente }).Count

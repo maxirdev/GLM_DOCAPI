@@ -2,7 +2,7 @@
 
 ## Propósito del repositorio
 
-Repositorio de documentación y scripts PowerShell (sin build ni tests automatizados). Produce documentos técnicos de los servicios HTTP de APIGLM a partir del export GeneXus configurado. Todo el contenido se escribe en **español**.
+Repositorio de documentación y scripts PowerShell (sin build; incluye un harness de pruebas locales). Produce documentos técnicos de los servicios HTTP de APIGLM a partir del export GeneXus configurado. Todo el contenido se escribe en **español**.
 
 ## Fuentes de evidencia (solo lectura, no editar)
 
@@ -15,7 +15,7 @@ Ambas carpetas están en `.gitignore`: son referencias locales, no parte del pro
 
 En la raíz del repo:
 
-- `binary/` — scripts del generador: `GenerarDocumento.ps1` (orquestador), `AnalizarServicio.ps1`, `RedactarDocumento.ps1`, `EscribirSalidas.ps1`, `CargarConfiguracion.ps1`, `DiagnosticoIA.ps1`.
+- `binary/` — scripts del generador: `GenerarDocumento.ps1` (orquestador), `ActualizarServicios.ps1`, `ControlVersiones.ps1`, `ManifiestoEjecucion.ps1`, `AnalizarServicio.ps1`, `RedactarDocumento.ps1`, `EscribirSalidas.ps1`, `CargarConfiguracion.ps1`, `DiagnosticoIA.ps1` y `ResumirOperacionPdf.ps1`.
 - `binary/ExportarXPZProgreso.ps1` y `binary/ExportarXPZ.msbuild` — ejecutan la exportación de `Module:APIGLM` desde la KB local; los invoca `EjecutarExportacionGLM.ps1` (opción 1 del lanzador).
 - `binary/CompletarXPZActivoGLM.ps1` — completa el XPZ activo antes de documentar: valida con `ValidarXPZ.ps1` y exporta selectivos cuando faltan componentes (hasta cinco ciclos), preguntando si continuar cuando falla o se detiene con pendientes. Lo invoca la opción 3 (Generar PDF con el XPZ seleccionado) de `GenerarDocumentosGLM.cmd`.
 - `Logs/*-diagnostico-ia.json` — diagnóstico estructurado de excepciones con fase, ruta relativa, sentencia y stack trace. Se genera solo ante errores; revisar primero el más reciente al investigar fallos del pipeline.
@@ -32,6 +32,7 @@ En `documentacion/` (commiteada):
 - `Endpoints/web/` — visor estático: `APIServicios.html` (generado e ignorado), `style.css`, `app.js`.
 - `GenerarDocumentosGLM.cmd` (raíz del repo) — entrada principal: valida la configuración, permite elegir el XPZ, exporta y completa el XPZ, y genera los PDF con el XPZ seleccionado.
 - `configuracion.json` (raíz del repo) — configuración operativa: ruta del XPZ, `packagename` constante del endpoint publicado por XPZ, `serviciosIgnorados` (lista de FQN referenciados que no se documentan) y rutas de GeneXus, Knowledge Base, MSBuild y Edge.
+- `estado/` — estado local ignorado por Git: `controlVersiones.json` (esquema 2) y `actualizacion.lock` durante una actualización.
 - `servicios/` — documentos Markdown por servicio (p. ej. `wsobtenertotalessolicitud.md`). La conversión a PDF se ejecuta bajo demanda desde `binary/GenerarPdfServicios.ps1` mediante Pandoc + Typst portable; la plantilla normativa continúa en `templateDoc.md`.
 
 Orden obligatorio por servicio: analisisXPZ → reglasEditoriales → templateDoc. No recalcular decisiones durante la redacción.
@@ -53,9 +54,17 @@ Orden obligatorio por servicio: analisisXPZ → reglasEditoriales → templateDo
 
 ## Verificación e inconsistencias conocidas
 
-- No hay lint ni tests. La verificación son las listas de control al final de `analisisXPZ.md`, `reglasEditoriales.md` y `templateDoc.md`; `Endpoints/assets/analisisEndpoint.md` espera que el conteo coincida con `endpoints.md`. Si el conteo difiere, primero determinar si cambió el XPZ o `APIGLMMain`; no forzar el número.
+- No hay build ni lint. `test/Run-Tests.ps1` ejecuta las pruebas locales del pipeline, analizador y visor; la verificación adicional son las listas de control al final de `analisisXPZ.md`, `reglasEditoriales.md` y `templateDoc.md`. `Endpoints/assets/analisisEndpoint.md` espera que el conteo coincida con `endpoints.md`. Si el conteo difiere, primero determinar si cambió el XPZ o `APIGLMMain`; no forzar el número.
 - Markdown en UTF-8 sin BOM y finales de línea LF.
 - `Endpoints/assets/analisisEndpoint.md` referencia el XPZ configurado en `configuracion.json` y `GeneXus-XPZ-Skills-main/scripts/gx-object-type-catalog.json` mediante `../../../`.
+
+## Integridad transaccional
+
+- La actualización genera Markdown y PDF en staging y publica ambos por servicio; nunca reemplaza solo uno.
+- El control usa `schemaVersion = 2`; `version` debe ser exactamente `1.<revision>` y los hashes corresponden a los archivos publicados.
+- Un fallo conserva los artefactos anteriores y crea o actualiza un pendiente; una segunda ejecución simultánea termina con código `1` por el lock exclusivo.
+- Los estados persistidos son `ACTIVO`, `ELIMINADO` y `OMITIDO`; la reactivación solo ocurre después de publicar Markdown y PDF válidos.
+- Códigos de salida: `0` completo, `1` error fatal, `2` parcial y `3` abortado.
 
 ## Skills
 

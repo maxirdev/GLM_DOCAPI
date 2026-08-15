@@ -3,7 +3,8 @@ param(
     [string]$XpzPath,
     [string]$CatalogPath,
     [string]$OutputDirectory,
-    [string]$ConfigPath
+    [string]$ConfigPath,
+    [string]$ManifiestoPath
 )
 
 $ErrorActionPreference = 'Stop'
@@ -15,8 +16,10 @@ $RaizRepositorio = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..
 $DirectorioLogs = Join-Path $PSScriptRoot '..\..\..\Logs'
 $faseActual = 'inicio'
 . (Join-Path $PSScriptRoot '..\..\..\binary\DiagnosticoIA.ps1')
+. (Join-Path $PSScriptRoot '..\..\..\binary\ManifiestoEjecucion.ps1')
 $ProcedureTypeGuid = '84a12160-f59b-4ad7-a683-ea4481ac23e9'
 $PackageName = ''
+$ejecucionId = ''
 
 if (-not [Console]::IsOutputRedirected) {
     try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch { }
@@ -49,6 +52,7 @@ try {
     $faseActual = 'carga-modulos'
     . (Join-Path $PSScriptRoot '..\..\..\binary\CargarConfiguracion.ps1')
     . (Join-Path $PSScriptRoot '..\..\..\binary\AnalizarServicio.ps1')
+    . (Join-Path $PSScriptRoot '..\..\..\binary\CargarMultiXPZ.ps1')
 
     $faseActual = 'catalogo-tipos'
     if (Test-Path -LiteralPath $CatalogPath) {
@@ -65,6 +69,13 @@ try {
 
     $faseActual = 'configuracion'
     Write-Step 1 'Cargando configuracion y abriendo el XPZ...'
+    if ($ManifiestoPath) {
+        $manifiestoEjecucion = Leer-ManifiestoEjecucion -RutaManifiesto $ManifiestoPath
+        $XpzPath = [string]$manifiestoEjecucion.xpz
+        $ejecucionId = [string]$manifiestoEjecucion.ejecucionId
+    } else {
+        $ejecucionId = Obtener-NuevoIdentificadorEjecucion
+    }
     $cargarConfiguracionParametros = @{ ConfigPath = $ConfigPath }
     if ($XpzPath) { $cargarConfiguracionParametros.XpzPath = $XpzPath }
     $configuracion = Cargar-Configuracion @cargarConfiguracionParametros
@@ -77,10 +88,10 @@ try {
     }
 
     $faseActual = 'apertura-xpz'
-    $aperturaXpz = Abrir-XPZ -RutaXpz $XpzPath
-    $xml = $aperturaXpz.Xml
-    $XpzName = $aperturaXpz.Nombre
-    Write-Host ("  Archivo: " + $XpzName) -ForegroundColor DarkGray
+    $indiceMultiXpz = Cargar-IndiceMultiXPZ -RutaXpzPrincipal $XpzPath
+    $xml = $indiceMultiXpz.XmlUnificado
+    $XpzName = ($indiceMultiXpz.NombresXpz -join ', ')
+    Write-Host ("  Archivos: " + $XpzName) -ForegroundColor DarkGray
 
     $faseActual = 'localizacion-main'
     $mainNodes = $xml.SelectNodes("//Object[@fullyQualifiedName='APIGLM.APIGLMMain']")
@@ -118,26 +129,13 @@ try {
         }
         $m = [regex]::Match($trimmed, '(\b(?:\w+\.)*WS[A-Za-z0-9_]+)\s*\(')
         if ($m.Success) {
-            $candidates.Add([pscustomobject]@{ Line = $i + 1; Call = $m.Groups[1].Value })
+            [void]$candidates.Add([pscustomobject]@{ Line = $i + 1; Call = $m.Groups[1].Value; Active = $true })
         }
     }
 
     $faseActual = 'resolucion-candidatos'
-    $allObjects = $xml.SelectNodes('//Object')
-    $byFqn = @{}
-    $byName = @{}
-    foreach ($o in $allObjects) {
-        $f = $o.GetAttribute('fullyQualifiedName')
-        $n = $o.GetAttribute('name')
-        if ($f) {
-            if (-not $byFqn.ContainsKey($f)) { $byFqn[$f] = New-Object System.Collections.Generic.List[object] }
-            $byFqn[$f].Add($o)
-        }
-        if ($n) {
-            if (-not $byName.ContainsKey($n)) { $byName[$n] = New-Object System.Collections.Generic.List[object] }
-            $byName[$n].Add($o)
-        }
-    }
+    $byFqn = $indiceMultiXpz.PorFqn
+    $byName = $indiceMultiXpz.PorNombre
 
     $resolved = New-Object System.Collections.Generic.List[object]
     $unresolved = New-Object System.Collections.Generic.List[object]
@@ -147,9 +145,9 @@ try {
         $call = $c.Call
         $matches = $null
         if ($call.Contains('.')) {
-            if ($byFqn.ContainsKey($call)) { $matches = $byFqn[$call] }
+            if ($byFqn.ContainsKey($call)) { $matches = @($byFqn[$call]) }
         } else {
-            if ($byName.ContainsKey($call)) { $matches = $byName[$call] }
+            if ($byName.ContainsKey($call)) { $matches = @($byName[$call] | ForEach-Object { $_ }) }
         }
         if ($matches -and $matches.Count -gt 1) {
             $procedures = $matches | Where-Object { $_.GetAttribute('type') -eq $ProcedureTypeGuid }
@@ -157,15 +155,15 @@ try {
         }
         if (-not $matches) {
             $noEncontrados++
-            $unresolved.Add([pscustomobject]@{ Candidate = $call; Reason = 'No encontrado' })
+            [void]$unresolved.Add([pscustomobject]@{ Candidate = $call; Reason = 'No encontrado'; Line = $c.Line; Active = $c.Active })
             continue
         }
         if ($matches.Count -ne 1) {
             $ambiguos++
-            $unresolved.Add([pscustomobject]@{ Candidate = $call; Reason = ("Coincidencias: " + $matches.Count) })
+            [void]$unresolved.Add([pscustomobject]@{ Candidate = $call; Reason = ("Coincidencias: " + $matches.Count); Line = $c.Line; Active = $c.Active })
             continue
         }
-        $resolved.Add([pscustomobject]@{ Fqn = $matches[0].GetAttribute('fullyQualifiedName'); Name = $matches[0].GetAttribute('name'); Object = $matches[0] })
+        [void]$resolved.Add([pscustomobject]@{ Fqn = $matches[0].GetAttribute('fullyQualifiedName'); Name = $matches[0].GetAttribute('name'); Object = $matches[0]; Line = $c.Line; Active = $c.Active })
     }
 
     $final = New-Object System.Collections.Generic.List[object]
@@ -178,7 +176,7 @@ try {
         $isMainOk = ($obj.SelectSingleNode("Properties/Property[Name='IsMain' and Value='True']") -ne $null)
         $httpOk = ($obj.SelectSingleNode("Properties/Property[Name='CALL_PROTOCOL' and Value='HTTP']") -ne $null)
         if (-not ($typeOk -and $isMainOk -and $httpOk)) {
-            $rejected.Add([pscustomobject]@{ Fqn = $item.Fqn; Type = $typeOk; IsMain = $isMainOk; CallProtocol = $httpOk })
+            [void]$rejected.Add([pscustomobject]@{ Fqn = $item.Fqn; Type = $typeOk; IsMain = $isMainOk; CallProtocol = $httpOk; Line = $item.Line; Active = $item.Active })
             continue
         }
         if ($seenFqn.ContainsKey($item.Fqn)) { $duplicados++; continue }
@@ -193,7 +191,7 @@ try {
         $endpoint = 'a' + $item.Name.ToLowerInvariant()
         if ($module) { $endpoint = $module.ToLowerInvariant() + '.' + $endpoint }
         if ($PackageName) { $endpoint = $PackageName.TrimEnd('.') + '.' + $endpoint }
-        $final.Add([pscustomobject]@{ Fqn = $item.Fqn; Name = $item.Name; Module = $module; Nombre = $nombre; Descripcion = $descripcion; Endpoint = $endpoint })
+        [void]$final.Add([pscustomobject]@{ Fqn = $item.Fqn; Name = $item.Name; Module = $module; Nombre = $nombre; Descripcion = $descripcion; Endpoint = $endpoint })
     }
 
     $okCount = $final.Count
@@ -211,11 +209,14 @@ try {
         New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
     }
     $endpointsArr = @($final | ForEach-Object { [pscustomobject]@{ nombre = $_.Nombre; descripcion = $_.Descripcion; proceso = $_.Fqn; endpoint = $_.Endpoint } })
-    $unresolvedArr = @($unresolved | ForEach-Object { [pscustomobject]@{ candidate = $_.Candidate; reason = $_.Reason } })
+    $unresolvedArr = @($unresolved | ForEach-Object { [pscustomobject]@{ candidate = $_.Candidate; reason = $_.Reason; line = $_.Line; active = [bool]$_.Active } })
     $payload = [pscustomobject]@{
         meta = [pscustomobject]@{
             generatedAt = $StartTime.ToString('s')
+            ejecucionId = $ejecucionId
+            manifiesto = $ManifiestoPath
             source = $XpzName
+            xpzFiles = @($indiceMultiXpz.NombresXpz)
             procedureTypeGuid = $ProcedureTypeGuid
             totalConfirmed = $final.Count
         }
