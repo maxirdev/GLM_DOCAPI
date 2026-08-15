@@ -12,7 +12,8 @@ param(
     [string]$GxProgramDir,
     [string]$KbPath,
     [string]$XpzFile,
-    [string]$LogFile
+    [string]$LogFile,
+    [string]$ManifiestoPath
 )
 
 $ErrorActionPreference = 'Stop'
@@ -20,6 +21,7 @@ $RaizRepositorio = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $DirectorioLogs = Join-Path $RaizRepositorio 'Logs'
 
 . (Join-Path $PSScriptRoot 'CargarConfiguracion.ps1')
+. (Join-Path $PSScriptRoot 'ManifiestoEjecucion.ps1')
 
 function Resolver-RutaRepositorio {
     [CmdletBinding()]
@@ -103,7 +105,7 @@ function Validar-SelectoresExportacion {
     )
 
     foreach ($selector in $Selectores) {
-        if ($selector -notmatch '^[^:]+:.+$') {
+        if ($selector -notmatch '^(Procedure|SDT|Domain|Attribute):[^:]+$') {
             throw ('El reporte contiene un selector sin tipo y FQN: ' + $selector)
         }
     }
@@ -113,7 +115,8 @@ function Leer-ReporteValidacion {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)][string]$RutaReporte,
-        [Parameter(Mandatory = $true)]$Configuracion
+        [Parameter(Mandatory = $true)]$Configuracion,
+        [Parameter(Mandatory = $false)][string]$EjecucionId = ''
     )
 
     if (-not (Test-Path -LiteralPath $RutaReporte -PathType Leaf)) {
@@ -132,6 +135,9 @@ function Leer-ReporteValidacion {
     if (-not [System.StringComparer]::OrdinalIgnoreCase.Equals($rutaXpzReportada, $rutaXpzConfigurada)) {
         throw ('El reporte corresponde a otro XPZ. Reportado: ' + $rutaXpzReportada + '. Configurado: ' + $rutaXpzConfigurada + '.')
     }
+    if ($EjecucionId -and [string]$reporte.ejecucion.id -ne $EjecucionId) {
+        throw ('El reporte corresponde a otra ejecucion. Reportado: ' + [string]$reporte.ejecucion.id + '. Esperado: ' + $EjecucionId + '.')
+    }
 
     $objetos = @(Obtener-ObjetosDeReporte -Reporte $reporte)
     if ($objetos.Count -eq 0) {
@@ -141,12 +147,15 @@ function Leer-ReporteValidacion {
     $selectoresDeclarados = @($reporte.solicitudes | ForEach-Object { @($_.selectores) } | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })
     if ($selectoresDeclarados.Count -gt 0) {
         Validar-SelectoresExportacion -Selectores $selectoresDeclarados
+    } else {
+        throw ('El reporte no contiene selectores calificados por tipo y FQN: ' + $RutaReporte)
     }
 
     return [pscustomobject]@{
         Ruta = (Resolve-Path -LiteralPath $RutaReporte).Path
         Reporte = $reporte
         Objetos = $objetos
+        Selectores = $selectoresDeclarados
         XpzPrincipal = $rutaXpzConfigurada
     }
 }
@@ -155,12 +164,13 @@ function Seleccionar-ReporteValidacion {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)]$Configuracion,
-        [string]$RutaReporte
+        [string]$RutaReporte,
+        [string]$EjecucionId = ''
     )
 
     if ($RutaReporte) {
         $rutaExplicita = Resolver-RutaRepositorio -Ruta $RutaReporte -Raiz $Configuracion.RaizRepositorio
-        return Leer-ReporteValidacion -RutaReporte $rutaExplicita -Configuracion $Configuracion
+        return Leer-ReporteValidacion -RutaReporte $rutaExplicita -Configuracion $Configuracion -EjecucionId $EjecucionId
     }
 
     if (-not (Test-Path -LiteralPath $DirectorioLogs -PathType Container)) {
@@ -175,7 +185,7 @@ function Seleccionar-ReporteValidacion {
     $errores = New-Object System.Collections.Generic.List[string]
     foreach ($archivo in $reportes) {
         try {
-            return Leer-ReporteValidacion -RutaReporte $archivo.FullName -Configuracion $Configuracion
+            return Leer-ReporteValidacion -RutaReporte $archivo.FullName -Configuracion $Configuracion -EjecucionId $EjecucionId
         } catch {
             [void]$errores.Add($archivo.Name + ': ' + $_.Exception.Message)
         }
@@ -468,10 +478,16 @@ function Ejecutar-ExportacionSelectiva {
 }
 
 try {
+    $ejecucionId = ''
+    if ($ManifiestoPath) {
+        $manifiestoEjecucion = Leer-ManifiestoEjecucion -RutaManifiesto $ManifiestoPath
+        $XpzPath = [string]$manifiestoEjecucion.xpz
+        $ejecucionId = [string]$manifiestoEjecucion.ejecucionId
+    }
     $parametrosConfiguracion = @{ ConfigPath = $ConfigPath }
     if ($XpzPath) { $parametrosConfiguracion.XpzPath = $XpzPath }
     $configuracion = Cargar-Configuracion @parametrosConfiguracion
-    $seleccion = Seleccionar-ReporteValidacion -Configuracion $configuracion -RutaReporte $ReportePath
+    $seleccion = Seleccionar-ReporteValidacion -Configuracion $configuracion -RutaReporte $ReportePath -EjecucionId $ejecucionId
     Mostrar-RecetaSeleccionada -Seleccion $seleccion
     $complemento = Seleccionar-SiguienteXpzComplementario -RutaXpzPrincipal $seleccion.XpzPrincipal
     $rutaMsbuildEfectiva = if ($MsbuildPath) { $MsbuildPath } else { Join-Path $env:SystemRoot 'Microsoft.NET\Framework\v4.0.30319\MSBuild.exe' }
@@ -502,8 +518,8 @@ try {
     }
     Write-Host ('Complemento de salida: ' + $rutaXpzSalida) -ForegroundColor DarkGray
     Write-Host ('Log de ejecucion: ' + $rutaLogEfectiva) -ForegroundColor DarkGray
-    Write-Host ('Nombres de objetos: ' + ($seleccion.Objetos -join ',')) -ForegroundColor DarkGray
-    Ejecutar-ExportacionSelectiva -RutaMsbuild $rutaMsbuildEfectiva -RutaProyecto $rutaProyectoEfectiva -DirectorioGeneXus $GxProgramDir -RutaKnowledgeBase $KbPath -Selectores $seleccion.Objetos -RutaXpzSalida $rutaXpzSalida -RutaLog $rutaLogEfectiva | Out-Null
+    Write-Host ('Selectores tipo:FQN: ' + ($seleccion.Selectores -join ',')) -ForegroundColor DarkGray
+    Ejecutar-ExportacionSelectiva -RutaMsbuild $rutaMsbuildEfectiva -RutaProyecto $rutaProyectoEfectiva -DirectorioGeneXus $GxProgramDir -RutaKnowledgeBase $KbPath -Selectores $seleccion.Selectores -RutaXpzSalida $rutaXpzSalida -RutaLog $rutaLogEfectiva | Out-Null
     Write-Host ('XPZ complementario generado correctamente: ' + $rutaXpzSalida) -ForegroundColor Green
     exit 0
 } catch {

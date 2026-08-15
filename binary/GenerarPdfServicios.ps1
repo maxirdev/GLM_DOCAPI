@@ -5,7 +5,10 @@
 [CmdletBinding()]
 param(
     [string]$ConfigPath,
-    [switch]$Todos
+    [switch]$Todos,
+    [Alias('Markdown', 'Markdowns')][string[]]$RutasMarkdown = @(),
+    [switch]$NoInteractivo,
+    [string]$ManifiestoPath
 )
 
 $ErrorActionPreference = 'Stop'
@@ -98,6 +101,15 @@ function Detener-Spinner {
     $script:spinnerActivo = $false
 }
 
+function Obtener-Sha256Archivo {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$Ruta
+    )
+
+    return (Get-FileHash -LiteralPath $Ruta -Algorithm SHA256).Hash.ToLowerInvariant()
+}
+
 function Write-ResultadoPdf {
     param(
         [Parameter(Mandatory = $true)][string]$Texto,
@@ -138,22 +150,80 @@ try {
     if (-not (Test-Path -LiteralPath $rutaTypst -PathType Leaf)) { throw ('No se encontro Typst en: ' + $rutaTypst) }
 
     . (Join-Path $PSScriptRoot 'RenderizarMarkdownTypstPdf.ps1')
+    . (Join-Path $PSScriptRoot 'ManifiestoEjecucion.ps1')
     $directorioServicios = Join-Path $RaizRepositorio 'documentacion\servicios'
-    $documentos = @(Get-ChildItem -LiteralPath $directorioServicios -Filter '*.md' -File -ErrorAction SilentlyContinue | Sort-Object Name)
-    if ($documentos.Count -eq 0) {
+    $directorioMarkdown = $directorioServicios
+    $directorioPdf = $directorioServicios
+    if ($ManifiestoPath) {
+        if (@($RutasMarkdown).Count -gt 0) {
+            throw 'No se puede combinar -ManifiestoPath con rutas Markdown explicitas.'
+        }
+        $manifiestoEjecucion = Leer-ManifiestoEjecucion -RutaManifiesto $ManifiestoPath
+        $directorioMarkdown = Join-Path ([string]$manifiestoEjecucion.staging) 'markdown'
+        $directorioPdf = Join-Path ([string]$manifiestoEjecucion.staging) 'pdf'
+        if (-not (Test-Path -LiteralPath $directorioPdf -PathType Container)) {
+            New-Item -ItemType Directory -Path $directorioPdf -Force | Out-Null
+        }
+        $RutasMarkdown = @($manifiestoEjecucion.fullyQualifiedNames | ForEach-Object {
+            $fullyQualifiedName = [string]$_
+            $ultimoPunto = $fullyQualifiedName.LastIndexOf('.')
+            if ($ultimoPunto -le 0) {
+                throw ('El FQN del manifiesto no tiene un nombre local valido: ' + $fullyQualifiedName)
+            }
+            $nombreArchivo = $fullyQualifiedName.Substring($ultimoPunto + 1).ToLowerInvariant() + '.md'
+            Join-Path $directorioMarkdown $nombreArchivo
+        })
+        $NoInteractivo = $true
+        Write-Host ('  Ejecucion: ' + $manifiestoEjecucion.ejecucionId) -ForegroundColor DarkGray
+        Write-Host ('  Staging PDF: ' + $directorioPdf) -ForegroundColor DarkGray
+    }
+    $documentosDisponibles = @(Get-ChildItem -LiteralPath $directorioMarkdown -Filter '*.md' -File -ErrorAction SilentlyContinue | Sort-Object Name)
+    $modoNoInteractivo = $NoInteractivo -or @($RutasMarkdown).Count -gt 0
+    if ($Todos -and $modoNoInteractivo) {
+        throw 'No se puede combinar -Todos con el modo no interactivo.'
+    }
+    if ($documentosDisponibles.Count -eq 0 -and -not $modoNoInteractivo) {
         throw ('No se encontraron documentos Markdown en: ' + $directorioServicios)
     }
-    Write-Host ('  Markdown disponibles: ' + $documentos.Count) -ForegroundColor DarkGray
+    Write-Host ('  Markdown disponibles: ' + $documentosDisponibles.Count) -ForegroundColor DarkGray
 
-    if ($Todos) {
+    if ($modoNoInteractivo) {
+        if (@($RutasMarkdown).Count -eq 0) {
+            throw 'El modo no interactivo requiere al menos una ruta Markdown explícita.'
+        }
+        $seleccionados = New-Object System.Collections.Generic.List[object]
+        $rutasMarkdownVistas = @{}
+        foreach ($rutaMarkdownSolicitada in @($RutasMarkdown)) {
+            if ([string]::IsNullOrWhiteSpace($rutaMarkdownSolicitada)) { continue }
+            $rutaMarkdownCompleta = [string]$rutaMarkdownSolicitada
+            if (-not [System.IO.Path]::IsPathRooted($rutaMarkdownCompleta)) {
+                $rutaMarkdownCompleta = Join-Path $RaizRepositorio $rutaMarkdownCompleta
+            }
+            if (-not (Test-Path -LiteralPath $rutaMarkdownCompleta -PathType Leaf)) {
+                throw ('No se encontro el Markdown explícito: ' + $rutaMarkdownSolicitada)
+            }
+            $archivoMarkdown = Get-Item -LiteralPath $rutaMarkdownCompleta
+            if ($archivoMarkdown.Extension -ine '.md') {
+                throw ('La ruta explícita no tiene extensión .md: ' + $rutaMarkdownSolicitada)
+            }
+            if (-not $rutasMarkdownVistas.ContainsKey($archivoMarkdown.FullName)) {
+                $rutasMarkdownVistas[$archivoMarkdown.FullName] = $true
+                $seleccionados.Add($archivoMarkdown)
+            }
+        }
+        if ($seleccionados.Count -eq 0) {
+            throw 'El modo no interactivo no recibió rutas Markdown válidas.'
+        }
+        Write-Host ('  Modo no interactivo: convertir ' + $seleccionados.Count + ' Markdown explícito(s).') -ForegroundColor DarkGray
+    } elseif ($Todos) {
         Write-Host '  Modo automatico: convertir TODOS los Markdown disponibles.' -ForegroundColor DarkGray
-        $seleccionados = @($documentos)
+        $seleccionados = @($documentosDisponibles)
     } else {
-        $seleccionados = @(Seleccionar-Documentos -Documentos $documentos)
+        $seleccionados = @(Seleccionar-Documentos -Documentos $documentosDisponibles)
     }
     if ($seleccionados.Count -eq 0) {
         Write-Host '  Conversion cancelada. No se genero ningun PDF.' -ForegroundColor Yellow
-        exit 0
+        exit 3
     }
 
     $ok = 0
@@ -169,15 +239,19 @@ try {
 
     foreach ($documento in $seleccionados) {
         $nombre = [System.IO.Path]::GetFileNameWithoutExtension($documento.Name)
-        $rutaPdf = Join-Path $directorioServicios ($nombre + '.pdf')
+        $rutaPdf = Join-Path $directorioPdf ($nombre + '.pdf')
         try {
             $markdown = [System.IO.File]::ReadAllText($documento.FullName)
             $cronometro = [Diagnostics.Stopwatch]::StartNew()
             Convertir-MarkdownAPdf -Markdown $markdown -RutaSalida $rutaPdf -RutaPandoc $rutaPandoc -RutaTypst $rutaTypst | Out-Null
             $cronometro.Stop()
             $segundos = [math]::Round($cronometro.Elapsed.TotalSeconds, 2)
+            if (-not (Test-PdfValido -Ruta $rutaPdf)) {
+                throw 'El PDF generado no supera la validacion de formato.'
+            }
+            $hashPdf = Obtener-Sha256Archivo -Ruta $rutaPdf
             $duraciones.Add($segundos)
-            Write-ResultadoPdf -Texto ('  [OK] ' + $nombre + '.pdf (' + $segundos + ' s)') -Color 'Green'
+            Write-ResultadoPdf -Texto ('  [OK] ' + $nombre + '.pdf (' + $segundos + ' s, SHA-256: ' + $hashPdf + ')') -Color 'Green'
             $ok++
         } catch {
             Write-ResultadoPdf -Texto ('  [ERROR] ' + $documento.Name + ': ' + $_.Exception.Message) -Color 'Red'
@@ -196,7 +270,10 @@ try {
     if ($duraciones.Count -gt 0) {
         Write-Host ('Tiempo promedio por PDF: ' + $promedio + ' s.') -ForegroundColor DarkGray
     }
-    if ($errores -gt 0) { exit 1 }
+    if ($errores -gt 0) {
+        if ($ok -gt 0) { exit 2 }
+        exit 1
+    }
     exit 0
 } catch {
     Write-Host ''

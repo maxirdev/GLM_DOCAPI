@@ -25,17 +25,45 @@ if (-not $rutaReporte) {
 
 $reporte = Get-Content -LiteralPath $rutaReporte -Raw | ConvertFrom-Json
 
-$generados = @($reporte.servicios | Where-Object { $_.estado -eq 'OK' })
-$omitidos = @($reporte.servicios | Where-Object { $_.estado -eq 'OMITIDO' })
-$pendientes = @($reporte.servicios | Where-Object { $_.estado -eq 'WARNING' })
-$fallados = @($reporte.servicios | Where-Object { $_.estado -eq 'ERROR' })
+function Test-PdfPublicadoValido {
+    param([Parameter(Mandatory = $true)][string]$Ruta)
+    if (-not (Test-Path -LiteralPath $Ruta -PathType Leaf)) { return $false }
+    if ((Get-Item -LiteralPath $Ruta).Length -lt 5) { return $false }
+    $flujo = [System.IO.File]::OpenRead($Ruta)
+    try {
+        $cabecera = New-Object byte[] 4
+        [void]$flujo.Read($cabecera, 0, 4)
+        return ([System.Text.Encoding]::ASCII.GetString($cabecera) -eq '%PDF')
+    } finally {
+        $flujo.Dispose()
+    }
+}
+
+$pdfValidos = New-Object System.Collections.Generic.List[object]
+$pdfConservados = New-Object System.Collections.Generic.List[object]
+$pdfFallidos = New-Object System.Collections.Generic.List[object]
+$omitidos = @($reporte.servicios | Where-Object { $_.estado -in @('OMITIDO', 'ELIMINADO') -or $_.estadoPdf -eq 'NO_APLICA' })
+foreach ($servicio in @($reporte.servicios)) {
+    if ([string]$servicio.estado -in @('OMITIDO', 'ELIMINADO') -or [string]$servicio.estadoPdf -eq 'NO_APLICA') { continue }
+    $rutaPdf = [string]$servicio.pdf
+    if ([string]::IsNullOrWhiteSpace($rutaPdf)) {
+        $nombreLocal = ([string]$servicio.fullyQualifiedName).Substring(([string]$servicio.fullyQualifiedName).LastIndexOf('.') + 1).ToLowerInvariant()
+        $rutaPdf = Join-Path (Join-Path $raizRepositorio 'documentacion\servicios') ($nombreLocal + '.pdf')
+    }
+    if (Test-PdfPublicadoValido -Ruta $rutaPdf) {
+        [void]$pdfValidos.Add($servicio)
+        if ([string]$servicio.estadoPdf -eq 'CONSERVADO') { [void]$pdfConservados.Add($servicio) }
+    } else {
+        [void]$pdfFallidos.Add($servicio)
+    }
+}
 
 Write-Host ''
 Write-Host 'Resumen de la operacion PDF:' -ForegroundColor Cyan
-Write-Host ("  [OK]      PDFs generados: " + $generados.Count) -ForegroundColor Green
+Write-Host ("  [OK]      PDFs existentes y validos: " + $pdfValidos.Count) -ForegroundColor Green
+Write-Host ("  [CONSERVADO] PDFs anteriores: " + $pdfConservados.Count) -ForegroundColor DarkYellow
 Write-Host ("  [OMITIDO] Omitidos: " + $omitidos.Count) -ForegroundColor Yellow
-Write-Host ("  [WARNING] Pendientes: " + $pendientes.Count) -ForegroundColor Yellow
-Write-Host ("  [ERROR]   Fallados: " + $fallados.Count) -ForegroundColor Red
+Write-Host ("  [ERROR]   PDFs inexistentes o invalidos: " + $pdfFallidos.Count) -ForegroundColor Red
 
 if ($omitidos.Count -gt 0) {
     Write-Host '    Omitidos:' -ForegroundColor Yellow
@@ -44,16 +72,9 @@ if ($omitidos.Count -gt 0) {
     }
 }
 
-if ($pendientes.Count -gt 0) {
-    Write-Host '    Pendientes:' -ForegroundColor Yellow
-    foreach ($servicio in $pendientes) {
-        Write-Host ('      - ' + $servicio.fullyQualifiedName) -ForegroundColor DarkYellow
-    }
-}
-
-if ($fallados.Count -gt 0) {
-    Write-Host '    Fallados:' -ForegroundColor Red
-    foreach ($servicio in $fallados) {
+if ($pdfFallidos.Count -gt 0) {
+    Write-Host '    PDFs fallidos:' -ForegroundColor Red
+    foreach ($servicio in $pdfFallidos) {
         Write-Host ('      - ' + $servicio.fullyQualifiedName) -ForegroundColor Red
     }
 }

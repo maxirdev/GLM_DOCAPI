@@ -8,7 +8,11 @@
 param(
     [string]$ConfigPath,
     [string]$XpzPath,
-    [switch]$Todos
+    [switch]$Todos,
+    [Alias('Fqn', 'Fqns')][string[]]$FullyQualifiedNames = @(),
+    [switch]$NoInteractivo,
+    [string]$RutaReview,
+    [string]$ManifiestoPath
 )
 
 $ErrorActionPreference = 'Stop'
@@ -102,9 +106,22 @@ try {
     . (Join-Path $PSScriptRoot 'CargarMultiXPZ.ps1')
     . (Join-Path $PSScriptRoot 'RedactarDocumento.ps1')
     . (Join-Path $PSScriptRoot 'EscribirSalidas.ps1')
+    . (Join-Path $PSScriptRoot 'ManifiestoEjecucion.ps1')
 
     $faseActual = 'configuracion-inventario'
     Write-Step 1 'Cargando configuracion e inventario...'
+    if ($ManifiestoPath) {
+        $manifiestoEjecucion = Leer-ManifiestoEjecucion -RutaManifiesto $ManifiestoPath
+        $FullyQualifiedNames = @($manifiestoEjecucion.fullyQualifiedNames)
+        $XpzPath = [string]$manifiestoEjecucion.xpz
+        $NoInteractivo = $true
+        $DirectorioSalida = Join-Path ([string]$manifiestoEjecucion.staging) 'markdown'
+        if (-not (Test-Path -LiteralPath $DirectorioSalida -PathType Container)) {
+            New-Item -ItemType Directory -Path $DirectorioSalida -Force | Out-Null
+        }
+        Write-Host ('  Ejecucion: ' + $manifiestoEjecucion.ejecucionId) -ForegroundColor DarkGray
+        Write-Host ('  Staging Markdown: ' + $DirectorioSalida) -ForegroundColor DarkGray
+    }
     $cargarConfiguracionParametros = @{ ConfigPath = $ConfigPath }
     if ($XpzPath) { $cargarConfiguracionParametros.XpzPath = $XpzPath }
     $configuracion = Cargar-Configuracion @cargarConfiguracionParametros
@@ -129,6 +146,7 @@ try {
         throw 'El inventario endpoints.json no contiene endpoints.'
     }
     Write-Host ("  Inventario: " + $endpoints.Count + " endpoints") -ForegroundColor DarkGray
+    $endpointsInventarioCompleto = @($endpoints)
 
     $ignoradosConfig = @($configuracion.ServiciosIgnorados)
     $ignoradosEnInventario = @($endpoints | Where-Object { $ignoradosConfig -contains $_.proceso })
@@ -156,7 +174,28 @@ try {
 
     $faseActual = 'seleccion-servicios'
     $modoSeleccionado = 0
-    if ($Todos) {
+    $modoNoInteractivo = $NoInteractivo -or @($FullyQualifiedNames).Count -gt 0
+    if ($modoNoInteractivo) {
+        if (@($FullyQualifiedNames).Count -eq 0) {
+            throw 'El modo no interactivo requiere al menos un FQN explícito.'
+        }
+        $fullyQualifiedNamesSolicitados = @($FullyQualifiedNames | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique)
+        $fullyQualifiedNamesInventario = @($endpointsInventarioCompleto | ForEach-Object { $_.proceso })
+        $fullyQualifiedNamesAusentes = @($fullyQualifiedNamesSolicitados | Where-Object {
+            $_ -notin $fullyQualifiedNamesInventario
+        })
+        if ($fullyQualifiedNamesAusentes.Count -gt 0) {
+            throw ('Los FQN explícitos no están en el inventario: ' + ($fullyQualifiedNamesAusentes -join ', ') + '.')
+        }
+        $modoSeleccionado = 4
+        $serviciosSeleccionados = @($endpoints | Where-Object { $_.proceso -in $fullyQualifiedNamesSolicitados })
+        $cantidadSolicitadaSinIgnorados = @($fullyQualifiedNamesSolicitados | Where-Object { $_ -notin @($ignoradosConfig) }).Count
+        if ($serviciosSeleccionados.Count -ne $cantidadSolicitadaSinIgnorados) {
+            throw ('La cantidad de servicios seleccionados (' + $serviciosSeleccionados.Count + ') no coincide con los FQN procesables solicitados (' + $cantidadSolicitadaSinIgnorados + ').')
+        }
+        Write-Host ''
+        Write-Host ('  Modo no interactivo: ' + $fullyQualifiedNamesSolicitados.Count + ' FQN explícito(s), ' + $cantidadSolicitadaSinIgnorados + ' procesable(s).') -ForegroundColor DarkGray
+    } elseif ($Todos) {
         $modoSeleccionado = 3
         Write-Host ''
         Write-Host '  Modo automatico: TODOS los servicios.' -ForegroundColor DarkGray
@@ -179,7 +218,7 @@ try {
     }
     Write-Host ("  Modo seleccionado: " + $modoSeleccionado) -ForegroundColor DarkGray
 
-    $serviciosSeleccionados = @()
+    if ($null -eq $serviciosSeleccionados) { $serviciosSeleccionados = @() }
 
     if ($modoSeleccionado -eq 1) {
         Write-Step 2 'Seleccion del servicio...'
@@ -205,7 +244,7 @@ try {
         $seleccionadosGrid = $endpoints | Select-Object nombre, proceso | Out-GridView -OutputMode Multiple -Title 'Seleccione los servicios (Ctrl+Click para multiples)'
         if ($null -eq $seleccionadosGrid) {
             Write-Host '  Seleccion cancelada. No se genero ningun documento.' -ForegroundColor Yellow
-            exit 0
+            exit 3
         }
         $serviciosSeleccionados = @($endpoints | Where-Object { $_.proceso -in $seleccionadosGrid.proceso })
         Write-Host ("  Seleccionados: " + $serviciosSeleccionados.Count + " servicios") -ForegroundColor DarkGray
@@ -226,7 +265,7 @@ try {
             $nombreLocal = $servicio.proceso.ToLowerInvariant()
         }
         if ($nombresLocalesVistos.ContainsKey($nombreLocal)) {
-            $duplicados.Add([pscustomobject]@{
+            [void]$duplicados.Add([pscustomobject]@{
                 servicio = $servicio.proceso
                 nombreLocal = $nombreLocal
                 ganador = $nombresLocalesVistos[$nombreLocal]
@@ -234,7 +273,7 @@ try {
             Write-Host ("  [WARNING] Duplicado: " + $servicio.proceso + " -> " + $nombreLocal + " (ganador: " + $nombresLocalesVistos[$nombreLocal] + ")") -ForegroundColor Yellow
         } else {
             $nombresLocalesVistos[$nombreLocal] = $servicio.proceso
-            $serviciosParaProcesar.Add($servicio)
+            [void]$serviciosParaProcesar.Add($servicio)
         }
     }
 
@@ -247,8 +286,12 @@ try {
     $errorCount = 0
     $omitidoCount = 0
     $resultados = New-Object System.Collections.Generic.List[object]
-    foreach ($ignorado in $ignoradosEnInventario) {
-        $resultados.Add([pscustomobject]@{
+    $ignoradosParaResultado = $ignoradosEnInventario
+    if ($modoSeleccionado -eq 4) {
+        $ignoradosParaResultado = @($ignoradosEnInventario | Where-Object { $_.proceso -in $fullyQualifiedNamesSolicitados })
+    }
+    foreach ($ignorado in $ignoradosParaResultado) {
+        [void]$resultados.Add([pscustomobject]@{
             FullyQualifiedName = $ignorado.proceso
             Estado = 'OMITIDO'
             Documento = ''
@@ -268,7 +311,7 @@ try {
             Write-Progress -Activity 'Generando documentacion de servicio' -PercentComplete $progreso -Status "Procesando $contador de $totalServicios"
         }
         $resultado = Procesar-Servicio -Endpoint $servicio -PackageName $configuracion.PackageName -Xml $xmlAnalisis -Indice $indices -DirectorioSalida $DirectorioSalida -ListaDiagnosticos $diagnosticosIA -RaizRepositorio $RaizRepositorio -Silencioso:($modoSeleccionado -ne 1)
-        $resultados.Add($resultado)
+        [void]$resultados.Add($resultado)
         if ($resultado.Estado -eq 'OK') {
             $okCount++
             Write-Host ("  [OK] " + $servicio.proceso + " — Documentacion generada correctamente.") -ForegroundColor Green
@@ -282,14 +325,15 @@ try {
     }
 
     foreach ($dup in $duplicados) {
-        $resultados.Add([pscustomobject]@{
+        $estadoDuplicado = if ($modoSeleccionado -eq 4) { 'ERROR' } else { 'WARNING' }
+        [void]$resultados.Add([pscustomobject]@{
             FullyQualifiedName = $dup.servicio
-            Estado = 'WARNING'
+            Estado = $estadoDuplicado
             Documento = ''
             Pendientes = @()
             Mensajes = @("Nombre local duplicado '$($dup.nombreLocal)'. El ganador es '$($dup.ganador)'.")
         })
-        $warningCount++
+        if ($modoSeleccionado -eq 4) { $errorCount++ } else { $warningCount++ }
     }
 
     # Un servicio que termina en ERROR no debe borrar su documentación previa.
@@ -312,7 +356,7 @@ try {
             xpz = $configuracion.XpzPath
             inicio = $StartTime.ToString('s')
             fin = $finEjecucion.ToString('s')
-            seleccionados = $serviciosSeleccionados.Count
+            seleccionados = if ($modoSeleccionado -eq 4) { @($fullyQualifiedNamesSolicitados).Count } else { $serviciosSeleccionados.Count }
             ok = $okCount
             warning = $warningCount
             error = $errorCount
@@ -328,11 +372,20 @@ try {
             }
         })
     }
-    $rutaRevision = Join-Path $DirectorioLogs ($marcaTemporal + '-review.json')
+    if ($RutaReview) {
+        $rutaRevision = [System.IO.Path]::GetFullPath($RutaReview)
+        $directorioRutaReview = [System.IO.Path]::GetDirectoryName($rutaRevision)
+        if (-not (Test-Path -LiteralPath $directorioRutaReview -PathType Container)) {
+            New-Item -ItemType Directory -Path $directorioRutaReview -Force | Out-Null
+        }
+    } else {
+        $rutaRevision = Join-Path $DirectorioLogs ($marcaTemporal + '-review.json')
+    }
     $jsonRevision = $revision | ConvertTo-Json -Depth 5
     $jsonRevision = $jsonRevision -replace "`r`n", "`n"
     [System.IO.File]::WriteAllText($rutaRevision, $jsonRevision, (New-Object System.Text.UTF8Encoding($false)))
     Write-Host ("Review: " + $rutaRevision) -ForegroundColor DarkGray
+    $script:RutaReviewGenerada = $rutaRevision
 
     $tieneIncidencias = ($warningCount -gt 0 -or $errorCount -gt 0)
     if ($tieneIncidencias) {
@@ -371,9 +424,14 @@ try {
         Write-Host ''
         Write-Host ("  ATENCION: La ejecucion termino con " + $errorCount + " error(es). Revise los logs.") -ForegroundColor Yellow
         $script:ExitCode = 1
+    } elseif ($warningCount -gt 0) {
+        Write-Host ''
+        Write-Host ("  ATENCION: La ejecucion termino parcialmente con " + $warningCount + " servicio(s) pendiente(s). Revise los logs.") -ForegroundColor Yellow
+        $script:ExitCode = 2
     } else {
         $script:ExitCode = 0
     }
+    Write-Output $rutaRevision
 } catch {
     $diagnosticosIA.Add((New-DiagnosticoIAError -ErrorRecord $_ -Componente 'GenerarDocumento' -Fase $faseActual -RaizRepositorio $RaizRepositorio))
     Write-Host ''
@@ -388,5 +446,5 @@ try {
 } finally {
     Write-Host ''
     Write-Host ("Fin: " + ((Get-Date) - $StartTime).ToString('mm\:ss')) -ForegroundColor DarkGray
-    if ($script:ExitCode -eq 1) { exit 1 }
+    if ($script:ExitCode -ne 0) { exit $script:ExitCode }
 }

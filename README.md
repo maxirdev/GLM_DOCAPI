@@ -13,13 +13,31 @@ La fuente principal es el XPZ indicado en `configuracion.json`. El archivo conti
 | Inventario de endpoints | Operativo | Lee el XPZ configurado, localiza `APIGLM.APIGLMMain`, resuelve sus llamadas activas y genera `endpoints.json` y `endpoints.md`. |
 | Validación de completitud del XPZ | Operativo | `ValidarXPZ.ps1` valida el inventario contra el XPZ principal y los complementarios `<nombre>_<N>.xpz`, aplica las estrategias de resolución de tipos y produce la receta de exportación en `Logs/*-validacion-xpz.json`. |
 | Visor web | Operativo (manual) | `GenerarVistaHTML.ps1` consume `endpoints.json`, incorpora el `cliente` definido en la configuración y genera `APIServicios.html`. Se ejecuta por separado; no lo invoca el lanzador. |
-| Documentación de servicios | Operativo con revisión | Permite procesar un servicio, una selección múltiple o todo el inventario usando el XPZ principal y sus complementos numerados. Expande SDT recursivos de forma segura, sigue flujos reales/formales y utiliza evidencia global por identidad exacta de SDT y ruta interna. Cada resultado queda clasificado como `OK`, `WARNING`, `ERROR` u `OMITIDO`. |
-| Generación de PDF con el XPZ seleccionado | Operativo | La opción 3 regenera el inventario, valida la completitud del XPZ con el mismo control previo a la exportación selectiva (`ValidarXPZ.ps1`) y, si el XPZ requiere componentes adicionales, exporta los elementos necesarios informando al usuario. Si la exportación falla o se detiene sin completar, pregunta si desea continuar de todas formas advirtiendo que algunos servicios no se documentarán. Luego genera los Markdown y los convierte a PDF. |
-| Diagnósticos | Operativo | Una ejecución completada del generador produce `review.json`; los `WARNING`/`ERROR`/`OMITIDO` pueden generar `errores.txt` y las excepciones generan `diagnostico-ia.json` en `Logs/`. |
-| Grafo y detección de cambios | No implementado | El grafo de dependencias, la detección automática de cambios y `controlVersiones.json` no forman parte de los procesos disponibles. |
+| Documentación de servicios | Operativo con revisión | Permite procesar un servicio, una selección múltiple o todo el inventario usando el XPZ principal y sus complementos numerados. Expande SDT recursivos de forma segura, sigue flujos reales/formales y utiliza evidencia global por identidad exacta de SDT y ruta interna. Cada resultado queda clasificado como `OK`, `WARNING`, `ERROR` u `OMITIDO`. `ActualizarServicios.ps1` admite actualización incremental; la opción 3 solicita actualmente una regeneración completa. |
+| Generación de PDF con el XPZ seleccionado | Operativo y transaccional | La opción 3 regenera el inventario, valida la completitud del XPZ con el mismo control previo a la exportación selectiva (`ValidarXPZ.ps1`) y, si el XPZ requiere componentes adicionales, exporta los elementos necesarios informando al usuario. Luego genera Markdown y PDF en staging; cada servicio se publica solo después de validar ambos artefactos. |
+| Diagnósticos y review | Operativo | Una ejecución completada produce un review con estados Markdown/PDF, hashes, versiones y promoción. Los `WARNING`/`ERROR`/`OMITIDO` pueden generar `errores.txt` y las excepciones generan `diagnostico-ia.json` en `Logs/`. |
+| Actualización incremental | Operativo | `ActualizarServicios.ps1` compara el control de versiones, regenera únicamente los servicios afectados, publica Markdown y PDF conjuntamente y conserva los artefactos anteriores ante fallos. |
 | Artefactos generados | Bajo demanda | El inventario, el visor, los documentos de servicios y los logs se crean al ejecutar los generadores; no se presupone que existan en una copia nueva. |
 
 Los valores `xpz`, `packagename`, `cliente` y `serviciosIgnorados` se leen de `configuracion.json` y pueden cambiar entre ejecuciones. La cantidad de endpoints confirmados se calcula desde el XPZ activo; las cantidades de resultados `OK`, `WARNING`, `ERROR` y `OMITIDO` dependen de la evidencia de cada export.
+
+## Actualización transaccional
+
+La opción 3 genera primero Markdown y PDF en staging privado de la ejecución. Un servicio solo se publica cuando ambos artefactos son válidos; el reemplazo conjunto calcula los hashes sobre los archivos publicados. Si falla el Markdown o el PDF, se conserva el Markdown, PDF, versión y hashes anteriores y se registra un pendiente. Otros servicios exitosos sí pueden publicarse y la ejecución devuelve código `2`.
+
+El control persistente está en `estado/controlVersiones.json`, que usa `schemaVersion = 2` y conserva `documentHash`, `pdfHash`, `revision`, `version` y el estado `ACTIVO`, `ELIMINADO` u `OMITIDO`. Los cambios de `lineageId`, un esquema incompatible o una estructura inválida detienen la actualización; la recuperación requiere solicitar explícitamente `-Inicializar`. La carpeta `estado/` es local y está ignorada por Git.
+
+Durante la actualización se mantiene un lock exclusivo en `estado/actualizacion.lock`. Una segunda ejecución termina con código `1` sin modificar los artefactos vigentes. Los códigos son `0` completo, `1` error fatal, `2` parcial y `3` abortado.
+
+## Pruebas locales
+
+El harness se ejecuta sin Pester, Node.js ni dependencias externas:
+
+```powershell
+.\test\Run-Tests.ps1
+```
+
+Actualmente cubre el pipeline, configuración, selección no interactiva, inventario multi-XPZ, análisis de contratos, validación Markdown, visor, control de versiones esquema 2, staging/promoción y lock. La última ejecución verificada produjo `83 casos, 0 fallos`. Los temporales se escriben únicamente en `test/tmp/` y los logs de prueba en `test/Logs/`.
 
 Hay dos mecanismos de deduplicación distintos según el proceso:
 
@@ -251,9 +269,13 @@ Cada documento se produce en tres etapas, implementadas como módulos PowerShell
 | `AnalizarServicio.ps1` | Abre el XPZ como ZIP de solo lectura, localiza wrapper y programa principal, resuelve GET/POST, tipifica campos, expande SDT —incluidas autorreferencias—, sigue argumentos reales y parámetros formales, consulta evidencia global por `SDT FQN + ruta`, determina obligatoriedad, resuelve salidas estructuradas, delegadas, textuales o binarias, y obtiene errores HTTP y endpoint publicado. |
 | `RedactarDocumento.ps1` | Toma la documentación técnica en memoria y renderiza el markdown según la plantilla, respetando bloques canónicos y reemplazando marcadores con datos o pendientes. |
 | `EscribirSalidas.ps1` | Escribe la redacción como `.md` en `documentacion/servicios/<wrapper>.md`. |
-| `GenerarPdfServicios.ps1` | Convierte bajo demanda los `.md` existentes a `.pdf` mediante Pandoc + Typst portable, Poppins y la plantilla visual del proyecto, sin modificar el Markdown. |
+| `GenerarPdfServicios.ps1` | Convierte bajo demanda los `.md` existentes a `.pdf` mediante Pandoc + Typst portable, Poppins y la plantilla visual del proyecto, sin modificar el Markdown. Con un manifiesto genera el PDF en staging y devuelve su hash. |
 | `CargarConfiguracion.ps1` | Módulo común de carga de `configuracion.json`: resuelve la ruta del XPZ contra la raíz del repositorio, aplica el override de `-XpzPath` y expone `PackageName`, `Cliente` y `ServiciosIgnorados`. Se importa por dot-source desde el generador, el inventario y el visor. |
 | `GenerarDocumento.ps1` | Orquestador: carga el XPZ principal y sus complementos mediante `CargarMultiXPZ.ps1`, lee inventario, filtra ignorados, detecta duplicados, despliega menú, encadena los tres módulos anteriores, conserva documentos previos ante `ERROR` y escribe los logs. |
+| `ActualizarServicios.ps1` | Orquestador incremental: compara fingerprints y dependencias, genera en staging, publica Markdown/PDF conjuntamente, conserva pendientes y actualiza el control de versiones esquema 2. |
+| `ControlVersiones.ps1` | Valida, compara, persiste atómicamente y calcula versiones, hashes, estados y pendientes del control global. |
+| `ManifiestoEjecucion.ps1` | Crea y valida el manifiesto por ejecución, sus FQN solicitados y el directorio de staging; elimina el staging al finalizar. |
+| `GestionDocumentosGLM.ps1` | Orquestador PowerShell del lanzador: preflight, menú, selección de XPZ, exportación, completitud, actualización transaccional y propagación de códigos de salida. |
 | `DiagnosticoIA.ps1` | Captura excepciones del pipeline en un JSON estructurado para análisis técnico, con rutas relativas al repositorio y rutas externas enmascaradas. |
 
 ### Estados, limpieza, logs y códigos de salida
@@ -321,9 +343,11 @@ La marca temporal de los logs tiene precisión de un segundo: dos ejecuciones qu
 | `binary/ExportarXPZ.msbuild` | Proyecto MSBuild que abre la KB, exporta `Module:APIGLM` con referencias mínimas y cierra la KB. |
 | `binary/ListarXPZPrincipales.ps1` | Enumera los XPZ disponibles en `xpz/` para el selector de XPZ principal del lanzador. |
 | `binary/RenderizarMarkdownTypstPdf.ps1` | Renderiza un `.md` a `.pdf` mediante Typst portable y la plantilla visual del proyecto. |
-| `binary/ResumirOperacionPdf.ps1` | Resume la operación PDF usando el reporte de revisión más reciente del generador al finalizar la conversión. |
+| `binary/ResumirOperacionPdf.ps1` | Resume la operación PDF validando físicamente los PDF existentes y separando publicados, conservados, omitidos y fallidos. |
+| `test/Run-Tests.ps1` | Harness local sin dependencias externas para pipeline, analizador, visor y contratos transaccionales; escribe solo en `test/tmp/` y `test/Logs/`. |
+| `estado/` | Estado local ignorado por Git: `controlVersiones.json` esquema 2 y `actualizacion.lock` durante una actualización. |
 | `Logs/exportarXPZ_<marca>.log` | Log completo generado por MSBuild durante una exportación automática del XPZ. |
-| `Logs/yyyyMMdd-HHmmss-review.json` | Resultado agregado de una ejecución completada (incluye `OK`, `WARNING`, `ERROR` y los `OMITIDO` presentes en el inventario). |
+| `Logs/yyyyMMdd-HHmmss-review.json` | Review del generador directo; el review de actualización usa el `ejecucionId` del manifiesto e incluye estados Markdown/PDF, hashes, versiones y `promocionado`. |
 | `Logs/yyyyMMdd-HHmmss-errores.txt` | `WARNING`, `ERROR` y `OMITIDO` legibles; se genera solo cuando hay al menos un warning o error. |
 | `Logs/yyyyMMdd-HHmmss-diagnostico-ia.json` | Excepciones estructuradas con fase, causa interna, ubicación, sentencia y stack trace; se genera solo cuando hay errores. |
 | `Logs/yyyyMMdd-HHmmss-validacion-xpz.json` | Reporte de completitud del XPZ: conteos de la ejecución, servicios que requieren exportación adicional, `selectores` tipo:FQN y `objectList` con los nombres legibles. Se genera en cada ejecución de `ValidarXPZ.ps1`. |
@@ -349,6 +373,7 @@ El desarrollo sigue el método spec-driven. Cada spec define el alcance, modelo 
 | [SPEC 13](specs/13-lanzador-unificado-exportacion-y-pdf.md) | Aprobado e implementado | Lanzador unificado `GenerarDocumentosGLM.cmd`: validación de dependencias, exportación, completitud del XPZ y PDF bajo demanda. |
 | [SPEC 14](specs/14-selector-xpz-principal.md) | Aprobado e implementado | Selector de XPZ principal en el lanzador y generación de PDF con el XPZ seleccionado. |
 | [SPEC 15](specs/15-panel-web-interactivo.md) | Aprobado (no implementado) | Panel web local servido por `HttpListener` que expone las operaciones del lanzador. |
+| [SPEC 16](specs/16-integridad-transaccional-generacion-documentos.md) | Aprobado e implementado | Integridad transaccional de Markdown/PDF, staging, control de versiones esquema 2, estados, pendientes, review final, lock y códigos de salida. |
 
 Las filas en `Borrador` corresponden a funcionalidades en desarrollo; las funcionalidades que no aparecen en esta tabla no se consideran disponibles. Las propuestas futuras deben incorporarse mediante una spec aprobada antes de documentarse como parte del proceso operativo.
 
@@ -465,11 +490,26 @@ El endpoint publicado se escribe en minúsculas y se construye con el `packagena
 1. Asegurarse de que `configuracion.json` apunte al XPZ correcto, tenga el `packagename` adecuado y la lista `serviciosIgnorados` actualizada.
 2. Regenerar el inventario y validar la completitud del XPZ con la opción 3 de `GenerarDocumentosGLM.cmd` (o invocando `GenerarListaEndpoints.ps1` + `ValidarXPZ.ps1`); si el validador informa servicios con objetos a exportar, revisar `Logs/*-validacion-xpz.json`.
 3. Ejecutar `GenerarDocumento.ps1` y elegir un modo en el menú interactivo (opciones 1, 2 o 3), o usar la opción 3 del lanzador para el lote completo.
-4. El generador aplica las reglas implementadas a partir de `analisisXPZ.md` → `reglasEditoriales.md` → `templateDoc.md` y escribe cada `.md` en `documentacion/servicios/`. Los PDF se generan después mediante la opción bajo demanda.
+4. El generador directo aplica las reglas implementadas a partir de `analisisXPZ.md` → `reglasEditoriales.md` → `templateDoc.md` y escribe cada `.md` en `documentacion/servicios/`. Los PDF se generan después mediante la opción bajo demanda.
 5. Revisar `Logs/*-errores.txt` y `*-review.json` para los warnings, errores y pendientes de la ejecución.
 6. Ante un error, compartir el archivo `Logs/*-diagnostico-ia.json` más reciente para localizar rápidamente la fase y la línea que fallaron.
 
-Tras cambiar el XPZ o cualquier valor de `configuracion.json`, regenerar primero el inventario y el visor. Después volver a ejecutar el generador de servicios en el modo adecuado; el proceso actual no detecta automáticamente qué objetos cambiaron.
+Tras cambiar el XPZ o cualquier valor de `configuracion.json`, regenerar primero el inventario y el visor cuando se use el generador directo. Ese generador no detecta automáticamente qué objetos cambiaron. `ActualizarServicios.ps1`, invocado sin `-ForzarRegeneracionCompleta`, calcula los candidatos afectados mediante el control incremental; la opción 3 lo invoca actualmente con regeneración completa.
+
+### Actualización incremental y publicación
+
+`binary/ActualizarServicios.ps1` es el flujo transaccional utilizado por la opción 3 y también puede invocarse directamente. Lee o inicializa explícitamente `estado/controlVersiones.json`, calcula fingerprints del XPZ y del perfil documental, detecta servicios nuevos, afectados, pendientes, ignorados o eliminados y, salvo que se solicite regeneración completa, procesa solo los candidatos necesarios. La opción 3 actual pasa `-ForzarRegeneracionCompleta`.
+
+La secuencia por servicio es:
+
+1. Analizar y redactar en staging Markdown.
+2. Convertir el Markdown de staging a PDF y validar su cabecera `%PDF`.
+3. Promover Markdown y PDF conjuntamente al directorio productivo.
+4. Calcular `documentHash` y `pdfHash` sobre los archivos publicados.
+5. Incrementar `revision` una sola vez y conservar `version = 1.<revision>`.
+6. Escribir el control de versiones de forma atómica después de resolver el lote.
+
+Los estados persistidos son `ACTIVO`, `ELIMINADO` y `OMITIDO`. Los servicios ignorados conservan su historial como `OMITIDO`; los ausentes del inventario se conservan como `ELIMINADO`; los reactivados vuelven a `ACTIVO` solo después de publicar Markdown y PDF válidos. Un fallo crea o actualiza un pendiente y no reemplaza el baseline anterior.
 
 > **Coherencia inventario-XPZ.** El generador de servicios no verifica que `endpoints.json` corresponda al XPZ activo: carga el inventario desde una ruta fija y luego abre el XPZ por separado. Si el inventario está desactualizado, cada wrapper que no exista en el XPZ abierto termina en `ERROR`. Conviene regenerar el inventario antes de documentar.
 
@@ -494,8 +534,8 @@ El objetivo normativo es que el documento indique qué dato está pendiente y qu
 
 Comportamientos conocidos que conviene tener presentes y que no deben interpretarse como diseño definitivo:
 
-- **Escrituras no atómicas.** El inventario escribe `endpoints.json` y luego `endpoints.md`; un error intermedio puede dejar JSON nuevo y Markdown anterior. El visor sobrescribe directamente el HTML. No hay archivos temporales ni rollback.
-- **Pendientes fuera del estado.** La descripción funcional faltante o los mensajes/códigos HTTP pendientes pueden aparecer dentro del documento sin cambiar el estado a `WARNING` (solo los pendientes de tipos y descripciones de campos alimentan el estado).
+- **Escrituras del inventario y visor.** El inventario escribe `endpoints.json` y luego `endpoints.md`; un error intermedio puede dejar JSON nuevo y Markdown anterior. El visor sobrescribe directamente el HTML. La publicación de servicios sí usa staging, reemplazo conjunto, validación y rollback.
+- **Pendientes de análisis.** La descripción funcional faltante o los mensajes/códigos HTTP pendientes pueden aparecer dentro del documento sin cambiar el estado directo a `WARNING` (solo los pendientes de tipos y descripciones de campos alimentan ese estado). Los fallos de publicación incremental sí quedan persistidos en `pendientes`.
 - **Códigos de error no mapeados.** Un `HttpCode.*` desconocido se conserva como código `0` y se muestra como `PENDIENTE DE CONFIRMACIÓN` en la tabla de errores.
 - **`-XpzPath` y fuente única.** El override permite analizar un XPZ distinto del configurado manteniendo `packagename`/`cliente` de la configuración; usar con coherencia o el inventario puede no corresponder al XPZ abierto.
 - **Coherencia inventario-XPZ.** El generador no verifica que `endpoints.json` corresponda al XPZ activo.

@@ -35,7 +35,23 @@ function Escribir-Salidas {
     }
     $contenido = $Documento -replace "`r`n", "`n" -replace "`r", "`n"
     $codificacion = New-Object System.Text.UTF8Encoding($false)
-    [System.IO.File]::WriteAllText($rutaDocumento, $contenido, $codificacion)
+    $rutaTemporal = $rutaDocumento + '.' + [guid]::NewGuid().ToString('N') + '.tmp'
+    $rutaRespaldo = $rutaDocumento + '.' + [guid]::NewGuid().ToString('N') + '.bak'
+    try {
+        [System.IO.File]::WriteAllText($rutaTemporal, $contenido, $codificacion)
+        if (Test-Path -LiteralPath $rutaDocumento -PathType Leaf) {
+            [System.IO.File]::Replace($rutaTemporal, $rutaDocumento, $rutaRespaldo)
+        } else {
+            [System.IO.File]::Move($rutaTemporal, $rutaDocumento)
+        }
+    } finally {
+        if (Test-Path -LiteralPath $rutaTemporal -PathType Leaf) {
+            Remove-Item -LiteralPath $rutaTemporal -Force -ErrorAction SilentlyContinue
+        }
+        if (Test-Path -LiteralPath $rutaRespaldo -PathType Leaf) {
+            Remove-Item -LiteralPath $rutaRespaldo -Force -ErrorAction SilentlyContinue
+        }
+    }
 
     return $rutaDocumento
 }

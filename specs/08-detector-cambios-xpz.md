@@ -1,6 +1,6 @@
 # SPEC 08 — Actualización de servicios por cambios en el XPZ
 
-> **Estado:** Borrador
+> **Estado:** Aprobado
 > **Depende de:** SPEC 05, SPEC 06, SPEC 09, SPEC 11, SPEC 12, SPEC 13, SPEC 14
 > **Fecha:** 2026-08-09
 > **Revisado:** 2026-08-14

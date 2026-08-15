@@ -15,6 +15,7 @@ servicios/
 logs/
 resources/
 tmp/
+estado/
 
 binary/tools/pandoc.exe
 binary/tools/typst.exe
