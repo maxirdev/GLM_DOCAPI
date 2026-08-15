@@ -12,6 +12,11 @@ set "SIN_XPZ=0"
 set "CONFIGURACION_INVALIDA=0"
 set "XPZ_ACTIVO="
 set "XPZ_ACTIVO_NOMBRE=ninguno"
+set "POWERSHELL_EXE=%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe"
+
+if not defined SCRIPT_DIR goto error_arranque
+if not exist "%POWERSHELL_EXE%" goto error_powershell
+if not exist "%SCRIPT_DIR%binary\ValidarConfiguracionGLM.ps1" goto error_validador
 
 call :preflight
 
@@ -33,6 +38,11 @@ if errorlevel 2 goto seleccion_xpz
 goto exportacion
 
 :menu_sin_xpz
+echo.
+echo [AVISO] No hay archivos XPZ disponibles en:
+echo   %SCRIPT_DIR%xpz
+echo Puede exportar APIGLMMain para generar el XPZ o salir.
+echo.
 %SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Write-Host '  1. Exportar APIGLMMain' -ForegroundColor White; Write-Host '  2. Salir' -ForegroundColor White; Write-Host ''; Write-Host -NoNewline 'Seleccione una opcion [1-2]: ' -ForegroundColor White"
 choice /C 12 /N
 if errorlevel 2 goto salir
@@ -82,6 +92,44 @@ echo ==============================================================
 echo.
 echo Esta operacion sera integrada en los siguientes pasos.
 exit /b 0
+
+:error_arranque
+echo.
+echo ==============================================================
+echo   ERROR DE ARRANQUE
+echo ==============================================================
+echo.
+echo No se pudo determinar la carpeta del repositorio.
+echo Ejecute este archivo desde una copia local valida del proyecto.
+echo.
+pause
+exit /b 1
+
+:error_powershell
+echo.
+echo ==============================================================
+echo   ERROR DE ARRANQUE
+echo ==============================================================
+echo.
+echo No se encontro Windows PowerShell en:
+echo   %POWERSHELL_EXE%
+echo Verifique la instalacion de Windows antes de continuar.
+echo.
+pause
+exit /b 1
+
+:error_validador
+echo.
+echo ==============================================================
+echo   ERROR DE ARRANQUE
+echo ==============================================================
+echo.
+echo Falta el validador inicial del proyecto:
+echo   %SCRIPT_DIR%binary\ValidarConfiguracionGLM.ps1
+echo La instalacion del repositorio parece incompleta.
+echo.
+pause
+exit /b 1
 
 :ejecutar_test
 set "ULTIMO_ESTADO=OPERANDO"
@@ -241,6 +289,7 @@ for %%F in ("!XPZ_ELEGIDO!") do (
 
 :obtener_xpz_principales
 set "XPZ_CANTIDAD=0"
+if not exist "%SCRIPT_DIR%xpz\" exit /b 0
 for /f "usebackq delims=" %%L in (`%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%binary\ListarXPZPrincipales.ps1" -DirectorioXpz "%SCRIPT_DIR%xpz"`) do (
     call :registrar_linea_xpz "%%L"
 )

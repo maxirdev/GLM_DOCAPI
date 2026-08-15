@@ -265,6 +265,13 @@ function Ejecutar-CasosPipeline {
     [System.IO.File]::WriteAllText($rutaDocOk, $contenidoPrevOk, (New-Object System.Text.UTF8Encoding($false)))
     [System.IO.File]::WriteAllText($rutaDocListar, 'DOCUMENTO PREVIO DEL SERVICIO LISTAR', (New-Object System.Text.UTF8Encoding($false)))
 
+    $estadoProductivoAntes = @{}
+    if (Test-Path -LiteralPath $DirectorioServiciosProduccion) {
+        foreach ($archivoProductivo in @(Get-ChildItem -LiteralPath $DirectorioServiciosProduccion -Filter '*.md' -File -ErrorAction SilentlyContinue)) {
+            $estadoProductivoAntes[$archivoProductivo.FullName] = (Get-FileHash -LiteralPath $archivoProductivo.FullName -Algorithm SHA256).Hash
+        }
+    }
+
     $pipeline = $null
     try {
         $pipeline = Ejecutar-PipelinePrueba -Configuracion $configPrueba -RutaInventario $rutaInventario -DirectorioSalida $DirectorioTmp
@@ -316,11 +323,22 @@ function Ejecutar-CasosPipeline {
         (Resolver-CodigoSalida -CasosPrueba $casosConFail) -eq 1
     ) -DetalleExito 'El codigo de salida es 0 sin fallos y 1 con al menos un fallo.' -DetalleFallo 'El codigo de salida no se resuelve como se espera.'
 
-    $archivosMdProductivos = @()
+    $estadoProductivoDespues = @{}
     if (Test-Path -LiteralPath $DirectorioServiciosProduccion) {
-        $archivosMdProductivos = @(Get-ChildItem -LiteralPath $DirectorioServiciosProduccion -Filter '*.md' -File -ErrorAction SilentlyContinue)
+        foreach ($archivoProductivo in @(Get-ChildItem -LiteralPath $DirectorioServiciosProduccion -Filter '*.md' -File -ErrorAction SilentlyContinue)) {
+            $estadoProductivoDespues[$archivoProductivo.FullName] = (Get-FileHash -LiteralPath $archivoProductivo.FullName -Algorithm SHA256).Hash
+        }
     }
-    Test-Asercion -Id 'pipeline.sinEscrituraProductiva' -Condicion ($archivosMdProductivos.Count -eq 0) -DetalleExito 'La ejecucion del pipeline de prueba no escribio documentos en carpetas productivas.' -DetalleFallo 'La ejecucion del pipeline de prueba escribio documentos en una carpeta productiva.'
+    $sinEscrituraProductiva = $estadoProductivoAntes.Count -eq $estadoProductivoDespues.Count
+    if ($sinEscrituraProductiva) {
+        foreach ($rutaProductiva in $estadoProductivoAntes.Keys) {
+            if (-not $estadoProductivoDespues.ContainsKey($rutaProductiva) -or $estadoProductivoDespues[$rutaProductiva] -ne $estadoProductivoAntes[$rutaProductiva]) {
+                $sinEscrituraProductiva = $false
+                break
+            }
+        }
+    }
+    Test-Asercion -Id 'pipeline.sinEscrituraProductiva' -Condicion $sinEscrituraProductiva -DetalleExito 'La ejecucion del pipeline de prueba no escribio documentos en carpetas productivas.' -DetalleFallo 'La ejecucion del pipeline de prueba escribio o modifico documentos en una carpeta productiva.'
 }
 
 function Ejecutar-CasosPosicionesGet {
@@ -722,15 +740,32 @@ function Validar-MarkdownObligatorio {
     param(
         [Parameter(Mandatory = $true)][string]$Contenido
     )
+    $lineas = @($Contenido -split "`n")
     $indiceObligatorio = -1
-    foreach ($linea in ($Contenido -split "`n")) {
-        if ($linea -notmatch '\|') { continue }
-        if ($linea -match '^\s*\|?(:?-+:?\|)+\s*$') { continue }
-        $celdas = @($linea -split '\|' | ForEach-Object { $_.Trim().TrimStart('`').TrimEnd('`') })
-        if ($celdas -contains 'Obligatorio') {
-            $indiceObligatorio = [Array]::IndexOf($celdas, 'Obligatorio')
+    for ($i = 0; $i -lt $lineas.Count; $i++) {
+        $linea = $lineas[$i]
+        if ($linea -notmatch '\|') {
+            $indiceObligatorio = -1
             continue
         }
+        if ($linea -match '^\s*\|?(:?-+:?\|)+\s*$') { continue }
+
+        $celdas = @($linea -split '\|' | ForEach-Object { $_.Trim().TrimStart('`').TrimEnd('`') })
+        $siguienteEsSeparador = $false
+        if (($i + 1) -lt $lineas.Count) {
+            $siguienteEsSeparador = $lineas[$i + 1] -match '^\s*\|?(:?-+:?\|)+\s*$'
+        }
+
+        if ($siguienteEsSeparador) {
+            if ($celdas -contains 'Obligatorio') {
+                $indiceObligatorio = [Array]::IndexOf($celdas, 'Obligatorio')
+            }
+            else {
+                $indiceObligatorio = -1
+            }
+            continue
+        }
+
         if ($indiceObligatorio -ge 0 -and $linea -match '^\s*\|' -and $celdas.Count -gt $indiceObligatorio) {
             $valor = $celdas[$indiceObligatorio]
             if ($valor -and $valor -notin @('SI', 'NO')) { return $false }
@@ -748,7 +783,37 @@ function Validar-MarkdownTiposCanonicos {
     param(
         [Parameter(Mandatory = $true)][string]$Contenido
     )
-    if ($Contenido -match '\b(Texto|Numérico|Objeto JSON)\b') { return $false }
+    $lineas = @($Contenido -split "`n")
+    $indiceTipo = -1
+    for ($i = 0; $i -lt $lineas.Count; $i++) {
+        $linea = $lineas[$i]
+        if ($linea -notmatch '\|') {
+            $indiceTipo = -1
+            continue
+        }
+        if ($linea -match '^\s*\|?(:?-+:?\|)+\s*$') { continue }
+
+        $celdas = @($linea -split '\|' | ForEach-Object { $_.Trim().TrimStart('`').TrimEnd('`') })
+        $siguienteEsSeparador = $false
+        if (($i + 1) -lt $lineas.Count) {
+            $siguienteEsSeparador = $lineas[$i + 1] -match '^\s*\|?(:?-+:?\|)+\s*$'
+        }
+
+        if ($siguienteEsSeparador) {
+            if ($celdas -contains 'Tipo') {
+                $indiceTipo = [Array]::IndexOf($celdas, 'Tipo')
+            }
+            else {
+                $indiceTipo = -1
+            }
+            continue
+        }
+
+        if ($indiceTipo -ge 0 -and $linea -match '^\s*\|' -and $celdas.Count -gt $indiceTipo) {
+            $tipo = $celdas[$indiceTipo]
+            if ($tipo -in @('Texto', 'Numérico', 'Objeto JSON')) { return $false }
+        }
+    }
     return $true
 }
 

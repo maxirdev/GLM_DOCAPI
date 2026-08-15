@@ -2,10 +2,17 @@
 
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory = $true)][string]$Repositorio
+    [Parameter(Mandatory = $false)][AllowEmptyString()][string]$Repositorio
 )
 
 $ErrorActionPreference = 'Stop'
+
+if ([string]::IsNullOrWhiteSpace($Repositorio)) {
+    Write-Host ''
+    Write-Host '  [ERROR DE ARRANQUE] No se recibio la ruta del repositorio.' -ForegroundColor Red
+    Write-Host '  Verifique que GenerarDocumentosGLM.cmd se ejecute desde una copia valida del proyecto.' -ForegroundColor Yellow
+    exit 1
+}
 
 $raizRepositorio = [System.IO.Path]::GetFullPath($Repositorio)
 $rutaConfiguracion = Join-Path $raizRepositorio 'configuracion.json'

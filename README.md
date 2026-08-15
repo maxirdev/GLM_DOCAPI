@@ -314,10 +314,14 @@ La marca temporal de los logs tiene precisión de un segundo: dos ejecuciones qu
 | `binary/CargarMultiXPZ.ps1` | Módulo común que descubre complementos `_N.xpz` y construye el XML e índice unificados con prioridad del XPZ principal. |
 | `binary/DiagnosticoIA.ps1` | Módulo común de diagnóstico de excepciones para el generador, el inventario y el visor. |
 | `binary/GenerarDocumento.ps1` | Orquestador del generador: filtra ignorados, detecta duplicados, menú interactivo de tres modos, pipeline análisis → redacción → escritura, limpieza de `ERROR` y logs. |
+| `binary/ValidarConfiguracionGLM.ps1` | Valida la configuración del proyecto al arrancar `GenerarDocumentosGLM.cmd`: existencia de `configuracion.json`, `xpz`, `packagename`, `herramientas` y del XPZ activo. |
 | `binary/ValidarXPZ.ps1` | Validador de completitud multi-XPZ contra el inventario: descubre complementos `<nombre>_<N>.xpz`, arma el índice unificado con cascada y escribe la receta de exportación en `Logs/*-validacion-xpz.json`. |
 | `binary/ExportarXPZProgreso.ps1` | Ejecuta MSBuild en segundo plano, interpreta sus eventos y mantiene visibles las tareas terminadas y la tarea activa. |
 | `binary/CompletarXPZActivoGLM.ps1` | Completa el XPZ activo antes de documentar: valida con `ValidarXPZ.ps1` y, si faltan componentes, exporta los selectivos necesarios en ciclos de hasta cinco; ante falla o detención con pendientes pregunta si se desea continuar de todas formas. Lo invoca la opción 3 de `GenerarDocumentosGLM.cmd`. |
 | `binary/ExportarXPZ.msbuild` | Proyecto MSBuild que abre la KB, exporta `Module:APIGLM` con referencias mínimas y cierra la KB. |
+| `binary/ListarXPZPrincipales.ps1` | Enumera los XPZ disponibles en `xpz/` para el selector de XPZ principal del lanzador. |
+| `binary/RenderizarMarkdownTypstPdf.ps1` | Renderiza un `.md` a `.pdf` mediante Typst portable y la plantilla visual del proyecto. |
+| `binary/ResumirOperacionPdf.ps1` | Resume la operación PDF usando el reporte de revisión más reciente del generador al finalizar la conversión. |
 | `Logs/exportarXPZ_<marca>.log` | Log completo generado por MSBuild durante una exportación automática del XPZ. |
 | `Logs/yyyyMMdd-HHmmss-review.json` | Resultado agregado de una ejecución completada (incluye `OK`, `WARNING`, `ERROR` y los `OMITIDO` presentes en el inventario). |
 | `Logs/yyyyMMdd-HHmmss-errores.txt` | `WARNING`, `ERROR` y `OMITIDO` legibles; se genera solo cuando hay al menos un warning o error. |
@@ -331,6 +335,7 @@ El desarrollo sigue el método spec-driven. Cada spec define el alcance, modelo 
 
 | Spec | Estado | Descripción |
 |---|---|---|
+| [SPEC 01](specs/01-documentacion-wsobtenertotalessolicitud.md) | Implementado | Documentación técnica del servicio `APIGLM.Emision.WSObtenerTotalesSolicitud` siguiendo `analisisXPZ.md` → `reglasEditoriales.md` → `templateDoc.md`. |
 | [SPEC 02](specs/02-visor-endpoints.md) | Aprobado e implementado | Visor web de endpoints: grilla con filtro, tema claro/oscuro y generación desde `endpoints.json`. |
 | [SPEC 03](specs/03-generador-documentacion-servicios.md) | Aprobado e implementado | Pipeline `AnalizarServicio.ps1` → `RedactarDocumento.ps1` → `EscribirSalidas.ps1`, configuración dinámica y selección interactiva. |
 | [SPEC 04](specs/04-menu-interactivo-generador.md) | Implementado | Menú interactivo con tres modos (individual, múltiple vía `Out-GridView`, lote completo), barra de progreso, regeneración sin confirmación y log de errores. |
@@ -339,10 +344,10 @@ El desarrollo sigue el método spec-driven. Cada spec define el alcance, modelo 
 | [SPEC 07](specs/07-coherencia-documental-y-visor.md) | Implementado | Coherencia documental y robustez del visor: normas y rutas alineadas con el pipeline real, seguridad, accesibilidad y adaptación móvil del visor. |
 | [SPEC 08](specs/08-detector-cambios-xpz.md) | Borrador | Detector de cambios por árbol transitivo del XPZ, checksums, historial de versiones y grafo de dependencias. |
 | [SPEC 09](specs/09-pruebas-automatizadas-locales.md) | Implementado | Harness local sin dependencias para probar pipeline, analizador y visor en entornos aislados. |
-| [SPEC 11](specs/11-validador-completitud-xpz.md) | Aprobado | Validador de completitud multi-XPZ: índice unificado con resolución en cascada, auto-descubrimiento de complementos `<nombre>_<N>.xpz` y reporte `Logs/<marca>-validacion-xpz.json` con la receta de exportación. |
-| [SPEC 12](specs/12-exportacion-selectiva-xpz.md) | Aprobado | Exportación selectiva desde el último reporte de validación y generación de complementos XPZ numerados. |
-| [SPEC 13](specs/13-lanzador-unificado-exportacion-y-pdf.md) | Aprobado | Lanzador unificado `GenerarDocumentosGLM.cmd`: validación de dependencias, exportación, completitud del XPZ y PDF bajo demanda. |
-| [SPEC 14](specs/14-selector-xpz-principal.md) | Aprobado | Selector de XPZ principal en el lanzador y generación de PDF con el XPZ seleccionado. |
+| [SPEC 11](specs/11-validador-completitud-xpz.md) | Aprobado e implementado | Validador de completitud multi-XPZ: índice unificado con resolución en cascada, auto-descubrimiento de complementos `<nombre>_<N>.xpz` y reporte `Logs/<marca>-validacion-xpz.json` con la receta de exportación. |
+| [SPEC 12](specs/12-exportacion-selectiva-xpz.md) | Aprobado e implementado | Exportación selectiva desde el último reporte de validación y generación de complementos XPZ numerados. |
+| [SPEC 13](specs/13-lanzador-unificado-exportacion-y-pdf.md) | Aprobado e implementado | Lanzador unificado `GenerarDocumentosGLM.cmd`: validación de dependencias, exportación, completitud del XPZ y PDF bajo demanda. |
+| [SPEC 14](specs/14-selector-xpz-principal.md) | Aprobado e implementado | Selector de XPZ principal en el lanzador y generación de PDF con el XPZ seleccionado. |
 | [SPEC 15](specs/15-panel-web-interactivo.md) | Aprobado (no implementado) | Panel web local servido por `HttpListener` que expone las operaciones del lanzador. |
 
 Las filas en `Borrador` corresponden a funcionalidades en desarrollo; las funcionalidades que no aparecen en esta tabla no se consideran disponibles. Las propuestas futuras deben incorporarse mediante una spec aprobada antes de documentarse como parte del proceso operativo.
