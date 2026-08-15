@@ -46,6 +46,8 @@ function Procesar-Servicio {
         [Parameter(Mandatory = $true)][string]$DirectorioSalida,
         [Parameter(Mandatory = $true)]$ListaDiagnosticos,
         [Parameter(Mandatory = $true)][string]$RaizRepositorio,
+        [Parameter(Mandatory = $false)][string]$Version = '1.0',
+        [Parameter(Mandatory = $false)][string]$NombreArchivo = '',
         [switch]$Silencioso
     )
 
@@ -61,12 +63,12 @@ function Procesar-Servicio {
 
         $faseServicio = 'redaccion'
         if (-not $Silencioso) { Write-Step 4 'Redactando el documento segun la plantilla...' }
-        $documento = Redactar-Documento -Documentacion $documentacion
+        $documento = Redactar-Documento -Documentacion $documentacion -Version $Version
         if (-not $Silencioso) { Write-Host ("  Documento redactado (" + $documento.Length + " caracteres)") -ForegroundColor DarkGray }
 
         $faseServicio = 'escritura'
         if (-not $Silencioso) { Write-Step 5 'Escribiendo las salidas...' }
-        $rutaDocumento = Escribir-Salidas -Documentacion $documentacion -Documento $documento -DirectorioSalida $DirectorioSalida
+        $rutaDocumento = Escribir-Salidas -Documentacion $documentacion -Documento $documento -DirectorioSalida $DirectorioSalida -NombreArchivo $NombreArchivo
 
         $tienePendientes = @($documentacion.Pendientes).Count -gt 0
         $estado = 'OK'
@@ -89,6 +91,26 @@ function Procesar-Servicio {
             Mensajes = @($_.Exception.Message)
         }
     }
+}
+
+function Obtener-VersionDocumentoServicio {
+    <#
+    .SYNOPSIS
+    Resuelve la version a incrustar en la fila Version del documento de un servicio.
+    .DESCRIPTION
+    Prioriza la version objetivo del manifiesto de ejecucion; si no existe, usa la
+    version publicada vigente del control de versiones y, sin ninguna de ambas, 1.0.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$FullyQualifiedName,
+        [Parameter(Mandatory = $true)][hashtable]$VersionesManifiesto,
+        [Parameter(Mandatory = $true)][hashtable]$VersionesPublicadas
+    )
+
+    if ($VersionesManifiesto.ContainsKey($FullyQualifiedName)) { return [string]$VersionesManifiesto[$FullyQualifiedName] }
+    if ($VersionesPublicadas.ContainsKey($FullyQualifiedName)) { return [string]$VersionesPublicadas[$FullyQualifiedName] }
+    return '1.0'
 }
 
 $RutaInventario = Join-Path $PSScriptRoot '..\documentacion\Endpoints\assets\endpoints.json'
@@ -121,6 +143,25 @@ try {
         }
         Write-Host ('  Ejecucion: ' + $manifiestoEjecucion.ejecucionId) -ForegroundColor DarkGray
         Write-Host ('  Staging Markdown: ' + $DirectorioSalida) -ForegroundColor DarkGray
+    }
+    $versionesManifiesto = @{}
+    if ($ManifiestoPath -and $null -ne $manifiestoEjecucion.PSObject.Properties['versions']) {
+        foreach ($propiedad in $manifiestoEjecucion.versions.PSObject.Properties) {
+            $versionesManifiesto[$propiedad.Name] = [string]$propiedad.Value
+        }
+    }
+    $versionesPublicadas = @{}
+    try {
+        . (Join-Path $PSScriptRoot 'ControlVersiones.ps1')
+        $controlPublicado = Leer-ControlVersiones -RutaControl (Join-Path $RaizRepositorio 'estado\controlVersiones.json')
+        $serviciosPublicados = Convertir-DiccionarioControlVersiones -Objeto $controlPublicado.services
+        foreach ($claveServicio in $serviciosPublicados.Keys) {
+            $servicioPublicado = $serviciosPublicados[$claveServicio]
+            if ([string](Obtener-PropiedadControlVersiones -Objeto $servicioPublicado -Nombre 'status') -eq 'ACTIVO') {
+                $versionesPublicadas[$claveServicio] = [string](Obtener-PropiedadControlVersiones -Objeto $servicioPublicado -Nombre 'version')
+            }
+        }
+    } catch {
     }
     $cargarConfiguracionParametros = @{ ConfigPath = $ConfigPath }
     if ($XpzPath) { $cargarConfiguracionParametros.XpzPath = $XpzPath }
@@ -257,13 +298,9 @@ try {
     $nombresLocalesVistos = @{}
     $serviciosParaProcesar = New-Object System.Collections.Generic.List[object]
     $duplicados = New-Object System.Collections.Generic.List[object]
+    $nombresInventario = @($endpointsInventarioCompleto | ForEach-Object { [string]$_.proceso })
     foreach ($servicio in $serviciosSeleccionados) {
-        $ultimoPunto = $servicio.proceso.LastIndexOf('.')
-        if ($ultimoPunto -gt 0) {
-            $nombreLocal = $servicio.proceso.Substring($ultimoPunto + 1).ToLowerInvariant()
-        } else {
-            $nombreLocal = $servicio.proceso.ToLowerInvariant()
-        }
+        $nombreLocal = Obtener-NombreArchivoServicio -FullyQualifiedName ([string]$servicio.proceso) -FqnsInventario $nombresInventario
         if ($nombresLocalesVistos.ContainsKey($nombreLocal)) {
             [void]$duplicados.Add([pscustomobject]@{
                 servicio = $servicio.proceso
@@ -310,7 +347,7 @@ try {
             $progreso = [math]::Floor(($contador / $totalServicios) * 100)
             Write-Progress -Activity 'Generando documentacion de servicio' -PercentComplete $progreso -Status "Procesando $contador de $totalServicios"
         }
-        $resultado = Procesar-Servicio -Endpoint $servicio -PackageName $configuracion.PackageName -Xml $xmlAnalisis -Indice $indices -DirectorioSalida $DirectorioSalida -ListaDiagnosticos $diagnosticosIA -RaizRepositorio $RaizRepositorio -Silencioso:($modoSeleccionado -ne 1)
+        $resultado = Procesar-Servicio -Endpoint $servicio -PackageName $configuracion.PackageName -Xml $xmlAnalisis -Indice $indices -DirectorioSalida $DirectorioSalida -ListaDiagnosticos $diagnosticosIA -RaizRepositorio $RaizRepositorio -Version (Obtener-VersionDocumentoServicio -FullyQualifiedName $servicio.proceso -VersionesManifiesto $versionesManifiesto -VersionesPublicadas $versionesPublicadas) -NombreArchivo (Obtener-NombreArchivoServicio -FullyQualifiedName ([string]$servicio.proceso) -FqnsInventario $nombresInventario) -Silencioso:($modoSeleccionado -ne 1)
         [void]$resultados.Add($resultado)
         if ($resultado.Estado -eq 'OK') {
             $okCount++

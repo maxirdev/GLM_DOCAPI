@@ -10,6 +10,7 @@ Este documento es la tercera fuente normativa y contiene el formato final. Se ut
 - Conservar únicamente la variante de entrada correspondiente.
 - Reemplazar los marcadores editoriales con datos confirmados o pendientes.
 - El campo Endpoint lleva el nombre completo publicado (package + módulo + procedimiento), en minúsculas, recibido en la documentación.
+- La fila Versión lleva la versión asignada por el control de versiones (`estado/controlVersiones.json`) con el formato `1.<revisión>`. No inventarla: si no existe un control, usar `1.0`.
 - Conservar en el JSON común `<Código HTTP>`, `<descripción general>` y `<detalle>`.
 - Conservar los marcadores descriptivos de mensajes dinámicos, como `<número>`.
 - Conservar literalmente `{Base64(usuario:contraseña)}` y no incluir credenciales reales.
@@ -31,6 +32,7 @@ Este documento es la tercera fuente normativa y contiene el formato final. Se ut
 | Descripción | <Descripción funcional> |
 | Método HTTP | `<GET/POST>` |
 | Autenticación | HTTP Basic mediante `Authorization` |
+| Versión | `<versión>` |
 
 ## Generalidades
 
@@ -124,6 +126,7 @@ Colección: `<SI/NO>`.
 ## Verificación final
 
 - [ ] Conservar solo la variante GET o POST aplicable.
+- [ ] La fila Versión muestra la versión del control de versiones (`1.<revisión>` o `1.0` sin control previo).
 - [ ] Eliminar filas de ejemplo y comentarios HTML.
 - [ ] Reemplazar los marcadores editoriales, salvo los canónicos del JSON y los marcadores dinámicos.
 - [ ] Mantener la autenticación y la tabla completa de Generalidades.

@@ -207,6 +207,22 @@ function Obtener-CantidadPdfVigentes {
     return @((Get-ChildItem -LiteralPath $rutaDirectorioServicios -Filter '*.pdf' -File -ErrorAction SilentlyContinue)).Count
 }
 
+function Confirmar-ReinicioVersionado {
+    [CmdletBinding()]
+    param()
+
+    Write-Host ''
+    Write-Host 'ADVERTENCIA: La regeneracion de los PDF implica reiniciar el control de versionado.' -ForegroundColor Yellow
+    Write-Host 'Se perdera el historial de revisiones y los servicios publicados comenzaran en la version 1.0.' -ForegroundColor Yellow
+    Write-Host 'El control se reconstruira de forma atomica al finalizar la ejecucion.' -ForegroundColor Yellow
+    while ($true) {
+        $respuesta = (Read-Host 'Desea continuar? [S/N]').Trim().ToUpperInvariant()
+        if ($respuesta -eq 'S') { return $true }
+        if ($respuesta -eq 'N') { return $false }
+        Write-Host 'Respuesta invalida. Indique S o N.' -ForegroundColor Yellow
+    }
+}
+
 function Ejecutar-Exportacion {
     [CmdletBinding()]
     param()
@@ -268,6 +284,10 @@ function Ejecutar-RegeneracionPdf {
         Write-Host 'ERROR: No hay un XPZ activo para la generacion de PDF.' -ForegroundColor Red
         return $codigoErrorFatal
     }
+    if (-not (Confirmar-ReinicioVersionado)) {
+        Write-Host 'Regeneracion de PDF abortada por el usuario.' -ForegroundColor Yellow
+        return $codigoAbortado
+    }
 
     $manifiestoOperacion = Crear-ManifiestoEjecucion -Xpz $xpzActivo -FullyQualifiedNames @()
     $rutaManifiestoOperacion = $manifiestoOperacion.Ruta
@@ -312,7 +332,7 @@ function Ejecutar-RegeneracionPdf {
     Write-Host '==============================================================' -ForegroundColor Cyan
     Write-Host ''
     $rutaActualizador = Join-Path $PSScriptRoot 'ActualizarServicios.ps1'
-    $codigoActualizacion = Invocar-ScriptPowerShell -RutaScript $rutaActualizador -Argumentos @('-ConfigPath', $rutaConfiguracion, '-XpzPath', $xpzActivo, '-ForzarRegeneracionCompleta', '-ManifiestoPath', $rutaManifiestoOperacion)
+    $codigoActualizacion = Invocar-ScriptPowerShell -RutaScript $rutaActualizador -Argumentos @('-ConfigPath', $rutaConfiguracion, '-XpzPath', $xpzActivo, '-ForzarRegeneracionCompleta', '-Inicializar', '-ManifiestoPath', $rutaManifiestoOperacion)
     if ($codigoActualizacion -eq $codigoAbortado) {
         return $codigoAbortado
     }
@@ -369,10 +389,10 @@ function Leer-OpcionMenu {
     }
 
     $textoOpcionUno = 'Exportar segun configuracion (APIGLM/KB) y completar el XPZ'
-    $textoOpcionTres = 'Generar PDF con el XPZ seleccionado'
+    $textoOpcionTres = 'Generar PDF con el XPZ seleccionado (reinicia el versionado)'
     if ((Obtener-CantidadPdfVigentes) -gt 0) {
         $textoOpcionUno = 'Buscar actualizacion de servicios'
-        $textoOpcionTres = 'Regenerar PDF'
+        $textoOpcionTres = 'Regenerar PDF (reinicia el versionado)'
     }
     Write-Host ('  1. ' + $textoOpcionUno) -ForegroundColor White
     Write-Host '  2. Seleccionar XPZ principal' -ForegroundColor White

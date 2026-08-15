@@ -151,6 +151,7 @@ try {
 
     . (Join-Path $PSScriptRoot 'RenderizarMarkdownTypstPdf.ps1')
     . (Join-Path $PSScriptRoot 'ManifiestoEjecucion.ps1')
+    . (Join-Path $PSScriptRoot 'CargarMultiXPZ.ps1')
     $directorioServicios = Join-Path $RaizRepositorio 'documentacion\servicios'
     $directorioMarkdown = $directorioServicios
     $directorioPdf = $directorioServicios
@@ -164,14 +165,16 @@ try {
         if (-not (Test-Path -LiteralPath $directorioPdf -PathType Container)) {
             New-Item -ItemType Directory -Path $directorioPdf -Force | Out-Null
         }
+        $fqnsInventario = @()
+        $rutaInventarioPdf = Join-Path $RaizRepositorio 'documentacion\Endpoints\assets\endpoints.json'
+        if (Test-Path -LiteralPath $rutaInventarioPdf -PathType Leaf) {
+            $inventarioPdf = [System.IO.File]::ReadAllText($rutaInventarioPdf) | ConvertFrom-Json
+            $fqnsInventario = @($inventarioPdf.endpoints | ForEach-Object { [string]$_.proceso })
+        }
         $RutasMarkdown = @($manifiestoEjecucion.fullyQualifiedNames | ForEach-Object {
             $fullyQualifiedName = [string]$_
-            $ultimoPunto = $fullyQualifiedName.LastIndexOf('.')
-            if ($ultimoPunto -le 0) {
-                throw ('El FQN del manifiesto no tiene un nombre local valido: ' + $fullyQualifiedName)
-            }
-            $nombreArchivo = $fullyQualifiedName.Substring($ultimoPunto + 1).ToLowerInvariant() + '.md'
-            Join-Path $directorioMarkdown $nombreArchivo
+            $nombreArchivo = Obtener-NombreArchivoServicio -FullyQualifiedName $fullyQualifiedName -FqnsInventario $fqnsInventario
+            Join-Path $directorioMarkdown ($nombreArchivo + '.md')
         })
         $NoInteractivo = $true
         Write-Host ('  Ejecucion: ' + $manifiestoEjecucion.ejecucionId) -ForegroundColor DarkGray

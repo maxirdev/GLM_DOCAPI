@@ -77,6 +77,7 @@ function Crear-ManifiestoEjecucion {
         ejecucionId = $ejecucionId
         xpz = [System.IO.Path]::GetFullPath($Xpz)
         fullyQualifiedNames = @($FullyQualifiedNames | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique)
+        versions = @{}
         staging = [System.IO.Path]::GetFullPath($directorioStaging)
     }
     Validar-ManifiestoEjecucion -Manifiesto ([pscustomobject]$manifiesto) | Out-Null
@@ -90,6 +91,30 @@ function Crear-ManifiestoEjecucion {
         Ruta = $rutaManifiesto
         Datos = [pscustomobject]$manifiesto
     }
+}
+
+function Establecer-VersionesManifiesto {
+    <#
+    .SYNOPSIS
+    Persiste el mapa de versiones objetivo (FQN -> version) de la ejecucion no interactiva.
+    .DESCRIPTION
+    Complementa el manifiesto con la version que el control de versiones asignara a
+    cada servicio a regenerar, para que el generador la incruste en la fila Version
+    del documento. Es opcional y no cambia el esquema del manifiesto.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$RutaManifiesto,
+        [Parameter(Mandatory = $true)][hashtable]$Versiones
+    )
+
+    $manifiesto = Leer-ManifiestoEjecucion -RutaManifiesto $RutaManifiesto
+    $manifiesto | Add-Member -MemberType NoteProperty -Name 'versions' -Value $Versiones -Force
+    Validar-ManifiestoEjecucion -Manifiesto $manifiesto | Out-Null
+    $contenido = $manifiesto | ConvertTo-Json -Depth 10
+    $codificacion = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllText([System.IO.Path]::GetFullPath($RutaManifiesto), $contenido, $codificacion)
+    return $manifiesto
 }
 
 function Eliminar-ManifiestoEjecucion {

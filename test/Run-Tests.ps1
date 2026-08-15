@@ -381,6 +381,11 @@ function Ejecutar-CasosPosicionesGet {
     $doc = Analizar-Servicio -Xml $xml -NombreCompletoWrapper 'APIGLM.Cotizacion.WSObtenerProductor' -PackageName 'glmsuit.comercial.' -Indice $indice
     $md = Redactar-Documento -Documentacion $doc
 
+    Test-Asercion -Id 'get.markdownFilaVersionPorDefecto' -Condicion ($md -match '(?m)^\| Versión \| 1\.0 \|$') -DetalleExito 'La fila Version de Definicion del servicio muestra 1.0 sin control previo.' -DetalleFallo 'La fila Version no aparece o no muestra 1.0.'
+
+    $mdVersionAsignada = Redactar-Documento -Documentacion $doc -Version '1.7'
+    Test-Asercion -Id 'get.markdownFilaVersionAsignada' -Condicion ($mdVersionAsignada -match '(?m)^\| Versión \| 1\.7 \|$') -DetalleExito 'La fila Version conserva la version asignada por el control de versiones.' -DetalleFallo 'La fila Version no conserva la version asignada.'
+
     Test-Asercion -Id 'get.markdownFrasePosiciones' -Condicion ($md -match 'La consulta debe conservar exactamente 2 posiciones y respetar el orden indicado\.') -DetalleExito 'El Markdown conserva la frase canonica de posiciones GET.' -DetalleFallo 'El Markdown no conserva la frase de posiciones GET.'
 
     Test-Asercion -Id 'get.markdownColumnaPosicion' -Condicion ($md -match '\| Posición \| Parámetro \| Tipo \| Obligatorio \| Descripción \|') -DetalleExito 'El Markdown incluye la tabla GET con la columna Posicion.' -DetalleFallo 'La tabla GET no incluye la columna Posicion.'
@@ -904,8 +909,10 @@ function Validar-MarkdownSalidaErrores {
 function Validar-MarkdownNombreArchivo {
     <#
     .SYNOPSIS
-    Verifica que el nombre de archivo <wrapper>.md corresponde al ultimo segmento
-    del FQN del inventario en minusculas.
+    Verifica que el nombre de archivo corresponde al nombre derivado del FQN del
+    inventario en minusculas. Acepta la forma desambiguada de los homonimos y, por
+    compatibilidad con archivos publicados antes de la desambiguacion, tambien la
+    forma simple del ultimo segmento.
     #>
     [CmdletBinding()]
     param(
@@ -915,13 +922,34 @@ function Validar-MarkdownNombreArchivo {
     if ($Endpoints.Count -eq 0) { return $true }
     $nombreBase = [System.IO.Path]::GetFileNameWithoutExtension($NombreArchivo)
     foreach ($endpoint in $Endpoints) {
-        $ultimoPunto = $endpoint.proceso.LastIndexOf('.')
+        $fqn = [string]$endpoint.proceso
+        $ultimoPunto = $fqn.LastIndexOf('.')
         $ultimoSegmento = ''
-        if ($ultimoPunto -gt 0) { $ultimoSegmento = $endpoint.proceso.Substring($ultimoPunto + 1) }
-        else { $ultimoSegmento = $endpoint.proceso }
-        if ($ultimoSegmento.ToLowerInvariant() -eq $nombreBase.ToLowerInvariant()) { return $true }
+        if ($ultimoPunto -gt 0) { $ultimoSegmento = $fqn.Substring($ultimoPunto + 1).ToLowerInvariant() }
+        else { $ultimoSegmento = $fqn.ToLowerInvariant() }
+        if ($ultimoSegmento -eq $nombreBase.ToLowerInvariant()) { return $true }
+        $homonimos = @($Endpoints | Where-Object {
+            $puntoOtro = ([string]$_.proceso).LastIndexOf('.')
+            $puntoOtro -gt 0 -and ([string]$_.proceso).Substring($puntoOtro + 1) -ieq $ultimoSegmento -and [string]$_.proceso -ine $fqn
+        })
+        if ($homonimos.Count -gt 0 -and $ultimoPunto -gt 0) {
+            $esperado = $ultimoSegmento + '-' + (($fqn.Substring(0, $ultimoPunto) -split '\.') -join '-').ToLowerInvariant()
+            if ($esperado -eq $nombreBase.ToLowerInvariant()) { return $true }
+        }
     }
     return $false
+}
+
+function Validar-MarkdownFilaVersion {
+    <#
+    .SYNOPSIS
+    Verifica que la tabla Definicion del servicio contiene la fila Version con formato 1.<revision>.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$Contenido
+    )
+    return ($Contenido -match '(?m)^\| Versión \| \d+\.\d+ \|$')
 }
 
 function Ejecutar-CasosValidacionMarkdown {
@@ -997,7 +1025,7 @@ function Ejecutar-CasosValidacionMarkdown {
         Test-Asercion -Id 'validacionMarkdown.fechas' -Condicion $todosFechas -DetalleExito 'Las fechas usan YYYY-MM-DD en todos los documentos.' -DetalleFallo 'Algun documento usa un formato de fecha distinto.'
         Test-Asercion -Id 'validacionMarkdown.coherenciaEntrada' -Condicion $todosCoherenciaEntrada -DetalleExito 'La seccion Entrada es coherente con el metodo en todos los documentos.' -DetalleFallo 'Algun documento mezcla variantes de entrada.'
         Test-Asercion -Id 'validacionMarkdown.salidaErrores' -Condicion $todosSalidaErrores -DetalleExito 'Salida exitosa y Errores especificos son coherentes en todos los documentos.' -DetalleFallo 'Algun documento tiene una salida o errores incoherentes.'
-        Test-Asercion -Id 'validacionMarkdown.nombreArchivo' -Condicion $todosNombreArchivo -DetalleExito 'Los nombres de archivo corresponden al ultimo segmento del FQN del inventario.' -DetalleFallo 'Algun nombre de archivo no corresponde al inventario.'
+        Test-Asercion -Id 'validacionMarkdown.nombreArchivo' -Condicion $todosNombreArchivo -DetalleExito 'Los nombres de archivo corresponden al nombre derivado del FQN del inventario, incluyendo la desambiguacion de homonimos.' -DetalleFallo 'Algun nombre de archivo no corresponde al inventario.'
     }
 
     $xmlBase = Cargar-XmlFixture -Nombre 'xpz-base.xml'
@@ -1012,6 +1040,7 @@ function Ejecutar-CasosValidacionMarkdown {
         (Validar-MarkdownBloquesCanonicos -Contenido $contenidoGenerado) -and
         (Validar-MarkdownObligatorio -Contenido $contenidoGenerado) -and
         (Validar-MarkdownTiposCanonicos -Contenido $contenidoGenerado) -and
+        (Validar-MarkdownFilaVersion -Contenido $contenidoGenerado) -and
         (Validar-MarkdownSinDetallesInternos -Contenido $contenidoGenerado) -and
         (Validar-MarkdownFechas -Contenido $contenidoGenerado) -and
         (Validar-MarkdownCoherenciaEntrada -Contenido $contenidoGenerado) -and
@@ -1521,6 +1550,79 @@ function Ejecutar-CasosIntegridadTransaccional {
         $contenidoActualizador -match 'estadoPdf' -and
         $contenidoActualizador -match 'FileShare\]::None'
     ) -DetalleExito 'El actualizador contiene promocion conjunta, review final y lock exclusivo.' -DetalleFallo 'El actualizador no contiene todos los contratos transaccionales esperados.'
+
+    $rutaGestion = Join-Path $DirectorioBinario 'GestionDocumentosGLM.ps1'
+    $contenidoGestion = Get-Content -LiteralPath $rutaGestion -Raw
+    Test-Asercion -Id 'integridad.regeneracionReiniciaVersionado' -Condicion (
+        $contenidoGestion -match 'Confirmar-ReinicioVersionado' -and
+        $contenidoGestion -match 'Desea continuar\? \[S/N\]' -and
+        $contenidoGestion -match 'ForzarRegeneracionCompleta.*Inicializar' -and
+        $contenidoGestion -match 'Regeneracion de PDF abortada por el usuario'
+    ) -DetalleExito 'La opcion 3 confirma y reinicia explicitamente el control de versionado.' -DetalleFallo 'La opcion 3 no confirma o no reinicia explicitamente el control de versionado.'
+
+    Test-Asercion -Id 'integridad.mensajesProgresoRegeneracion' -Condicion (
+        $contenidoActualizador -match 'Regeneracion en proceso\.\.\. aguarde\.' -and
+        $contenidoActualizador -match 'Cargar-IndiceMultiXPZ[\s\S]*Regeneracion en proceso\.\.\. aguarde\.' -and
+        $contenidoActualizador -match 'Regeneracion en proceso\.\.\. aguarde\.[\s\S]*Regeneracion completa solicitada' -and
+        $contenidoActualizador -match 'Regeneracion completa solicitada[\s\S]*Generando documentacion Markdown' -and
+        $contenidoActualizador -match 'Generando documentacion Markdown .*\.md' -and
+        $contenidoActualizador -match 'Generando documentos PDF' -and
+        $contenidoActualizador -match 'Validando y publicando Markdown y PDF'
+    ) -DetalleExito 'La regeneracion informa al usuario antes de las fases lentas de Markdown, PDF y publicacion.' -DetalleFallo 'La regeneracion no informa al usuario antes de todas sus fases lentas.'
+
+    Test-Asercion -Id 'integridad.pendienteAceptaFingerprintVacio' -Condicion (
+        $contenidoActualizador -match 'AllowEmptyString\(\)\]\[string\]\$BaselineFingerprint' -and
+        $contenidoActualizador -match 'AllowEmptyString\(\)\]\[string\]\$TargetFingerprint'
+    ) -DetalleExito 'El control permite registrar pendientes sin fingerprints cuando no existe un baseline.' -DetalleFallo 'El control rechaza fingerprints vacios al registrar pendientes.'
+
+    Test-Asercion -Id 'integridad.reporteEvaluaPublicado' -Condicion (
+        $contenidoActualizador -match '\$estaPublicado = \(Test-Path -LiteralPath \$rutaMarkdownPublicado -PathType Leaf\) -and'
+    ) -DetalleExito 'El review evalua correctamente la existencia conjunta de Markdown y PDF.' -DetalleFallo 'El review interpreta -and como un parametro de Test-Path.'
+
+    Test-Asercion -Id 'integridad.reviewListaSerializable' -Condicion (
+        $contenidoActualizador -match 'servicios = @\(\$serviciosReviewFinal\.ToArray\(\)\)'
+    ) -DetalleExito 'El review convierte la lista generica a array antes de serializarla en PowerShell 5.1.' -DetalleFallo 'El review intenta serializar directamente una lista generica y puede producir incompatibilidad de tipos.'
+
+    Test-Asercion -Id 'integridad.deteccionObjetosSinVinculo' -Condicion (
+        $contenidoActualizador -match 'Obtener-ObjetosModificadosSinVinculo' -and
+        $contenidoActualizador -match 'Obtener-ServiciosActivosSinDependencias' -and
+        $contenidoActualizador -match 'Objetos modificados sin vinculo de dependencias' -and
+        $contenidoActualizador -match 'servicio\(s\) ACTIVO sin dependencias registradas'
+    ) -DetalleExito 'El actualizador reanaliza servicios ACTIVO sin dependencias cuando hay objetos modificados sin vinculo, reconstruyendo la traza.' -DetalleFallo 'El actualizador no detecta objetos modificados sin vinculo ni reanaliza servicios sin dependencias.'
+
+    Test-Asercion -Id 'integridad.nombreArchivoDesambiguado' -Condicion (
+        $contenidoActualizador -match 'FqnsInventario'
+    ) -DetalleExito 'El actualizador propaga el inventario al resolver nombres de archivo para desambiguar servicios homonimos.' -DetalleFallo 'El actualizador no desambigua los nombres de archivo de servicios homonimos.'
+
+    $fqnsInventarioPrueba = @('APIGLM.Comun.WSListarCategoriaIVA', 'APIGLM.Cotizacion.WSListarCategoriaIVA', 'APIGLM.Comun.WSListarBanco')
+    $nombreComun = Obtener-NombreArchivoServicio -FullyQualifiedName 'APIGLM.Comun.WSListarCategoriaIVA' -FqnsInventario $fqnsInventarioPrueba
+    $nombreCotizacion = Obtener-NombreArchivoServicio -FullyQualifiedName 'APIGLM.Cotizacion.WSListarCategoriaIVA' -FqnsInventario $fqnsInventarioPrueba
+    $nombreUnico = Obtener-NombreArchivoServicio -FullyQualifiedName 'APIGLM.Comun.WSListarBanco' -FqnsInventario $fqnsInventarioPrueba
+    $nombreSinInventario = Obtener-NombreArchivoServicio -FullyQualifiedName 'APIGLM.Cotizacion.WSListarCategoriaIVA'
+    Test-Asercion -Id 'integridad.nombreArchivoHomonimos' -Condicion (
+        $nombreComun -eq 'wslistarcategoriaiva-apiglm-comun' -and
+        $nombreCotizacion -eq 'wslistarcategoriaiva-apiglm-cotizacion' -and
+        $nombreUnico -eq 'wslistarbanco' -and
+        $nombreSinInventario -eq 'wslistarcategoriaiva'
+    ) -DetalleExito 'Los nombres de archivo desambiguan homonimos con la ruta de modulos y conservan el nombre simple sin inventario o sin colision.' -DetalleFallo 'La resolucion de nombres de archivo no desambigua homonimos como se espera.'
+
+    . (Join-Path $DirectorioBinario 'ManifiestoEjecucion.ps1')
+    $manifiestoPrueba = Crear-ManifiestoEjecucion -Xpz (Join-Path $DirectorioTmp 'fixture-versionado.xpz') -FullyQualifiedNames @('APIGLM.Fixture.WSValido') -DirectorioBase (Join-Path $DirectorioTmp 'ejecuciones-versionado')
+    Establecer-VersionesManifiesto -RutaManifiesto $manifiestoPrueba.Ruta -Versiones @{ 'APIGLM.Fixture.WSValido' = '1.3' } | Out-Null
+    $manifiestoConVersiones = Leer-ManifiestoEjecucion -RutaManifiesto $manifiestoPrueba.Ruta
+    Test-Asercion -Id 'integridad.manifiestoPersisteVersiones' -Condicion (
+        [string]$manifiestoConVersiones.versions.'APIGLM.Fixture.WSValido' -eq '1.3' -and
+        @($manifiestoConVersiones.fullyQualifiedNames).Count -eq 1 -and
+        [string]$manifiestoConVersiones.fullyQualifiedNames[0] -eq 'APIGLM.Fixture.WSValido'
+    ) -DetalleExito 'El manifiesto persiste el mapa de versiones objetivo sin perder los FQN.' -DetalleFallo 'El manifiesto no persiste el mapa de versiones o pierde los FQN.'
+    Establecer-FullyQualifiedNamesManifiesto -RutaManifiesto $manifiestoPrueba.Ruta -FullyQualifiedNames @('APIGLM.Fixture.WSValido') | Out-Null
+    $manifiestoReleido = Leer-ManifiestoEjecucion -RutaManifiesto $manifiestoPrueba.Ruta
+    Eliminar-ManifiestoEjecucion -RutaManifiesto $manifiestoPrueba.Ruta
+    Test-Asercion -Id 'integridad.manifiestoVersionesOpcional' -Condicion (
+        [string]$manifiestoReleido.versions.'APIGLM.Fixture.WSValido' -eq '1.3' -and
+        $contenidoActualizador -match 'Establecer-VersionesManifiesto' -and
+        $contenidoActualizador -match 'Quitar-FilaVersionDocumento'
+    ) -DetalleExito 'El manifiesto conserva el mapa de versiones al actualizar los FQN y el actualizador normaliza el hash excluyendo la fila Version.' -DetalleFallo 'El manifiesto no conserva las versiones o el actualizador no normaliza el hash de documento.'
 }
 
 try {

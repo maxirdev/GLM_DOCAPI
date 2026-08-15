@@ -23,6 +23,40 @@ function Obtener-HashSha256Archivo {
     return (Get-FileHash -LiteralPath $Ruta -Algorithm SHA256).Hash.ToLowerInvariant()
 }
 
+function Obtener-NombreArchivoServicio {
+    <#
+    .SYNOPSIS
+    Resuelve el nombre base (sin extension) del archivo Markdown/PDF de un servicio.
+    .DESCRIPTION
+    Usa el ultimo segmento del FQN en minusculas. Si el inventario contiene otro
+    servicio con el mismo ultimo segmento (homonimo), desambigua anexando la ruta
+    de modulos en minusculas separada por guiones, para que dos servicios distintos
+    nunca compartan archivo publicado ni ruta de staging.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$FullyQualifiedName,
+        [Parameter(Mandatory = $false)][string[]]$FqnsInventario = @()
+    )
+
+    $ultimoPunto = $FullyQualifiedName.LastIndexOf('.')
+    if ($ultimoPunto -le 0) {
+        throw ('El FQN no tiene un nombre local valido: ' + $FullyQualifiedName)
+    }
+    $nombreLocal = $FullyQualifiedName.Substring($ultimoPunto + 1).ToLowerInvariant()
+    if ($FqnsInventario.Count -gt 0) {
+        $homonimos = @($FqnsInventario | Where-Object {
+            $punto = $_.LastIndexOf('.')
+            $punto -gt 0 -and $_.Substring($punto + 1) -ieq $nombreLocal -and $_ -ine $FullyQualifiedName
+        })
+        if ($homonimos.Count -gt 0) {
+            $rutaModulos = ($FullyQualifiedName.Substring(0, $ultimoPunto) -split '\.') -join '-'
+            $nombreLocal = $nombreLocal + '-' + $rutaModulos.ToLowerInvariant()
+        }
+    }
+    return $nombreLocal
+}
+
 function Construir-ManifiestoMultiXPZ {
     [CmdletBinding()]
     param(

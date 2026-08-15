@@ -36,7 +36,8 @@ function Redactar-Documento {
     #>
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory = $true)][object]$Documentacion
+        [Parameter(Mandatory = $true)][object]$Documentacion,
+        [Parameter(Mandatory = $false)][string]$Version = '1.0'
     )
 
     $documento = New-Object System.Text.StringBuilder
@@ -58,6 +59,7 @@ function Redactar-Documento {
     Agregar-Linea ('| Descripción | ' + (Convertir-Celda $Documentacion.Descripcion) + ' |')
     Agregar-Linea ('| Método HTTP | `' + $Documentacion.MetodoHttp + '` |')
     Agregar-Linea '| Autenticación | HTTP Basic mediante `Authorization` |'
+    Agregar-Linea ('| Versión | ' + (Convertir-Celda $Version) + ' |')
     Agregar-Linea ''
     Agregar-Linea '## Generalidades'
     Agregar-Linea ''

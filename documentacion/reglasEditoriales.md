@@ -28,6 +28,7 @@ No incluir:
 - No inventar una descripción cuando la función del campo no esté confirmada.
 - No agregar una fila pendiente para una variable ausente de la documentación.
 - En la salida, presentar únicamente la variante confirmada: estructura o colección con sus campos, escalar, mensaje textual, respuesta vacía o archivo binario genérico. Agregar notas recursivas solo cuando formen parte de la documentación técnica recibida.
+- Completar la fila `Versión` de la tabla `Definición del servicio` con la versión asignada por el control de versiones (`estado/controlVersiones.json`), con el formato `1.<revisión>`; sin control previo, usar `1.0`. No inventar ni recalcular la versión.
 
 ### Estructuras compuestas
 
@@ -88,6 +89,7 @@ Usar el nombre completo del endpoint publicado recibido en la documentación, en
 - [ ] Las estructuras compuestas están separadas por ruta JSON.
 - [ ] Las descripciones son funcionales y no técnicas.
 - [ ] La autenticación y los códigos comunes coinciden con la plantilla.
+- [ ] La fila `Versión` muestra la versión del control de versiones (`1.<revisión>` o `1.0`).
 - [ ] `Errores específicos` contiene solo rechazos explícitos o la indicación estándar.
 - [ ] La estructura JSON común permanece debajo de los errores.
 - [ ] Los marcadores canónicos y dinámicos se conservaron; los demás fueron reemplazados.

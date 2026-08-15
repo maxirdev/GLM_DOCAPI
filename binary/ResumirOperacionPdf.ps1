@@ -8,6 +8,7 @@ param(
 $ErrorActionPreference = 'Stop'
 
 $raizRepositorio = [System.IO.Path]::GetFullPath($Repositorio)
+. (Join-Path $PSScriptRoot 'CargarMultiXPZ.ps1')
 $rutaDirectorioLogs = Join-Path $raizRepositorio 'Logs'
 $rutaReporte = $null
 
@@ -47,7 +48,13 @@ foreach ($servicio in @($reporte.servicios)) {
     if ([string]$servicio.estado -in @('OMITIDO', 'ELIMINADO') -or [string]$servicio.estadoPdf -eq 'NO_APLICA') { continue }
     $rutaPdf = [string]$servicio.pdf
     if ([string]::IsNullOrWhiteSpace($rutaPdf)) {
-        $nombreLocal = ([string]$servicio.fullyQualifiedName).Substring(([string]$servicio.fullyQualifiedName).LastIndexOf('.') + 1).ToLowerInvariant()
+        $fqnsInventario = @()
+        $rutaInventarioResumen = Join-Path $raizRepositorio 'documentacion\Endpoints\assets\endpoints.json'
+        if (Test-Path -LiteralPath $rutaInventarioResumen -PathType Leaf) {
+            $inventarioResumen = [System.IO.File]::ReadAllText($rutaInventarioResumen) | ConvertFrom-Json
+            $fqnsInventario = @($inventarioResumen.endpoints | ForEach-Object { [string]$_.proceso })
+        }
+        $nombreLocal = Obtener-NombreArchivoServicio -FullyQualifiedName ([string]$servicio.fullyQualifiedName) -FqnsInventario $fqnsInventario
         $rutaPdf = Join-Path (Join-Path $raizRepositorio 'documentacion\servicios') ($nombreLocal + '.pdf')
     }
     if (Test-PdfPublicadoValido -Ruta $rutaPdf) {

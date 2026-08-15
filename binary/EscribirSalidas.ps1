@@ -20,14 +20,19 @@ function Escribir-Salidas {
     param(
         [Parameter(Mandatory = $true)][object]$Documentacion,
         [Parameter(Mandatory = $true)][string]$Documento,
-        [Parameter(Mandatory = $true)][string]$DirectorioSalida
+        [Parameter(Mandatory = $true)][string]$DirectorioSalida,
+        [Parameter(Mandatory = $false)][string]$NombreArchivo = ''
     )
 
-    $ultimoPunto = $Documentacion.FqWrapper.LastIndexOf('.')
-    if ($ultimoPunto -le 0) {
-        throw ('El wrapper ' + $Documentacion.FqWrapper + ' no tiene un nombre completo valido.')
+    if (-not [string]::IsNullOrWhiteSpace($NombreArchivo)) {
+        $nombreWrapper = $NombreArchivo
+    } else {
+        $ultimoPunto = $Documentacion.FqWrapper.LastIndexOf('.')
+        if ($ultimoPunto -le 0) {
+            throw ('El wrapper ' + $Documentacion.FqWrapper + ' no tiene un nombre completo valido.')
+        }
+        $nombreWrapper = $Documentacion.FqWrapper.Substring($ultimoPunto + 1).ToLowerInvariant()
     }
-    $nombreWrapper = $Documentacion.FqWrapper.Substring($ultimoPunto + 1).ToLowerInvariant()
     $rutaDocumento = Join-Path $DirectorioSalida ($nombreWrapper + '.md')
 
     if (-not (Test-Path -LiteralPath $DirectorioSalida)) {

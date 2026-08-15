@@ -67,6 +67,17 @@ function Obtener-Sha256ArchivoNormalizado {
     return Obtener-Sha256TextoNormalizado -Texto ([System.IO.File]::ReadAllText($Ruta))
 }
 
+function Quitar-FilaVersionDocumento {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$Texto
+    )
+
+    $etiquetaFilaVersion = 'Versi' + [char]0xF3 + 'n'
+    $patronFilaVersion = '(?m)^[ \t]*\| ' + $etiquetaFilaVersion + ' \|[^\r\n]*\r?\n?'
+    return [regex]::Replace($Texto, $patronFilaVersion, '')
+}
+
 function Establecer-PropiedadObjetoControl {
     [CmdletBinding()]
     param(
@@ -141,14 +152,17 @@ function Test-ServiciosPublicadosVigentes {
         [Parameter(Mandatory = $true)][string]$DirectorioServicios
     )
 
-    foreach ($claveServicio in (Convertir-DiccionarioControlVersiones -Objeto $Servicios).Keys) {
-        $servicio = (Convertir-DiccionarioControlVersiones -Objeto $Servicios)[$claveServicio]
+    $serviciosControl = Convertir-DiccionarioControlVersiones -Objeto $Servicios
+    $fqnsInventario = @($serviciosControl.Keys | ForEach-Object { [string]$_ })
+    foreach ($claveServicio in $serviciosControl.Keys) {
+        $servicio = $serviciosControl[$claveServicio]
         if ([string](Obtener-PropiedadControlVersiones -Objeto $servicio -Nombre 'status') -ne 'ACTIVO') { continue }
-        $nombreArchivo = Obtener-NombreArchivoServicio -FullyQualifiedName $claveServicio
+        $nombreArchivo = Obtener-NombreArchivoServicio -FullyQualifiedName $claveServicio -FqnsInventario $fqnsInventario
         $rutaMarkdown = Join-Path $DirectorioServicios ($nombreArchivo + '.md')
         $rutaPdf = Join-Path $DirectorioServicios ($nombreArchivo + '.pdf')
         if (-not (Test-Path -LiteralPath $rutaMarkdown -PathType Leaf) -or -not (Test-PdfValidoParaPromocion -Ruta $rutaPdf)) { return $false }
-        if ((Obtener-Sha256ArchivoNormalizado -Ruta $rutaMarkdown) -ne [string](Obtener-PropiedadControlVersiones -Objeto $servicio -Nombre 'documentHash')) { return $false }
+        $hashDocumentoPublicado = Obtener-Sha256TextoNormalizado -Texto (Quitar-FilaVersionDocumento -Texto ([System.IO.File]::ReadAllText($rutaMarkdown)))
+        if ($hashDocumentoPublicado -ne [string](Obtener-PropiedadControlVersiones -Objeto $servicio -Nombre 'documentHash')) { return $false }
         if ((Get-FileHash -LiteralPath $rutaPdf -Algorithm SHA256).Hash.ToLowerInvariant() -ne [string](Obtener-PropiedadControlVersiones -Objeto $servicio -Nombre 'pdfHash')) { return $false }
     }
     return $true
@@ -184,6 +198,66 @@ function Obtener-LineageId {
         throw 'APIGLM.APIGLMMain no contiene GUID. No puede determinarse el lineageId.'
     }
     return $guid
+}
+
+function Obtener-ObjetosModificadosSinVinculo {
+    <#
+    .SYNOPSIS
+    Determina que objetos modificados no estan vinculados a ningun servicio del control.
+    .DESCRIPTION
+    Un objeto modificado esta vinculado si aparece en el indice inverso poblado con las
+    dependencias registradas o si alguna dependencia registrada de un servicio lo referencia.
+    Un objeto sin vinculo indica servicios cuyas dependencias nunca se registraron (por
+    ejemplo, controles creados antes de la captura de traza o analisis fallidos) y exige
+    una re-evaluacion dirigida para reconstruir la traza.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string[]]$ObjetosModificados,
+        [Parameter(Mandatory = $true)]$IndiceInverso,
+        [Parameter(Mandatory = $true)]$Servicios
+    )
+
+    $sinVinculo = New-Object System.Collections.Generic.List[string]
+    foreach ($claveObjetoModificado in $ObjetosModificados) {
+        $vinculado = $false
+        if ($IndiceInverso.ContainsKey($claveObjetoModificado) -and @($IndiceInverso[$claveObjetoModificado]).Count -gt 0) {
+            $vinculado = $true
+        }
+        if (-not $vinculado) {
+            foreach ($fullyQualifiedName in $Servicios.Keys) {
+                if ((Obtener-DependenciasServicioControlVersiones -Servicio $Servicios[$fullyQualifiedName]) -contains $claveObjetoModificado) {
+                    $vinculado = $true
+                    break
+                }
+            }
+        }
+        if (-not $vinculado -and -not $sinVinculo.Contains($claveObjetoModificado)) {
+            [void]$sinVinculo.Add($claveObjetoModificado)
+        }
+    }
+    return $sinVinculo.ToArray()
+}
+
+function Obtener-ServiciosActivosSinDependencias {
+    <#
+    .SYNOPSIS
+    Devuelve los FQN de los servicios ACTIVO cuyas dependencias registradas estan vacias.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]$Servicios
+    )
+
+    $serviciosSinDependencias = New-Object System.Collections.Generic.List[string]
+    foreach ($fullyQualifiedName in $Servicios.Keys) {
+        $servicio = $Servicios[$fullyQualifiedName]
+        if ([string](Obtener-PropiedadControlVersiones -Objeto $servicio -Nombre 'status') -ne 'ACTIVO') { continue }
+        if ((Obtener-DependenciasServicioControlVersiones -Servicio $servicio).Count -eq 0) {
+            [void]$serviciosSinDependencias.Add([string]$fullyQualifiedName)
+        }
+    }
+    return $serviciosSinDependencias.ToArray()
 }
 
 function Invocar-PowerShellScript {
@@ -259,7 +333,7 @@ function Obtener-RegistroServicioActual {
     foreach ($claveDependencia in @($Documentacion.TrazaEvidencia.NodosConsultados | ForEach-Object { [string]$_.Clave } | Select-Object -Unique)) {
         [void]$dependencias.Add($claveDependencia)
     }
-    $hashDocumento = Obtener-Sha256TextoNormalizado -Texto (Redactar-Documento -Documentacion $Documentacion)
+    $hashDocumento = Obtener-Sha256TextoNormalizado -Texto (Quitar-FilaVersionDocumento -Texto (Redactar-Documento -Documentacion $Documentacion))
     $versionAnterior = Obtener-VersionServicio -ServicioAnterior $ServicioAnterior
     return [ordered]@{
         wrapperGuid = [string]$wrapper.GetAttribute('guid')
@@ -285,8 +359,8 @@ function Obtener-ResultadoReviewPorFqn {
 function Crear-PendienteControlVersiones {
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory = $true)][string]$BaselineFingerprint,
-        [Parameter(Mandatory = $true)][string]$TargetFingerprint,
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$BaselineFingerprint,
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$TargetFingerprint,
         [Parameter(Mandatory = $true)][string]$Reason,
         [Parameter(Mandatory = $false)]$PendienteAnterior,
         [Parameter(Mandatory = $false)][string]$LastError = ''
@@ -321,26 +395,14 @@ function Test-PdfValidoParaPromocion {
     }
 }
 
-function Obtener-NombreArchivoServicio {
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory = $true)][string]$FullyQualifiedName
-    )
-
-    $ultimoPunto = $FullyQualifiedName.LastIndexOf('.')
-    if ($ultimoPunto -le 0) {
-        throw ('El FQN no tiene un nombre local valido: ' + $FullyQualifiedName)
-    }
-    return $FullyQualifiedName.Substring($ultimoPunto + 1).ToLowerInvariant()
-}
-
 function Promover-ServicioArtefactos {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)][string]$FullyQualifiedName,
         [Parameter(Mandatory = $true)][string]$RutaMarkdownStaging,
         [Parameter(Mandatory = $true)][string]$RutaPdfStaging,
-        [Parameter(Mandatory = $true)][string]$DirectorioServicios
+        [Parameter(Mandatory = $true)][string]$DirectorioServicios,
+        [Parameter(Mandatory = $false)][string[]]$FqnsInventario = @()
     )
 
     if (-not (Test-Path -LiteralPath $RutaMarkdownStaging -PathType Leaf)) {
@@ -353,7 +415,7 @@ function Promover-ServicioArtefactos {
         New-Item -ItemType Directory -Path $DirectorioServicios -Force | Out-Null
     }
 
-    $nombreArchivo = Obtener-NombreArchivoServicio -FullyQualifiedName $FullyQualifiedName
+    $nombreArchivo = Obtener-NombreArchivoServicio -FullyQualifiedName $FullyQualifiedName -FqnsInventario $FqnsInventario
     $operaciones = New-Object System.Collections.Generic.List[object]
     foreach ($artefacto in @(
         [pscustomobject]@{ Fuente = $RutaMarkdownStaging; Destino = (Join-Path $DirectorioServicios ($nombreArchivo + '.md')) },
@@ -388,7 +450,7 @@ function Promover-ServicioArtefactos {
             FullyQualifiedName = $FullyQualifiedName
             Markdown = $rutaMarkdownPublicado
             Pdf = $rutaPdfPublicado
-            DocumentHash = Obtener-Sha256ArchivoNormalizado -Ruta $rutaMarkdownPublicado
+            DocumentHash = Obtener-Sha256TextoNormalizado -Texto (Quitar-FilaVersionDocumento -Texto ([System.IO.File]::ReadAllText($rutaMarkdownPublicado)))
             PdfHash = (Get-FileHash -LiteralPath $rutaPdfPublicado -Algorithm SHA256).Hash.ToLowerInvariant()
         }
     } catch {
@@ -513,6 +575,7 @@ try {
     $serviciosInventarioTotal = @($inventario.endpoints)
     $serviciosInventario = @($serviciosInventarioTotal | Where-Object { $_.proceso -notin @($configuracion.ServiciosIgnorados) })
     if ($serviciosInventarioTotal.Count -eq 0) { throw 'El inventario no contiene servicios.' }
+    $nombresInventario = @($serviciosInventarioTotal | ForEach-Object { [string]$_.proceso })
 
     $rutasXpz = @($configuracion.XpzPath) + @(Descubrir-XPZComplementariosCompartido -RutaXpzPrincipal $configuracion.XpzPath)
     $manifiestoActual = @(Construir-ManifiestoMultiXPZ -RutasXpz $rutasXpz)
@@ -532,6 +595,7 @@ try {
     }
 
     $indice = Cargar-IndiceMultiXPZ -RutaXpzPrincipal $configuracion.XpzPath
+    Write-Host 'Regeneracion en proceso... aguarde.' -ForegroundColor Cyan
     $lineageId = Obtener-LineageId -Indice $indice
 
     $serviciosAnteriores = @{}
@@ -606,6 +670,14 @@ try {
     foreach ($fullyQualifiedName in $comparacionPreliminar.ServiciosNuevos) { if (-not $nombresCandidatos.Contains($fullyQualifiedName)) { [void]$nombresCandidatos.Add($fullyQualifiedName) } }
     foreach ($fullyQualifiedName in $comparacionPreliminar.Pendientes) { if (-not $nombresCandidatos.Contains($fullyQualifiedName)) { [void]$nombresCandidatos.Add($fullyQualifiedName) } }
     foreach ($fullyQualifiedName in $comparacionPreliminar.ServiciosAfectados) { if (-not $nombresCandidatos.Contains($fullyQualifiedName)) { [void]$nombresCandidatos.Add($fullyQualifiedName) } }
+    $objetosModificadosSinVinculo = @(Obtener-ObjetosModificadosSinVinculo -ObjetosModificados $comparacionPreliminar.ObjetosModificados -IndiceInverso $indice.IndiceInverso -Servicios $serviciosAnteriores)
+    if ($objetosModificadosSinVinculo.Count -gt 0) {
+        $serviciosSinDependencias = @(Obtener-ServiciosActivosSinDependencias -Servicios $serviciosAnteriores)
+        foreach ($fullyQualifiedName in $serviciosSinDependencias) {
+            if (-not $nombresCandidatos.Contains($fullyQualifiedName)) { [void]$nombresCandidatos.Add($fullyQualifiedName) }
+        }
+        Write-Host ('Objetos modificados sin vinculo de dependencias (' + $objetosModificadosSinVinculo.Count + '): se reanalizan ' + $serviciosSinDependencias.Count + ' servicio(s) ACTIVO sin dependencias registradas para reconstruir la traza.') -ForegroundColor Yellow
+    }
     foreach ($servicioInventario in $serviciosInventario) {
         $fullyQualifiedName = [string]$servicioInventario.proceso
         if ($serviciosAnteriores.ContainsKey($fullyQualifiedName) -and [string](Obtener-PropiedadControlVersiones -Objeto $serviciosAnteriores[$fullyQualifiedName] -Nombre 'status') -ne 'ACTIVO' -and -not $nombresCandidatos.Contains($fullyQualifiedName)) {
@@ -618,6 +690,7 @@ try {
             if (-not $nombresCandidatos.Contains($nombreServicio)) { [void]$nombresCandidatos.Add($nombreServicio) }
         }
         Write-Host 'Regeneracion completa solicitada: se procesaran todos los servicios del inventario.' -ForegroundColor Yellow
+        Write-Host ('Generando documentacion Markdown (.md): ' + $nombresCandidatos.Count + ' servicio(s). Aguarde...') -ForegroundColor Cyan
     }
 
     if ($ManifiestoPath) {
@@ -691,7 +764,7 @@ try {
         $hashAnterior = if ($servicioAnterior) { [string](Obtener-PropiedadControlVersiones -Objeto $servicioAnterior -Nombre 'documentHash') } else { '' }
         $hashActual = [string](Obtener-PropiedadControlVersiones -Objeto $serviciosActuales[$fullyQualifiedName] -Nombre 'documentHash')
         $hayPendiente = $pendientesAnteriores.ContainsKey($fullyQualifiedName)
-        if ($ForzarRegeneracionCompleta -or $analisis.Error -or -not $servicioAnterior -or $hayPendiente -or $hashAnterior -ne $hashActual) {
+        if ($ForzarRegeneracionCompleta -or $comparacion.ProfileFingerprintCambio -or $analisis.Error -or -not $servicioAnterior -or $hayPendiente -or $hashAnterior -ne $hashActual) {
             [void]$nombresParaRegenerar.Add($fullyQualifiedName)
         }
     }
@@ -709,6 +782,17 @@ try {
         $datosManifiestoEjecucion = $manifiestoEjecucion.Datos
     }
 
+    $versionesObjetivo = @{}
+    foreach ($fullyQualifiedName in $nombresParaRegenerar) {
+        $servicioAnterior = if ($serviciosAnteriores.ContainsKey($fullyQualifiedName)) { $serviciosAnteriores[$fullyQualifiedName] } else { $null }
+        $hashAnterior = if ($servicioAnterior) { [string](Obtener-PropiedadControlVersiones -Objeto $servicioAnterior -Nombre 'documentHash') } else { '' }
+        $hashActual = [string](Obtener-PropiedadControlVersiones -Objeto $serviciosActuales[$fullyQualifiedName] -Nombre 'documentHash')
+        $documentoCambio = -not $servicioAnterior -or $hashAnterior -ne $hashActual
+        $versionObjetivo = Obtener-VersionServicio -ServicioAnterior $servicioAnterior -Incrementar:$documentoCambio
+        $versionesObjetivo[$fullyQualifiedName] = $versionObjetivo.Version
+    }
+    Establecer-VersionesManifiesto -RutaManifiesto $rutaManifiestoEjecucion -Versiones $versionesObjetivo | Out-Null
+
     $directorioLogs = Join-Path $raizRepositorio 'Logs'
     if (-not (Test-Path -LiteralPath $directorioLogs -PathType Container)) { New-Item -ItemType Directory -Path $directorioLogs -Force | Out-Null }
     $marcaTemporal = (Get-Date).ToString('yyyyMMdd-HHmmss')
@@ -718,6 +802,9 @@ try {
     $erroresGeneracion = @{}
     $codigoSalidaOperacion = 0
     if ($nombresParaRegenerar.Count -gt 0) {
+        if (-not $ForzarRegeneracionCompleta) {
+            Write-Host ('Generando documentacion Markdown (.md): ' + $nombresParaRegenerar.Count + ' servicio(s). Aguarde...') -ForegroundColor Cyan
+        }
         $argumentosGenerador = @('-ConfigPath', $ConfigPath, '-ManifiestoPath', $rutaManifiestoEjecucion, '-NoInteractivo', '-RutaReview', $rutaReviewGeneracion)
         if ($XpzPath) { $argumentosGenerador += @('-XpzPath', $XpzPath) }
         try {
@@ -762,7 +849,8 @@ try {
         } else {
             $mensajeError = if ($analisis.Error) { $analisis.Error } elseif ($erroresGeneracion.ContainsKey($fullyQualifiedName)) { $erroresGeneracion[$fullyQualifiedName] } elseif ($resultadoReview) { (@($resultadoReview.mensajes) -join '; ') } else { 'No se genero el documento.' }
             $pendienteAnterior = if ($pendientesAnteriores.ContainsKey($fullyQualifiedName)) { $pendientesAnteriores[$fullyQualifiedName] } else { $null }
-            $pendientesObjetivo[$fullyQualifiedName] = Crear-PendienteControlVersiones -BaselineFingerprint (if ($servicioAnterior) { [string](Obtener-PropiedadControlVersiones -Objeto $servicioAnterior -Nombre 'documentHash') } else { '' }) -TargetFingerprint ([string](Obtener-PropiedadControlVersiones -Objeto $serviciosActuales[$fullyQualifiedName] -Nombre 'documentHash')) -Reason 'GENERATION_ERROR' -PendienteAnterior $pendienteAnterior -LastError $mensajeError
+            $baselineFingerprint = $(if ($servicioAnterior) { [string](Obtener-PropiedadControlVersiones -Objeto $servicioAnterior -Nombre 'documentHash') } else { '' })
+            $pendientesObjetivo[$fullyQualifiedName] = Crear-PendienteControlVersiones -BaselineFingerprint $baselineFingerprint -TargetFingerprint ([string](Obtener-PropiedadControlVersiones -Objeto $serviciosActuales[$fullyQualifiedName] -Nombre 'documentHash')) -Reason 'GENERATION_ERROR' -PendienteAnterior $pendienteAnterior -LastError $mensajeError
             if ($servicioAnterior) {
                 $serviciosObjetivo[$fullyQualifiedName] = $servicioAnterior
             } else {
@@ -784,6 +872,7 @@ try {
     $controlObjetivo['pendientes'] = $pendientesObjetivo
 
     if ($rutasMarkdown.Count -gt 0) {
+        Write-Host ('Generando documentos PDF: ' + $nombresParaPdf.Count + ' archivo(s). Aguarde...') -ForegroundColor Cyan
         $rutaGeneradorPdf = Join-Path $PSScriptRoot 'GenerarPdfServicios.ps1'
         try {
             Establecer-FullyQualifiedNamesManifiesto -RutaManifiesto $rutaManifiestoEjecucion -FullyQualifiedNames @($nombresParaPdf.ToArray()) | Out-Null
@@ -800,13 +889,16 @@ try {
     }
 
     $directorioServiciosProductivo = Join-Path $raizRepositorio 'documentacion\servicios'
+    if ($nombresParaPdf.Count -gt 0) {
+        Write-Host 'Validando y publicando Markdown y PDF... aguarde.' -ForegroundColor Cyan
+    }
     foreach ($fullyQualifiedName in @($nombresParaPdf.ToArray())) {
-        $nombreArchivo = Obtener-NombreArchivoServicio -FullyQualifiedName $fullyQualifiedName
+        $nombreArchivo = Obtener-NombreArchivoServicio -FullyQualifiedName $fullyQualifiedName -FqnsInventario $nombresInventario
         $rutaMarkdownStaging = Join-Path ([string]$datosManifiestoEjecucion.staging) ('markdown\' + $nombreArchivo + '.md')
         $rutaPdfStaging = Join-Path ([string]$datosManifiestoEjecucion.staging) ('pdf\' + $nombreArchivo + '.pdf')
         $servicioAnterior = if ($serviciosAnteriores.ContainsKey($fullyQualifiedName)) { $serviciosAnteriores[$fullyQualifiedName] } else { $null }
         try {
-            $promocion = Promover-ServicioArtefactos -FullyQualifiedName $fullyQualifiedName -RutaMarkdownStaging $rutaMarkdownStaging -RutaPdfStaging $rutaPdfStaging -DirectorioServicios $directorioServiciosProductivo
+            $promocion = Promover-ServicioArtefactos -FullyQualifiedName $fullyQualifiedName -RutaMarkdownStaging $rutaMarkdownStaging -RutaPdfStaging $rutaPdfStaging -DirectorioServicios $directorioServiciosProductivo -FqnsInventario $nombresInventario
             $servicioObjetivo = $serviciosObjetivo[$fullyQualifiedName]
             Establecer-PropiedadObjetoControl -Objeto $servicioObjetivo -Nombre 'documentHash' -Valor $promocion.DocumentHash
             Establecer-PropiedadObjetoControl -Objeto $servicioObjetivo -Nombre 'pdfHash' -Valor $promocion.PdfHash
@@ -818,7 +910,8 @@ try {
             $mensajeError = $_.Exception.Message
             $erroresPublicacion[$fullyQualifiedName] = $mensajeError
             $pendienteAnterior = if ($pendientesAnteriores.ContainsKey($fullyQualifiedName)) { $pendientesAnteriores[$fullyQualifiedName] } else { $null }
-            $pendientesObjetivo[$fullyQualifiedName] = Crear-PendienteControlVersiones -BaselineFingerprint (if ($servicioAnterior) { [string](Obtener-PropiedadControlVersiones -Objeto $servicioAnterior -Nombre 'documentHash') } else { '' }) -TargetFingerprint ([string](Obtener-PropiedadControlVersiones -Objeto $serviciosActuales[$fullyQualifiedName] -Nombre 'documentHash')) -Reason 'PUBLICATION_ERROR' -PendienteAnterior $pendienteAnterior -LastError $mensajeError
+            $baselineFingerprint = $(if ($servicioAnterior) { [string](Obtener-PropiedadControlVersiones -Objeto $servicioAnterior -Nombre 'documentHash') } else { '' })
+            $pendientesObjetivo[$fullyQualifiedName] = Crear-PendienteControlVersiones -BaselineFingerprint $baselineFingerprint -TargetFingerprint ([string](Obtener-PropiedadControlVersiones -Objeto $serviciosActuales[$fullyQualifiedName] -Nombre 'documentHash')) -Reason 'PUBLICATION_ERROR' -PendienteAnterior $pendienteAnterior -LastError $mensajeError
             if ($servicioAnterior) {
                 $serviciosObjetivo[$fullyQualifiedName] = $servicioAnterior
             } else {
@@ -837,10 +930,10 @@ try {
         $servicioObjetivo = $serviciosObjetivo[$fullyQualifiedName]
         $servicioAnterior = if ($serviciosAnteriores.ContainsKey($fullyQualifiedName)) { $serviciosAnteriores[$fullyQualifiedName] } else { $null }
         $estadoControl = [string](Obtener-PropiedadControlVersiones -Objeto $servicioObjetivo -Nombre 'status')
-        $nombreArchivo = Obtener-NombreArchivoServicio -FullyQualifiedName $fullyQualifiedName
+        $nombreArchivo = Obtener-NombreArchivoServicio -FullyQualifiedName $fullyQualifiedName -FqnsInventario $nombresInventario
         $rutaMarkdownPublicado = Join-Path $directorioServiciosProductivo ($nombreArchivo + '.md')
         $rutaPdfPublicado = Join-Path $directorioServiciosProductivo ($nombreArchivo + '.pdf')
-        $estaPublicado = Test-Path -LiteralPath $rutaMarkdownPublicado -PathType Leaf -and (Test-PdfValidoParaPromocion -Ruta $rutaPdfPublicado)
+        $estaPublicado = (Test-Path -LiteralPath $rutaMarkdownPublicado -PathType Leaf) -and (Test-PdfValidoParaPromocion -Ruta $rutaPdfPublicado)
         $estadoMarkdown = 'NO_APLICA'
         $estadoPdf = 'NO_APLICA'
         $promocionado = $false
@@ -882,18 +975,26 @@ try {
         })
     }
     $estadoReview = switch ($codigoSalidaOperacion) { 0 { 'COMPLETO' } 2 { 'PARCIAL' } default { 'ERROR' } }
-    $reviewFinal = [ordered]@{
-        ejecucion = [ordered]@{
-            ejecucionId = [string]$datosManifiestoEjecucion.ejecucionId
-            xpz = [string]$configuracion.XpzPath
-            fin = (Get-Date).ToString('s')
-            estado = $estadoReview
-            codigoSalida = $codigoSalidaOperacion
+    try {
+        $reviewFinal = [ordered]@{
+            ejecucion = [ordered]@{
+                ejecucionId = [string]$datosManifiestoEjecucion.ejecucionId
+                xpz = [string]$configuracion.XpzPath
+                fin = (Get-Date).ToString('s')
+                estado = $estadoReview
+                codigoSalida = $codigoSalidaOperacion
+            }
+            servicios = @($serviciosReviewFinal.ToArray())
         }
-        servicios = @($serviciosReviewFinal)
+    } catch {
+        throw ('No se pudo construir el review final: ' + $_.Exception.Message)
     }
-    $jsonReviewFinal = ($reviewFinal | ConvertTo-Json -Depth 10) -replace "`r`n", "`n"
-    [System.IO.File]::WriteAllText($rutaReviewGeneracion, $jsonReviewFinal, (New-Object System.Text.UTF8Encoding($false)))
+    try {
+        $jsonReviewFinal = ($reviewFinal | ConvertTo-Json -Depth 10) -replace "`r`n", "`n"
+        [System.IO.File]::WriteAllText($rutaReviewGeneracion, $jsonReviewFinal, (New-Object System.Text.UTF8Encoding($false)))
+    } catch {
+        throw ('No se pudo escribir el review final: ' + $_.Exception.Message)
+    }
 
     Escribir-ControlVersionesAtomico -ControlVersiones $controlObjetivo -RutaControl $RutaControl | Out-Null
     Write-Host ('Actualizacion completada. Servicios candidatos: ' + $nombresCandidatos.Count) -ForegroundColor Cyan
@@ -902,6 +1003,12 @@ try {
     exit $codigoSalidaOperacion
 } catch {
     Write-Host ('ERROR: ' + $_.Exception.Message) -ForegroundColor Red
+    if ($_.InvocationInfo) {
+        Write-Host ('  Origen: ' + $_.InvocationInfo.ScriptName + ' | linea ' + $_.InvocationInfo.ScriptLineNumber) -ForegroundColor DarkGray
+    }
+    if ($_.ScriptStackTrace) {
+        Write-Host ('  Traza: ' + $_.ScriptStackTrace) -ForegroundColor DarkGray
+    }
     exit 1
 } finally {
     if ($lockActualizacion) {
