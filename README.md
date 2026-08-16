@@ -379,14 +379,17 @@ El desarrollo sigue el método spec-driven. Cada spec define el alcance, modelo 
 | [SPEC 05](specs/05-integridad-pipeline-generacion.md) | Implementado | Integridad del pipeline: configuración única del XPZ, duplicados, estados `OK`/`WARNING`/`ERROR`/`OMITIDO`, logs y códigos de salida. |
 | [SPEC 06](specs/06-analizador-xpz-contratos-completos.md) | Implementado | Analizador XPZ de contratos completos: tipos estrictos, estructuras SDT recursivas expandidas por ruta JSON y estados de resolución. |
 | [SPEC 07](specs/07-coherencia-documental-y-visor.md) | Implementado | Coherencia documental y robustez del visor: normas y rutas alineadas con el pipeline real, seguridad, accesibilidad y adaptación móvil del visor. |
-| [SPEC 08](specs/08-detector-cambios-xpz.md) | Borrador | Detector de cambios por árbol transitivo del XPZ, checksums, historial de versiones y grafo de dependencias. |
+| [SPEC 08](specs/08-detector-cambios-xpz.md) | Aprobado e implementado | Detector de cambios por árbol transitivo del XPZ, checksums, historial de versiones y grafo de dependencias. |
 | [SPEC 09](specs/09-pruebas-automatizadas-locales.md) | Implementado | Harness local sin dependencias para probar pipeline, analizador y visor en entornos aislados. |
+| [SPEC 10](specs/10-repositorio-dominios) | Borrador | Repositorio de dominios que no se puedan definir (nota de intención, sin implementar). |
 | [SPEC 11](specs/11-validador-completitud-xpz.md) | Aprobado e implementado | Validador de completitud multi-XPZ: índice unificado con resolución en cascada, auto-descubrimiento de complementos `<nombre>_<N>.xpz` y reporte `Logs/<marca>-validacion-xpz.json` con la receta de exportación. |
 | [SPEC 12](specs/12-exportacion-selectiva-xpz.md) | Aprobado e implementado | Exportación selectiva desde el último reporte de validación y generación de complementos XPZ numerados. |
 | [SPEC 13](specs/13-lanzador-unificado-exportacion-y-pdf.md) | Aprobado e implementado | Lanzador unificado `GenerarDocumentosGLM.cmd`: validación de dependencias, exportación, completitud del XPZ y PDF bajo demanda. |
 | [SPEC 14](specs/14-selector-xpz-principal.md) | Aprobado e implementado | Selector de XPZ principal en el lanzador y generación de PDF con el XPZ seleccionado. |
 | [SPEC 15](specs/15-panel-web-interactivo.md) | Aprobado (no implementado) | Panel web local servido por `HttpListener` que expone las operaciones del lanzador. |
 | [SPEC 16](specs/16-integridad-transaccional-generacion-documentos.md) | Aprobado e implementado | Integridad transaccional de Markdown/PDF, staging, control de versiones esquema 2, estados, pendientes, review final, lock y códigos de salida. |
+| [SPEC 17](specs/17-historial-versiones-servicios.md) | Implementado | Historial de versiones por servicio en `estado/historialVersiones.md`, derivado best-effort del control de versiones. |
+| [SPEC 18](specs/18-refactorizacion-scripts-powershell.md) | Implementado | Refactorización de scripts PowerShell: módulo común `binary/GLMUtilidades.ps1` y eliminación de duplicación. |
 
 Las filas en `Borrador` corresponden a funcionalidades en desarrollo; las funcionalidades que no aparecen en esta tabla no se consideran disponibles. Las propuestas futuras deben incorporarse mediante una spec aprobada antes de documentarse como parte del proceso operativo.
 
