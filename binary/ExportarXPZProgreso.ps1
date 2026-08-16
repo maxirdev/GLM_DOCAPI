@@ -12,21 +12,11 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+. (Join-Path $PSScriptRoot 'GLMUtilidades.ps1')
+
 $onlyModuleAPIGLM = ($TargetName -eq 'ExportarAPIGLM')
 
-$instanciasGeneXus = @(Get-Process -Name 'GeneXus' -ErrorAction SilentlyContinue)
-if ($instanciasGeneXus.Count -gt 0) {
-    Write-Host ''
-    Write-Host ('ADVERTENCIA: se detectaron ' + $instanciasGeneXus.Count + ' instancia(s) de GeneXus abierta(s).') -ForegroundColor Yellow
-    Write-Host 'La exportacion continuara usando una sesion independiente de MSBuild.' -ForegroundColor Yellow
-    Write-Host 'No edite objetos ni ejecute especificaciones, generaciones o reorganizaciones durante la exportacion.' -ForegroundColor Yellow
-    Write-Host ''
-}
-
-function Quote-ProcessArgument {
-    param([Parameter(Mandatory = $true)][string]$Value)
-    return '"' + $Value.Replace('"', '\"') + '"'
-}
+Avisar-InstanciasGeneXus
 
 function Start-Phase {
     param(
@@ -103,72 +93,15 @@ function Get-RecentOutputText {
 }
 
 function Test-XpzFile {
+    <#
+    .SYNOPSIS
+    Valida el XPZ de salida.
+    .DESCRIPTION
+    Wrapper de Test-XpzValido (GLMUtilidades.ps1) para preservar la firma historica.
+    #>
     param([Parameter(Mandatory = $true)][string]$Path)
 
-    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
-        return [pscustomobject]@{ Valid = $false; Error = 'no se encontro el archivo XPZ esperado' }
-    }
-
-    $zip = $null
-    try {
-        Add-Type -AssemblyName System.IO.Compression.FileSystem
-        $zip = [System.IO.Compression.ZipFile]::OpenRead($Path)
-        $xmlEntries = @($zip.Entries | Where-Object { $_.Name -like '*.xml' })
-        if ($xmlEntries.Count -ne 1) {
-            return [pscustomobject]@{ Valid = $false; Error = "el XPZ contiene $($xmlEntries.Count) archivos XML; se esperaba uno" }
-        }
-
-        $reader = New-Object System.IO.StreamReader($xmlEntries[0].Open())
-        try {
-            $xml = New-Object System.Xml.XmlDocument
-            $xml.LoadXml($reader.ReadToEnd())
-        } finally {
-            $reader.Dispose()
-        }
-
-        if ($xml.DocumentElement.LocalName -ne 'ExportFile') {
-            return [pscustomobject]@{ Valid = $false; Error = "la raiz XML es $($xml.DocumentElement.LocalName); se esperaba ExportFile" }
-        }
-
-        return [pscustomobject]@{ Valid = $true; Error = '' }
-    } catch {
-        return [pscustomobject]@{ Valid = $false; Error = "el XPZ no es valido: $($_.Exception.Message)" }
-    } finally {
-        if ($null -ne $zip) { $zip.Dispose() }
-    }
-}
-
-function Get-DescendantProcessIds {
-    param(
-        [Parameter(Mandatory = $true)][int]$RootProcessId,
-        [Parameter(Mandatory = $true)][datetime]$StartedAfter
-    )
-
-    $result = New-Object System.Collections.Generic.List[int]
-    $pending = New-Object System.Collections.Generic.Queue[int]
-    $pending.Enqueue($RootProcessId)
-    $processes = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue)
-
-    while ($pending.Count -gt 0) {
-        $parentId = $pending.Dequeue()
-        foreach ($child in $processes | Where-Object { $_.ParentProcessId -eq $parentId }) {
-            $created = $null
-            try {
-                if ($child.CreationDate -is [datetime]) {
-                    $created = [datetime]$child.CreationDate
-                } else {
-                    $created = [System.Management.ManagementDateTimeConverter]::ToDateTime([string]$child.CreationDate)
-                }
-            } catch {}
-            if ($null -ne $created -and $created -lt $StartedAfter.AddSeconds(-2)) { continue }
-            if (-not $result.Contains([int]$child.ProcessId)) {
-                $result.Add([int]$child.ProcessId)
-                $pending.Enqueue([int]$child.ProcessId)
-            }
-        }
-    }
-
-    return @($result)
+    return Test-XpzValido -Ruta $Path
 }
 
 $targetName = $TargetName
@@ -364,13 +297,13 @@ try {
     }
 
     if ($processId -gt 0) {
-        $descendants = @(Get-DescendantProcessIds -RootProcessId $processId -StartedAfter $processStartedAt)
+        $descendants = @(Obtener-ProcesosDescendientes -IdProcesoRaiz $processId -IniciadoDespues $processStartedAt)
         foreach ($descendantId in ($descendants | Sort-Object -Descending)) {
             Stop-Process -Id $descendantId -Force -ErrorAction SilentlyContinue
         }
 
         if ($descendants.Count -gt 0) { Start-Sleep -Milliseconds 250 }
-        $remainingDescendants = @(Get-DescendantProcessIds -RootProcessId $processId -StartedAfter $processStartedAt)
+        $remainingDescendants = @(Obtener-ProcesosDescendientes -IdProcesoRaiz $processId -IniciadoDespues $processStartedAt)
         if ($remainingDescendants.Count -gt 0) {
             Write-Host ("No se pudieron cerrar los procesos descendientes: " + ($remainingDescendants -join ', ') + '.') -ForegroundColor Red
             $scriptExitCode = 1

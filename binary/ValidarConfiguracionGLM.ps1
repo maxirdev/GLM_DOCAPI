@@ -18,6 +18,8 @@ $raizRepositorio = [System.IO.Path]::GetFullPath($Repositorio)
 $rutaConfiguracion = Join-Path $raizRepositorio 'configuracion.json'
 $rutaDirectorioXpz = Join-Path $raizRepositorio 'xpz'
 
+. (Join-Path $PSScriptRoot 'GLMUtilidades.ps1')
+
 function Escribir-Estado {
     param(
         [Parameter(Mandatory = $true)][ValidateSet('OK', 'ERROR', 'ADVERTENCIA', 'PENDIENTE')][string]$Estado,
@@ -48,9 +50,7 @@ function Crear-ModeloConfiguracion {
   }
 }
 '@
-    $modelo = $modelo -replace "`r`n", "`n"
-    $codificacion = New-Object System.Text.UTF8Encoding($false)
-    [System.IO.File]::WriteAllText($rutaConfiguracion, $modelo, $codificacion)
+    Escribir-TextoUtf8SinBom -Ruta $rutaConfiguracion -Contenido (Normalizar-SaltosLineaLf -Texto $modelo)
 }
 
 Write-Host 'Validacion inicial de la aplicacion APIGLM' -ForegroundColor Cyan

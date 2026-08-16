@@ -19,6 +19,7 @@ $codigoErrorFatal = 1
 $codigoParcial = 2
 $codigoAbortado = 3
 
+. (Join-Path $PSScriptRoot 'GLMUtilidades.ps1')
 . (Join-Path $PSScriptRoot 'ManifiestoEjecucion.ps1')
 
 function Normalizar-CodigoSalida {
@@ -33,18 +34,6 @@ function Normalizar-CodigoSalida {
     return $codigoErrorFatal
 }
 
-function Resolver-RutaRepositorio {
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory = $true)][string]$Ruta
-    )
-
-    if ([System.IO.Path]::IsPathRooted($Ruta)) {
-        return [System.IO.Path]::GetFullPath($Ruta)
-    }
-    return [System.IO.Path]::GetFullPath((Join-Path $raizRepositorio $Ruta))
-}
-
 function Leer-Configuracion {
     [CmdletBinding()]
     param()
@@ -56,24 +45,21 @@ function Leer-Configuracion {
 }
 
 function Invocar-ScriptPowerShell {
+    <#
+    .SYNOPSIS
+    Ejecuta un script PowerShell como proceso hijo normalizando su codigo de salida.
+    .DESCRIPTION
+    Wrapper de Invocar-ScriptHijo (GLMUtilidades.ps1) para preservar la firma
+    historica y la normalizacion a 0/1/2/3 de este orquestador.
+    #>
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)][string]$RutaScript,
         [Parameter(Mandatory = $false)][string[]]$Argumentos = @()
     )
 
-    if (-not (Test-Path -LiteralPath $RutaScript -PathType Leaf)) {
-        throw ('No se encontro el script: ' + $RutaScript)
-    }
-    & $rutaPowerShell -NoProfile -ExecutionPolicy Bypass -File $RutaScript @Argumentos 2>&1 | ForEach-Object {
-        if ($_ -is [System.Management.Automation.ErrorRecord]) {
-            Write-Host $_ -ForegroundColor Red
-        } else {
-            Write-Host ([string]$_)
-        }
-    }
-    $codigoSalida = [int]$LASTEXITCODE
-    return (Normalizar-CodigoSalida -Codigo $codigoSalida)
+    $resultado = Invocar-ScriptHijo -RutaScript $RutaScript -Argumentos $Argumentos -NormalizarCodigo
+    return (Normalizar-CodigoSalida -Codigo $resultado.CodigoSalida)
 }
 
 function Obtener-XpzPrincipales {
@@ -114,7 +100,7 @@ function Establecer-XpzActivoConfigurado {
     $configuracion = Leer-Configuracion
     $rutaConfigurada = [string]$configuracion.xpz
     if (-not [string]::IsNullOrWhiteSpace($rutaConfigurada)) {
-        $rutaResuelta = Resolver-RutaRepositorio -Ruta $rutaConfigurada
+        $rutaResuelta = Resolver-RutaRepositorio -Ruta $rutaConfigurada -Raiz $raizRepositorio
         if (Test-Path -LiteralPath $rutaResuelta -PathType Leaf) {
             $script:xpzActivo = $rutaResuelta
         }

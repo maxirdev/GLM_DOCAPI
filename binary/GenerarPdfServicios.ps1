@@ -101,15 +101,6 @@ function Detener-Spinner {
     $script:spinnerActivo = $false
 }
 
-function Obtener-Sha256Archivo {
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory = $true)][string]$Ruta
-    )
-
-    return (Get-FileHash -LiteralPath $Ruta -Algorithm SHA256).Hash.ToLowerInvariant()
-}
-
 function Write-ResultadoPdf {
     param(
         [Parameter(Mandatory = $true)][string]$Texto,
@@ -135,7 +126,8 @@ try {
     if (-not (Test-Path -LiteralPath $ConfigPath -PathType Leaf)) {
         throw ('No se encontro el archivo de configuracion: ' + $ConfigPath)
     }
-    $configuracion = Get-Content -LiteralPath $ConfigPath -Raw | ConvertFrom-Json
+    . (Join-Path $PSScriptRoot 'GLMUtilidades.ps1')
+    $configuracion = Leer-ConfiguracionCruda -ConfigPath $ConfigPath
     $rutaPandoc = [string]$configuracion.herramientas.pandocPath
     $rutaTypst = [string]$configuracion.herramientas.typstPath
     if ([string]::IsNullOrWhiteSpace($rutaPandoc)) {
@@ -168,8 +160,7 @@ try {
         $fqnsInventario = @()
         $rutaInventarioPdf = Join-Path $RaizRepositorio 'documentacion\Endpoints\assets\endpoints.json'
         if (Test-Path -LiteralPath $rutaInventarioPdf -PathType Leaf) {
-            $inventarioPdf = [System.IO.File]::ReadAllText($rutaInventarioPdf) | ConvertFrom-Json
-            $fqnsInventario = @($inventarioPdf.endpoints | ForEach-Object { [string]$_.proceso })
+            $fqnsInventario = @((Leer-InventarioEndpoints -RutaInventario $rutaInventarioPdf) | ForEach-Object { [string]$_.proceso })
         }
         $RutasMarkdown = @($manifiestoEjecucion.fullyQualifiedNames | ForEach-Object {
             $fullyQualifiedName = [string]$_
@@ -249,7 +240,7 @@ try {
             Convertir-MarkdownAPdf -Markdown $markdown -RutaSalida $rutaPdf -RutaPandoc $rutaPandoc -RutaTypst $rutaTypst | Out-Null
             $cronometro.Stop()
             $segundos = [math]::Round($cronometro.Elapsed.TotalSeconds, 2)
-            if (-not (Test-PdfValido -Ruta $rutaPdf)) {
+            if (-not (Test-PdfValidoParaPromocion -Ruta $rutaPdf)) {
                 throw 'El PDF generado no supera la validacion de formato.'
             }
             $hashPdf = Obtener-Sha256Archivo -Ruta $rutaPdf

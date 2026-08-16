@@ -19,7 +19,6 @@ $ErrorActionPreference = 'Stop'
 $raizRepositorio = [System.IO.Path]::GetFullPath($Repositorio)
 $rutaConfiguracion = Join-Path $raizRepositorio 'configuracion.json'
 $rutaDirectorioLogs = Join-Path $raizRepositorio 'Logs'
-$rutaPowerShell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
 $rutaScriptValidacion = Join-Path $raizRepositorio 'binary\ValidarXPZ.ps1'
 $rutaScriptSelectivo = Join-Path $raizRepositorio 'binary\ExportarXPZSelectivo.ps1'
 $rutaProyectoSelectivo = Join-Path $raizRepositorio 'binary\ExportarXPZSelectivo.msbuild'
@@ -30,89 +29,25 @@ $manifiestoEjecucion = $null
 $script:ultimaSalida = @()
 $script:objetosPendientes = @()
 
+. (Join-Path $PSScriptRoot 'GLMUtilidades.ps1')
 . (Join-Path $PSScriptRoot 'ManifiestoEjecucion.ps1')
 
-function Resolver-Ruta {
-    param([Parameter(Mandatory = $true)][string]$Ruta)
-
-    if ([System.IO.Path]::IsPathRooted($Ruta)) {
-        return [System.IO.Path]::GetFullPath($Ruta)
-    }
-    return [System.IO.Path]::GetFullPath((Join-Path $raizRepositorio $Ruta))
-}
-
-function Obtener-UltimoReporteCompatible {
-    param(
-        [Parameter(Mandatory = $true)][string]$RutaXpz,
-        [Parameter(Mandatory = $true)][string]$EjecucionId
-    )
-
-    $rutaXpzEsperada = [System.IO.Path]::GetFullPath($RutaXpz)
-    $reportes = @(Get-ChildItem -LiteralPath $rutaDirectorioLogs -Filter '*-validacion-xpz.json' -File -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending)
-    foreach ($archivo in $reportes) {
-        try {
-            $reporte = Get-Content -LiteralPath $archivo.FullName -Raw | ConvertFrom-Json
-            if (-not $reporte.ejecucion -or -not $reporte.ejecucion.xpz) { continue }
-            if ([string]$reporte.ejecucion.id -ne $EjecucionId) { continue }
-            $rutaReportada = Resolver-Ruta -Ruta ([string]$reporte.ejecucion.xpz)
-            if ([System.StringComparer]::OrdinalIgnoreCase.Equals($rutaReportada, $rutaXpzEsperada)) {
-                return [pscustomobject]@{ Datos = $reporte; Ruta = $archivo.FullName }
-            }
-        } catch {
-        }
-    }
-    return $null
-}
-
-function Obtener-ObjetosPendientes {
-    param([Parameter(Mandatory = $true)]$Reporte)
-
-    $objetos = New-Object System.Collections.Generic.List[string]
-    foreach ($solicitud in @($Reporte.solicitudes)) {
-        foreach ($objeto in @($solicitud.exportar)) {
-            $valor = ([string]$objeto).Trim()
-            if ($valor -and $objetos -notcontains $valor) { [void]$objetos.Add($valor) }
-        }
-    }
-    if ($objetos.Count -gt 0) { return @($objetos) }
-
-    foreach ($objeto in ([string]$Reporte.objectList -split ',')) {
-        $nombre = $objeto.Trim()
-        if ($nombre -and $objetos -notcontains $nombre) { [void]$objetos.Add($nombre) }
-    }
-    return @($objetos)
-}
-
-function Obtener-SignaturaPendientes {
-    param([Parameter(Mandatory = $true)]$Reporte)
-
-    $lista = [string]$Reporte.objectList
-    if ([string]::IsNullOrWhiteSpace($lista) -and $Reporte.solicitudes) {
-        $lista = (@($Reporte.solicitudes | ForEach-Object { @($_.exportar) } | ForEach-Object { [string]$_ } | Sort-Object -Unique) -join ',')
-    }
-    return $lista.Trim()
-}
-
 function Invocar-Script {
+    <#
+    .SYNOPSIS
+    Ejecuta un script PowerShell como proceso hijo mostrando su salida.
+    .DESCRIPTION
+    Wrapper de Invocar-ScriptHijo (GLMUtilidades.ps1) que conserva la ultima
+    salida en $script:ultimaSalida y devuelve el codigo de salida.
+    #>
     param(
         [Parameter(Mandatory = $true)][string]$RutaScript,
         [string[]]$Argumentos = @()
     )
 
-    $lineas = New-Object System.Collections.Generic.List[string]
-    & $rutaPowerShell -NoProfile -ExecutionPolicy Bypass -File $RutaScript @Argumentos 2>&1 | ForEach-Object {
-        $texto = $_.ToString()
-        $lineas.Add($texto)
-        if ($_ -is [System.Management.Automation.ErrorRecord]) {
-            Write-Host $texto -ForegroundColor Red
-        } elseif ($texto -match '(?i)^\s*error\s*:') {
-            Write-Host $texto -ForegroundColor Red
-        } else {
-            Write-Host $texto
-        }
-    }
-    $script:ultimaSalida = @($lineas)
-    return $LASTEXITCODE
+    $resultado = Invocar-ScriptHijo -RutaScript $RutaScript -Argumentos $Argumentos
+    $script:ultimaSalida = @($resultado.Salida)
+    return $resultado.CodigoSalida
 }
 
 function Obtener-MotivoError {
@@ -160,7 +95,7 @@ try {
     }
     if ($ManifiestoPath) {
         $manifiestoEjecucion = Leer-ManifiestoEjecucion -RutaManifiesto $ManifiestoPath
-        $rutaXpzManifiesto = Resolver-Ruta -Ruta ([string]$manifiestoEjecucion.xpz)
+        $rutaXpzManifiesto = Resolver-RutaRepositorio -Ruta ([string]$manifiestoEjecucion.xpz) -Raiz $raizRepositorio
         $rutaXpzActiva = [System.IO.Path]::GetFullPath($XpzActivo)
         if (-not [System.StringComparer]::OrdinalIgnoreCase.Equals($rutaXpzManifiesto, $rutaXpzActiva)) {
             throw ('El manifiesto corresponde a otro XPZ. Manifiesto: ' + $rutaXpzManifiesto + '. Activo: ' + $rutaXpzActiva + '.')
@@ -189,7 +124,7 @@ try {
     Write-Host ''
     Write-Host 'Validando completitud del XPZ...' -ForegroundColor Cyan
     $codigoValidacion = Invocar-Script -RutaScript $rutaScriptValidacion -Argumentos @('-ConfigPath', $rutaConfiguracion, '-XpzPath', $XpzActivo, '-ManifiestoPath', $rutaManifiestoEjecucion)
-    $reporteSeleccionado = Obtener-UltimoReporteCompatible -RutaXpz $XpzActivo -EjecucionId $manifiestoEjecucion.ejecucionId
+    $reporteSeleccionado = Obtener-ReporteValidacionMasReciente -DirectorioLogs $rutaDirectorioLogs -RutaXpz $XpzActivo -RaizRepositorio $raizRepositorio -EjecucionId ([string]$manifiestoEjecucion.ejecucionId)
     if ($codigoValidacion -eq 0) {
         Write-Host ''
         Write-Host 'El XPZ esta completo; no se requieren exportaciones adicionales.' -ForegroundColor Green
@@ -211,7 +146,7 @@ try {
         Write-Host ('  ' + $objeto) -ForegroundColor DarkGray
     }
 
-    $configuracion = Get-Content -LiteralPath $rutaConfiguracion -Raw | ConvertFrom-Json
+    $configuracion = Leer-ConfiguracionCruda -ConfigPath $rutaConfiguracion
     $rutaMsbuild = [string]$configuracion.herramientas.msbuildPath
     $rutaGeneXus = [string]$configuracion.herramientas.geneXusProgramDir
     $rutaKb = [string]$configuracion.herramientas.kbPath
@@ -237,7 +172,7 @@ try {
         Write-Host ''
         Write-Host ("Revalidando completitud (ciclo " + $ciclo + " de " + $maximoCiclos + ")...") -ForegroundColor Cyan
         $codigoRevalidacion = Invocar-Script -RutaScript $rutaScriptValidacion -Argumentos @('-ConfigPath', $rutaConfiguracion, '-XpzPath', $XpzActivo, '-ManifiestoPath', $rutaManifiestoEjecucion)
-        $nuevoReporte = Obtener-UltimoReporteCompatible -RutaXpz $XpzActivo -EjecucionId $manifiestoEjecucion.ejecucionId
+        $nuevoReporte = Obtener-ReporteValidacionMasReciente -DirectorioLogs $rutaDirectorioLogs -RutaXpz $XpzActivo -RaizRepositorio $raizRepositorio -EjecucionId ([string]$manifiestoEjecucion.ejecucionId)
         if ($codigoRevalidacion -eq 0) {
             Write-Host ''
             Write-Host 'El XPZ esta completo; no se requieren exportaciones adicionales.' -ForegroundColor Green

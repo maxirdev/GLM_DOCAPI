@@ -37,7 +37,7 @@ El harness se ejecuta sin Pester, Node.js ni dependencias externas:
 .\test\Run-Tests.ps1
 ```
 
-Actualmente cubre el pipeline, configuración, selección no interactiva, inventario multi-XPZ, análisis de contratos, validación Markdown, visor, control de versiones esquema 2, staging/promoción y lock. La última ejecución verificada produjo `83 casos, 0 fallos`. Los temporales se escriben únicamente en `test/tmp/` y los logs de prueba en `test/Logs/`.
+Actualmente cubre el pipeline, configuración, selección no interactiva, inventario multi-XPZ, análisis de contratos, validación Markdown, visor, control de versiones esquema 2, staging/promoción y lock, el módulo común de utilidades (`binary/GLMUtilidades.ps1`) y la invocación real por proceso de `GenerarDocumento`, `GenerarPdfServicios`, `GenerarListaEndpoints` y `DiagnosticoIA`. La última ejecución verificada produjo `120 casos, 0 fallos` (116 PASS, 4 SKIP condicionales). Los temporales se escriben únicamente en `test/tmp/` y los logs de prueba en `test/Logs/`.
 
 Hay dos mecanismos de deduplicación distintos según el proceso:
 

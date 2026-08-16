@@ -20,22 +20,9 @@ $ErrorActionPreference = 'Stop'
 $RaizRepositorio = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $DirectorioLogs = Join-Path $RaizRepositorio 'Logs'
 
+. (Join-Path $PSScriptRoot 'GLMUtilidades.ps1')
 . (Join-Path $PSScriptRoot 'CargarConfiguracion.ps1')
 . (Join-Path $PSScriptRoot 'ManifiestoEjecucion.ps1')
-
-function Resolver-RutaRepositorio {
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory = $true)][string]$Ruta,
-        [Parameter(Mandatory = $true)][string]$Raiz
-    )
-
-    if ([System.IO.Path]::IsPathRooted($Ruta)) {
-        return [System.IO.Path]::GetFullPath($Ruta)
-    }
-
-    return [System.IO.Path]::GetFullPath((Join-Path $Raiz $Ruta))
-}
 
 function Obtener-RutaXpzReportada {
     [CmdletBinding()]
@@ -237,13 +224,6 @@ function Seleccionar-SiguienteXpzComplementario {
     }
 }
 
-function Quote-ProcessArgument {
-    [CmdletBinding()]
-    param([Parameter(Mandatory = $true)][string]$Valor)
-
-    return ('"' + $Valor.Replace('"', '\"') + '"')
-}
-
 function Validar-RutasEjecucion {
     [CmdletBinding()]
     param(
@@ -286,78 +266,6 @@ function Validar-RutasEjecucion {
     }
 }
 
-function Test-XpzFile {
-    [CmdletBinding()]
-    param([Parameter(Mandatory = $true)][string]$Ruta)
-
-    if (-not (Test-Path -LiteralPath $Ruta -PathType Leaf)) {
-        return [pscustomobject]@{ Valido = $false; Error = 'no se encontro el archivo XPZ esperado' }
-    }
-
-    $zip = $null
-    try {
-        Add-Type -AssemblyName System.IO.Compression.FileSystem
-        $zip = [System.IO.Compression.ZipFile]::OpenRead($Ruta)
-        $entradasXml = @($zip.Entries | Where-Object { $_.Name -like '*.xml' })
-        if ($entradasXml.Count -ne 1) {
-            return [pscustomobject]@{ Valido = $false; Error = ('el XPZ contiene ' + $entradasXml.Count + ' archivos XML; se esperaba uno') }
-        }
-
-        $lector = New-Object System.IO.StreamReader($entradasXml[0].Open())
-        try {
-            $xml = New-Object System.Xml.XmlDocument
-            $xml.LoadXml($lector.ReadToEnd())
-        } finally {
-            $lector.Dispose()
-        }
-
-        if ($xml.DocumentElement.LocalName -ne 'ExportFile') {
-            return [pscustomobject]@{ Valido = $false; Error = ('la raiz XML es ' + $xml.DocumentElement.LocalName + '; se esperaba ExportFile') }
-        }
-
-        return [pscustomobject]@{ Valido = $true; Error = '' }
-    } catch {
-        return [pscustomobject]@{ Valido = $false; Error = ('el XPZ no es valido: ' + $_.Exception.Message) }
-    } finally {
-        if ($null -ne $zip) { $zip.Dispose() }
-    }
-}
-
-function Obtener-ProcesosDescendientes {
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory = $true)][int]$IdProcesoRaiz,
-        [Parameter(Mandatory = $true)][datetime]$IniciadoDespues
-    )
-
-    $resultado = New-Object System.Collections.Generic.List[int]
-    $pendientes = New-Object System.Collections.Generic.Queue[int]
-    $pendientes.Enqueue($IdProcesoRaiz)
-    $procesos = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue)
-
-    while ($pendientes.Count -gt 0) {
-        $idPadre = $pendientes.Dequeue()
-        foreach ($proceso in ($procesos | Where-Object { $_.ParentProcessId -eq $idPadre })) {
-            $fechaCreacion = $null
-            try {
-                if ($proceso.CreationDate -is [datetime]) {
-                    $fechaCreacion = [datetime]$proceso.CreationDate
-                } else {
-                    $fechaCreacion = [System.Management.ManagementDateTimeConverter]::ToDateTime([string]$proceso.CreationDate)
-                }
-            } catch {}
-
-            if ($null -ne $fechaCreacion -and $fechaCreacion -lt $IniciadoDespues.AddSeconds(-2)) { continue }
-            if (-not $resultado.Contains([int]$proceso.ProcessId)) {
-                $resultado.Add([int]$proceso.ProcessId)
-                $pendientes.Enqueue([int]$proceso.ProcessId)
-            }
-        }
-    }
-
-    return @($resultado)
-}
-
 function Crear-ProyectoMsbuildTemporal {
     [CmdletBinding()]
     param(
@@ -378,7 +286,7 @@ function Crear-ProyectoMsbuildTemporal {
 
     $nombreTemporal = 'ExportarXPZSelectivo_' + [System.Guid]::NewGuid().ToString('N') + '.msbuild'
     $rutaTemporal = Join-Path ([System.IO.Path]::GetTempPath()) $nombreTemporal
-    [System.IO.File]::WriteAllText($rutaTemporal, $contenido, (New-Object System.Text.UTF8Encoding($false)))
+    Escribir-TextoUtf8SinBom -Ruta $rutaTemporal -Contenido $contenido
     return $rutaTemporal
 }
 
@@ -435,7 +343,7 @@ function Ejecutar-ExportacionSelectiva {
         $errorSalida = $tareaError.GetAwaiter().GetResult()
 
         $textoLog = @($salida, $errorSalida, (Get-Content -LiteralPath $RutaLog -Raw -ErrorAction SilentlyContinue)) -join "`n"
-        $validacionXpz = Test-XpzFile -Ruta $RutaXpzSalida
+        $validacionXpz = Test-XpzValido -Ruta $RutaXpzSalida
         $exportacionConfirmada = $textoLog -match 'Export Success'
         $cierreConfirmado = $textoLog -match 'Close Knowledge Base Task Success'
         $mensajesError = @($textoLog -split "`r?`n" | Where-Object {
@@ -450,8 +358,8 @@ function Ejecutar-ExportacionSelectiva {
             [System.IO.File]::AppendAllText($RutaLog, (@($salida, $errorSalida) -join "`n"), (New-Object System.Text.UTF8Encoding($false)))
         }
 
-        if ($proceso.ExitCode -ne 0 -or -not $exportacionConfirmada -or -not $cierreConfirmado -or -not $validacionXpz.Valido -or $mensajesError.Count -gt 0 -or $objetosNoEncontrados.Count -gt 0) {
-            $detalle = if ($objetosNoEncontrados.Count -gt 0) { $objetosNoEncontrados -join ' | ' } elseif ($mensajesError.Count -gt 0) { $mensajesError -join ' | ' } elseif (-not $validacionXpz.Valido) { $validacionXpz.Error } else { 'GeneXus no confirmo una exportacion completa.' }
+        if ($proceso.ExitCode -ne 0 -or -not $exportacionConfirmada -or -not $cierreConfirmado -or -not $validacionXpz.Valid -or $mensajesError.Count -gt 0 -or $objetosNoEncontrados.Count -gt 0) {
+            $detalle = if ($objetosNoEncontrados.Count -gt 0) { $objetosNoEncontrados -join ' | ' } elseif ($mensajesError.Count -gt 0) { $mensajesError -join ' | ' } elseif (-not $validacionXpz.Valid) { $validacionXpz.Error } else { 'GeneXus no confirmo una exportacion completa.' }
             throw ('La exportacion selectiva fallo: ' + $detalle)
         }
 
@@ -508,14 +416,7 @@ try {
     $marcaTemporal = (Get-Date).ToString('yyyyMMdd_HHmmssfff')
     $rutaLogEfectiva = if ($LogFile) { [System.IO.Path]::GetFullPath($LogFile) } else { Join-Path $DirectorioLogs ('exportarXPZSelectivo_' + $marcaTemporal + '.log') }
     Validar-RutasEjecucion -Configuracion $configuracion -RutaMsbuild $rutaMsbuildEfectiva -RutaProyecto $rutaProyectoEfectiva -DirectorioGeneXus $GxProgramDir -RutaKnowledgeBase $KbPath -RutaXpzSalida $rutaXpzSalida -RutaLog $rutaLogEfectiva
-    $instanciasGeneXus = @(Get-Process -Name 'GeneXus' -ErrorAction SilentlyContinue)
-    if ($instanciasGeneXus.Count -gt 0) {
-        Write-Host ''
-        Write-Host ('ADVERTENCIA: se detectaron ' + $instanciasGeneXus.Count + ' instancia(s) de GeneXus abierta(s).') -ForegroundColor Yellow
-        Write-Host 'La exportacion selectiva continuara usando una sesion independiente de MSBuild.' -ForegroundColor Yellow
-        Write-Host 'No edite objetos ni ejecute especificaciones, generaciones o reorganizaciones durante la exportacion.' -ForegroundColor Yellow
-        Write-Host ''
-    }
+    Avisar-InstanciasGeneXus
     Write-Host ('Complemento de salida: ' + $rutaXpzSalida) -ForegroundColor DarkGray
     Write-Host ('Log de ejecucion: ' + $rutaLogEfectiva) -ForegroundColor DarkGray
     Write-Host ('Selectores tipo:FQN: ' + ($seleccion.Selectores -join ',')) -ForegroundColor DarkGray

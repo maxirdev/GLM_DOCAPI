@@ -1,3 +1,7 @@
+$ErrorActionPreference = 'Stop'
+
+. (Join-Path $PSScriptRoot 'GLMUtilidades.ps1')
+
 function Convertir-TextoDiagnosticoSeguro {
     param(
         [AllowNull()][string]$Texto,
@@ -121,8 +125,7 @@ function Write-DiagnosticoIA {
         errores = $listaErrores
     }
     $ruta = Join-Path $DirectorioLogs ($MarcaTemporal + '-diagnostico-ia.json')
-    $json = $informe | ConvertTo-Json -Depth 8
-    $json = $json -replace "`r`n", "`n"
-    [System.IO.File]::WriteAllText($ruta, $json, (New-Object System.Text.UTF8Encoding($false)))
+    $json = Normalizar-SaltosLineaLf -Texto ($informe | ConvertTo-Json -Depth 8)
+    Escribir-TextoUtf8SinBom -Ruta $ruta -Contenido $json
     return $ruta
 }

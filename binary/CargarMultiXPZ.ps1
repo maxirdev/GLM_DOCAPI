@@ -1,6 +1,8 @@
 # CargarMultiXPZ.ps1
 # Carga el XPZ principal y sus complementos numerados como una fuente unificada.
 
+. (Join-Path $PSScriptRoot 'GLMUtilidades.ps1')
+
 function Obtener-RutaRelativaRepositorio {
     [CmdletBinding()]
     param(
@@ -12,15 +14,6 @@ function Obtener-RutaRelativaRepositorio {
     $uriRepositorio = New-Object System.Uri(($directorioRepositorio.TrimEnd('\') + '\'))
     $uriRuta = New-Object System.Uri($rutaCompleta)
     return [System.Uri]::UnescapeDataString($uriRepositorio.MakeRelativeUri($uriRuta).ToString()).Replace('\', '/')
-}
-
-function Obtener-HashSha256Archivo {
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory = $true)][string]$Ruta
-    )
-
-    return (Get-FileHash -LiteralPath $Ruta -Algorithm SHA256).Hash.ToLowerInvariant()
 }
 
 function Obtener-NombreArchivoServicio {
@@ -71,7 +64,7 @@ function Construir-ManifiestoMultiXPZ {
             Ruta = $rutaCompleta
             RutaRelativa = Obtener-RutaRelativaRepositorio -Ruta $rutaCompleta
             Nombre = [System.IO.Path]::GetFileName($rutaCompleta)
-            Sha256 = Obtener-HashSha256Archivo -Ruta $rutaCompleta
+            Sha256 = Obtener-Sha256Archivo -Ruta $rutaCompleta
         })
     }
 
@@ -116,14 +109,7 @@ function Obtener-ChecksumSemanticoObjeto {
         [Parameter(Mandatory = $true)][System.Xml.XmlNode]$Objeto
     )
 
-    $sha256 = [System.Security.Cryptography.SHA256]::Create()
-    try {
-        $contenido = [System.Text.Encoding]::UTF8.GetBytes($Objeto.OuterXml)
-        $resultado = $sha256.ComputeHash($contenido)
-        return ([System.BitConverter]::ToString($resultado) -replace '-', '').ToLowerInvariant()
-    } finally {
-        $sha256.Dispose()
-    }
+    return Obtener-Sha256TextoNormalizado -Texto $Objeto.OuterXml
 }
 
 function Construir-IndiceObjetosEfectivos {

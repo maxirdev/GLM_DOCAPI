@@ -16,11 +16,10 @@ $StartTime = Get-Date
 $RaizRepositorio = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..\..'))
 $DirectorioLogs = Join-Path $PSScriptRoot '..\..\..\Logs'
 $faseActual = 'inicio'
+. (Join-Path $PSScriptRoot '..\..\..\binary\GLMUtilidades.ps1')
 . (Join-Path $PSScriptRoot '..\..\..\binary\DiagnosticoIA.ps1')
 
-if (-not [Console]::IsOutputRedirected) {
-    try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch { }
-}
+Inicializar-ConsolaUtf8
 
 function Write-Step {
     param(
@@ -29,15 +28,6 @@ function Write-Step {
     )
     Write-Host ''
     Write-Host ("[ {0}/3 ] {1}" -f $Number, $Text) -ForegroundColor Cyan
-}
-
-function Add-Line {
-    param(
-        [Parameter(Mandatory = $true)][System.Text.StringBuilder]$Builder,
-        [string]$Text = ''
-    )
-    [void]$Builder.Append($Text)
-    [void]$Builder.Append("`n")
 }
 
 try {

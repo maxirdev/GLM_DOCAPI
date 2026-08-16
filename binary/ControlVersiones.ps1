@@ -1,6 +1,10 @@
 # ControlVersiones.ps1
 # Carga, compara y persiste el control local de versiones de servicios.
 
+$ErrorActionPreference = 'Stop'
+
+. (Join-Path $PSScriptRoot 'GLMUtilidades.ps1')
+
 function Obtener-PropiedadControlVersiones {
     [CmdletBinding()]
     param(
@@ -15,6 +19,25 @@ function Obtener-PropiedadControlVersiones {
     $propiedad = $Objeto.PSObject.Properties[$Nombre]
     if ($propiedad) { return ,$propiedad.Value }
     return $null
+}
+
+function Establecer-PropiedadObjetoControl {
+    <#
+    .SYNOPSIS
+    Establece (o reemplaza) una propiedad de un objeto del control de versiones.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]$Objeto,
+        [Parameter(Mandatory = $true)][string]$Nombre,
+        [Parameter(Mandatory = $false)]$Valor
+    )
+
+    if ($Objeto -is [System.Collections.IDictionary]) {
+        $Objeto[$Nombre] = $Valor
+    } else {
+        $Objeto | Add-Member -MemberType NoteProperty -Name $Nombre -Value $Valor -Force
+    }
 }
 
 function Convertir-DiccionarioControlVersiones {
@@ -280,34 +303,12 @@ function Escribir-ControlVersionesAtomico {
 
     Validar-ControlVersiones -ControlVersiones $ControlVersiones | Out-Null
     $rutaCompleta = [System.IO.Path]::GetFullPath($RutaControl)
-    $directorio = [System.IO.Path]::GetDirectoryName($rutaCompleta)
-    if (-not (Test-Path -LiteralPath $directorio -PathType Container)) {
-        New-Item -ItemType Directory -Path $directorio -Force | Out-Null
-    }
-
     $contenido = $ControlVersiones | ConvertTo-Json -Depth 20
-    $rutaTemporal = Join-Path $directorio ([System.IO.Path]::GetFileName($rutaCompleta) + '.' + [guid]::NewGuid().ToString('N') + '.tmp')
-    $codificacion = New-Object System.Text.UTF8Encoding($false)
-    try {
-        [System.IO.File]::WriteAllText($rutaTemporal, $contenido, $codificacion)
-        $contenidoValidado = [System.IO.File]::ReadAllText($rutaTemporal) | ConvertFrom-Json
+    $bloqueValidar = {
+        param($RutaTemporal)
+        $contenidoValidado = [System.IO.File]::ReadAllText($RutaTemporal) | ConvertFrom-Json
         Validar-ControlVersiones -ControlVersiones $contenidoValidado | Out-Null
-        if (Test-Path -LiteralPath $rutaCompleta -PathType Leaf) {
-            $rutaRespaldo = $rutaCompleta + '.' + [guid]::NewGuid().ToString('N') + '.bak'
-            try {
-                [System.IO.File]::Replace($rutaTemporal, $rutaCompleta, $rutaRespaldo)
-            } finally {
-                if (Test-Path -LiteralPath $rutaRespaldo -PathType Leaf) {
-                    Remove-Item -LiteralPath $rutaRespaldo -Force -ErrorAction SilentlyContinue
-                }
-            }
-        } else {
-            [System.IO.File]::Move($rutaTemporal, $rutaCompleta)
-        }
-    } finally {
-        if (Test-Path -LiteralPath $rutaTemporal -PathType Leaf) {
-            Remove-Item -LiteralPath $rutaTemporal -Force
-        }
     }
+    Escribir-ArchivoAtomico -Ruta $rutaCompleta -Contenido $contenido -Validar $bloqueValidar | Out-Null
     return $rutaCompleta
 }

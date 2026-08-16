@@ -15,162 +15,13 @@ $StartTime = Get-Date
 $RaizRepositorio = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $DirectorioLogs = Join-Path $RaizRepositorio 'Logs'
 
+. (Join-Path $PSScriptRoot 'GLMUtilidades.ps1')
 . (Join-Path $PSScriptRoot 'CargarConfiguracion.ps1')
 . (Join-Path $PSScriptRoot 'AnalizarServicio.ps1')
 . (Join-Path $PSScriptRoot 'CargarMultiXPZ.ps1')
 . (Join-Path $PSScriptRoot 'ManifiestoEjecucion.ps1')
 
 $ejecucionId = ''
-
-function Descubrir-XPZComplementarios {
-    <#
-    .SYNOPSIS
-    Busca archivos XPZ complementarios en el mismo directorio del XPZ principal.
-    .DESCRIPTION
-    Dado el nombre del XPZ principal (p.ej. SEGUROS_COMERCIAL_APIGLM_v1_0.xpz),
-    busca en el mismo directorio archivos que coincidan con <nombreBase>_<N>.xpz
-    y los ordena numericamente por N. El patron es ^<nombreBase>_(\d+)\.xpz$.
-    #>
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory = $true)][string]$RutaXpzPrincipal
-    )
-
-    $directorioXpz = [System.IO.Path]::GetDirectoryName($RutaXpzPrincipal)
-    $nombreXpzPrincipal = [System.IO.Path]::GetFileNameWithoutExtension($RutaXpzPrincipal)
-    $nombreBaseEscapado = [regex]::Escape($nombreXpzPrincipal)
-    $patronComplemento = '^' + $nombreBaseEscapado + '_(\d+)\.xpz$'
-    $regexComplemento = [regex]::new($patronComplemento, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
-
-    $complementos = New-Object System.Collections.Generic.List[object]
-    foreach ($archivo in (Get-ChildItem -LiteralPath $directorioXpz -Filter '*.xpz')) {
-        $coincidencia = $regexComplemento.Match($archivo.Name)
-        if (-not $coincidencia.Success) { continue }
-        $numero = [int]$coincidencia.Groups[1].Value
-        $complementos.Add([pscustomobject]@{
-            Ruta = $archivo.FullName
-            Nombre = $archivo.Name
-            Numero = $numero
-        })
-    }
-
-    $ordenados = @($complementos | Sort-Object Numero)
-    Write-Host ("  XPZ complementarios descubiertos: " + $ordenados.Count) -ForegroundColor DarkGray
-    foreach ($complemento in $ordenados) {
-        Write-Host ("    " + $complemento.Nombre) -ForegroundColor DarkGray
-    }
-    $rutas = @($ordenados | ForEach-Object { $_.Ruta })
-    Write-Output -NoEnumerate $rutas
-    return
-}
-
-function Merge-ListaIndice {
-    <#
-    .SYNOPSIS
-    Fusiona un indice de nombre → lista de nodos en el destino, sin duplicar por GUID.
-    #>
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory = $true)]$Destino,
-        [Parameter(Mandatory = $true)]$Origen,
-        [Parameter(Mandatory = $true)][ref]$GuidsVistos
-    )
-
-    foreach ($nombre in $Origen.Keys) {
-        if (-not $Destino.ContainsKey($nombre)) {
-            $Destino[$nombre] = New-Object System.Collections.Generic.List[object]
-        }
-        foreach ($nodo in $Origen[$nombre]) {
-            $guid = $nodo.GetAttribute('guid')
-            if ($guid -and $GuidsVistos.Value.ContainsKey($guid)) { continue }
-            if ($guid) { $GuidsVistos.Value[$guid] = $true }
-            $Destino[$nombre].Add($nodo)
-        }
-    }
-}
-
-function Construir-IndiceMultiXPZ {
-    <#
-    .SYNOPSIS
-    Abre el XPZ principal y los complementarios, construye sus indices y los
-    fusiona en un indice unificado con trazabilidad de origen.
-    .DESCRIPTION
-    Cada entrada del indice unificado registra el XPZ de origen. La fusion
-    respeta cascada: si un FQN ya existe en un XPZ anterior, se conserva el
-    del primer XPZ donde aparecio.
-    #>
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory = $true)][string]$RutaXpzPrincipal,
-        [Parameter(Mandatory = $false)][string[]]$XpzComplementarios = @()
-    )
-
-    $todasRutas = @($RutaXpzPrincipal) + @($XpzComplementarios)
-    $nombresXpz = @()
-    $indicesParciales = @()
-
-    foreach ($rutaXpz in $todasRutas) {
-        $nombreXpz = [System.IO.Path]::GetFileName($rutaXpz)
-        $abierto = Abrir-XPZ -RutaXpz $rutaXpz
-        $indice = Construir-Indices -Xml $abierto.Xml
-        $indice | Add-Member -MemberType NoteProperty -Name 'NombreXpz' -Value $nombreXpz -Force
-        $indicesParciales += $indice
-        $nombresXpz += $nombreXpz
-    }
-
-    $porFqnUnificado = @{}
-    $origen = @{}
-    $origenPorGuid = @{}
-    $todosNombresXpz = @($nombresXpz)
-
-    for ($indiceXpz = 0; $indiceXpz -lt $indicesParciales.Count; $indiceXpz++) {
-        $indiceParcial = $indicesParciales[$indiceXpz]
-        $nombreXpz = $indiceParcial.NombreXpz
-
-        foreach ($fqn in $indiceParcial.PorFqn.Keys) {
-            $objeto = $indiceParcial.PorFqn[$fqn]
-            if (-not $porFqnUnificado.ContainsKey($fqn)) {
-                $porFqnUnificado[$fqn] = $objeto
-                $origen[$fqn] = $nombreXpz
-                $guid = $objeto.GetAttribute('guid')
-                if ($guid -and -not $origenPorGuid.ContainsKey($guid)) {
-                    $origenPorGuid[$guid] = $nombreXpz
-                }
-            }
-        }
-    }
-
-    $porNombreUnificado = @{}
-    $porNombreCodigoUnificado = @{}
-    $porNombreDominioUnificado = @{}
-    $porNombreAtributoUnificado = @{}
-    $guidsVistosNodos = @{}
-
-    foreach ($indiceParcial in $indicesParciales) {
-        Merge-ListaIndice -Destino $porNombreUnificado -Origen $indiceParcial.PorNombre -GuidsVistos ([ref]$guidsVistosNodos)
-        Merge-ListaIndice -Destino $porNombreCodigoUnificado -Origen $indiceParcial.PorNombreCodigo -GuidsVistos ([ref]$guidsVistosNodos)
-        Merge-ListaIndice -Destino $porNombreDominioUnificado -Origen $indiceParcial.PorNombreDominio -GuidsVistos ([ref]$guidsVistosNodos)
-        Merge-ListaIndice -Destino $porNombreAtributoUnificado -Origen $indiceParcial.PorNombreAtributo -GuidsVistos ([ref]$guidsVistosNodos)
-    }
-
-    $indiceUnificado = [pscustomobject]@{
-        PorFqn = $porFqnUnificado
-        PorNombre = $porNombreUnificado
-        PorNombreCodigo = $porNombreCodigoUnificado
-        PorNombreDominio = $porNombreDominioUnificado
-        PorNombreAtributo = $porNombreAtributoUnificado
-        Origen = $origen
-        OrigenPorGuid = $origenPorGuid
-        NombresXpz = $todosNombresXpz
-        TiposMiembroSdt = $null
-        EvidenciasMiembroSdt = $null
-        TiposMiembroSdtConstruido = $false
-    }
-
-    Write-Host ("  Indice unificado: " + $porFqnUnificado.Count + " objetos FQN de " + $todosNombresXpz.Count + " XPZ") -ForegroundColor DarkGray
-
-    return $indiceUnificado
-}
 
 function Validar-CompletitudServicio {
     <#
@@ -603,14 +454,10 @@ function Write-ReporteValidacion {
         objectList = $objectList
     }
 
-    $directorioReporte = [System.IO.Path]::GetDirectoryName($RutaReporte)
-    if (-not (Test-Path -LiteralPath $directorioReporte)) {
-        New-Item -ItemType Directory -Path $directorioReporte -Force | Out-Null
-    }
+    Asegurar-Directorio -Ruta ([System.IO.Path]::GetDirectoryName($RutaReporte))
 
-    $json = $reporte | ConvertTo-Json -Depth 10
-    $json = $json -replace "`r`n", "`n"
-    [System.IO.File]::WriteAllText($RutaReporte, $json, (New-Object System.Text.UTF8Encoding($false)))
+    $json = Normalizar-SaltosLineaLf -Texto ($reporte | ConvertTo-Json -Depth 10)
+    Escribir-TextoUtf8SinBom -Ruta $RutaReporte -Contenido $json
 }
 
 try {
@@ -629,8 +476,7 @@ try {
     if (-not (Test-Path -LiteralPath $RutaInventario)) {
         throw ("No se encontro el inventario en: " + $RutaInventario)
     }
-    $inventarioRaw = Get-Content -LiteralPath $RutaInventario -Raw | ConvertFrom-Json
-    $endpointsInventario = @($inventarioRaw.endpoints)
+    $endpointsInventario = @(Leer-InventarioEndpoints -RutaInventario $RutaInventario)
 
     $ignoradosConfig = @($configuracion.ServiciosIgnorados)
     $endpointsEfectivos = @($endpointsInventario | Where-Object { $ignoradosConfig -notcontains $_.proceso })

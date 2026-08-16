@@ -3,25 +3,7 @@
 
 $ErrorActionPreference = 'Stop'
 
-function Quote-ProcessArgument {
-    param([Parameter(Mandatory = $true)][string]$Valor)
-    return '"' + $Valor.Replace('"', '\"') + '"'
-}
-
-function Test-PdfValido {
-    param([Parameter(Mandatory = $true)][string]$Ruta)
-
-    if (-not (Test-Path -LiteralPath $Ruta -PathType Leaf)) { return $false }
-    if ((Get-Item -LiteralPath $Ruta).Length -lt 5) { return $false }
-    $flujo = [System.IO.File]::OpenRead($Ruta)
-    try {
-        $cabecera = New-Object byte[] 4
-        [void]$flujo.Read($cabecera, 0, 4)
-        return ([System.Text.Encoding]::ASCII.GetString($cabecera) -eq '%PDF')
-    } finally {
-        $flujo.Dispose()
-    }
-}
+. (Join-Path $PSScriptRoot 'GLMUtilidades.ps1')
 
 function Reemplazar-PdfValidado {
     [CmdletBinding()]
@@ -268,7 +250,7 @@ function Convertir-MarkdownAPdf {
             $rutaPdfTemporal
         ))
 
-        if (-not (Test-PdfValido -Ruta $rutaPdfTemporal)) {
+        if (-not (Test-PdfValidoParaPromocion -Ruta $rutaPdfTemporal)) {
             throw 'Typst termino correctamente, pero no genero un PDF valido.'
         }
         Reemplazar-PdfValidado -RutaTemporal $rutaPdfTemporal -RutaVigente $RutaSalida

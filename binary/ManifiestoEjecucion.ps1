@@ -2,6 +2,8 @@
 
 $ErrorActionPreference = 'Stop'
 
+. (Join-Path $PSScriptRoot 'GLMUtilidades.ps1')
+
 function Obtener-NuevoIdentificadorEjecucion {
     [CmdletBinding()]
     param()
@@ -56,6 +58,19 @@ function Leer-ManifiestoEjecucion {
     return $manifiesto
 }
 
+function Escribir-ManifiestoEjecucion {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]$Manifiesto,
+        [Parameter(Mandatory = $true)][string]$RutaManifiesto
+    )
+
+    Validar-ManifiestoEjecucion -Manifiesto ([pscustomobject]$Manifiesto) | Out-Null
+    $contenido = $Manifiesto | ConvertTo-Json -Depth 10
+    Escribir-TextoUtf8SinBom -Ruta ([System.IO.Path]::GetFullPath($RutaManifiesto)) -Contenido $contenido
+    return $Manifiesto
+}
+
 function Crear-ManifiestoEjecucion {
     [CmdletBinding()]
     param(
@@ -80,12 +95,9 @@ function Crear-ManifiestoEjecucion {
         versions = @{}
         staging = [System.IO.Path]::GetFullPath($directorioStaging)
     }
-    Validar-ManifiestoEjecucion -Manifiesto ([pscustomobject]$manifiesto) | Out-Null
 
     $rutaManifiesto = Join-Path $directorioEjecucion 'ejecucion.json'
-    $contenido = $manifiesto | ConvertTo-Json -Depth 10
-    $codificacion = New-Object System.Text.UTF8Encoding($false)
-    [System.IO.File]::WriteAllText($rutaManifiesto, $contenido, $codificacion)
+    Escribir-ManifiestoEjecucion -Manifiesto $manifiesto -RutaManifiesto $rutaManifiesto | Out-Null
 
     return [pscustomobject]@{
         Ruta = $rutaManifiesto
@@ -110,10 +122,7 @@ function Establecer-VersionesManifiesto {
 
     $manifiesto = Leer-ManifiestoEjecucion -RutaManifiesto $RutaManifiesto
     $manifiesto | Add-Member -MemberType NoteProperty -Name 'versions' -Value $Versiones -Force
-    Validar-ManifiestoEjecucion -Manifiesto $manifiesto | Out-Null
-    $contenido = $manifiesto | ConvertTo-Json -Depth 10
-    $codificacion = New-Object System.Text.UTF8Encoding($false)
-    [System.IO.File]::WriteAllText([System.IO.Path]::GetFullPath($RutaManifiesto), $contenido, $codificacion)
+    Escribir-ManifiestoEjecucion -Manifiesto $manifiesto -RutaManifiesto $RutaManifiesto | Out-Null
     return $manifiesto
 }
 
@@ -140,9 +149,6 @@ function Establecer-FullyQualifiedNamesManifiesto {
 
     $manifiesto = Leer-ManifiestoEjecucion -RutaManifiesto $RutaManifiesto
     $manifiesto.fullyQualifiedNames = @($FullyQualifiedNames | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique)
-    Validar-ManifiestoEjecucion -Manifiesto $manifiesto | Out-Null
-    $contenido = $manifiesto | ConvertTo-Json -Depth 10
-    $codificacion = New-Object System.Text.UTF8Encoding($false)
-    [System.IO.File]::WriteAllText([System.IO.Path]::GetFullPath($RutaManifiesto), $contenido, $codificacion)
+    Escribir-ManifiestoEjecucion -Manifiesto $manifiesto -RutaManifiesto $RutaManifiesto | Out-Null
     return $manifiesto
 }

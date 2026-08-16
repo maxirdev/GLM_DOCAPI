@@ -22,11 +22,10 @@ $RaizRepositorio = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $DirectorioLogs = Join-Path $PSScriptRoot '..\Logs'
 $diagnosticosIA = New-Object System.Collections.Generic.List[object]
 $faseActual = 'inicio'
+. (Join-Path $PSScriptRoot 'GLMUtilidades.ps1')
 . (Join-Path $PSScriptRoot 'DiagnosticoIA.ps1')
 
-if (-not [Console]::IsOutputRedirected) {
-    try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch { }
-}
+Inicializar-ConsolaUtf8
 
 function Write-Step {
     param(
@@ -138,9 +137,7 @@ try {
         $XpzPath = [string]$manifiestoEjecucion.xpz
         $NoInteractivo = $true
         $DirectorioSalida = Join-Path ([string]$manifiestoEjecucion.staging) 'markdown'
-        if (-not (Test-Path -LiteralPath $DirectorioSalida -PathType Container)) {
-            New-Item -ItemType Directory -Path $DirectorioSalida -Force | Out-Null
-        }
+        Asegurar-Directorio -Ruta $DirectorioSalida
         Write-Host ('  Ejecucion: ' + $manifiestoEjecucion.ejecucionId) -ForegroundColor DarkGray
         Write-Host ('  Staging Markdown: ' + $DirectorioSalida) -ForegroundColor DarkGray
     }
@@ -181,8 +178,8 @@ try {
     if (-not (Test-Path -LiteralPath $RutaInventario)) {
         throw ("No se encontro el inventario en: " + $RutaInventario + ". Regenerelo desde la opcion 3 de GenerarDocumentosGLM.cmd o invocando GenerarListaEndpoints.ps1.")
     }
-    $inventario = Get-Content -LiteralPath $RutaInventario -Raw | ConvertFrom-Json
-    $endpoints = @($inventario.endpoints)
+    $inventario = Leer-InventarioEndpoints -RutaInventario $RutaInventario
+    $endpoints = @($inventario)
     if ($endpoints.Count -eq 0) {
         throw 'El inventario endpoints.json no contiene endpoints.'
     }
@@ -381,9 +378,7 @@ try {
     Write-Host ("Completado: $okCount OK, $warningCount WARNING, $errorCount ERROR, $omitidoCount OMITIDO.") -ForegroundColor Cyan
 
     $faseActual = 'escritura-logs'
-    if (-not (Test-Path -LiteralPath $DirectorioLogs)) {
-        New-Item -ItemType Directory -Path $DirectorioLogs -Force | Out-Null
-    }
+    Asegurar-Directorio -Ruta $DirectorioLogs
 
     $finEjecucion = Get-Date
     $marcaTemporal = $finEjecucion.ToString('yyyyMMdd-HHmmss')
@@ -411,16 +406,12 @@ try {
     }
     if ($RutaReview) {
         $rutaRevision = [System.IO.Path]::GetFullPath($RutaReview)
-        $directorioRutaReview = [System.IO.Path]::GetDirectoryName($rutaRevision)
-        if (-not (Test-Path -LiteralPath $directorioRutaReview -PathType Container)) {
-            New-Item -ItemType Directory -Path $directorioRutaReview -Force | Out-Null
-        }
+        Asegurar-Directorio -Ruta ([System.IO.Path]::GetDirectoryName($rutaRevision))
     } else {
         $rutaRevision = Join-Path $DirectorioLogs ($marcaTemporal + '-review.json')
     }
-    $jsonRevision = $revision | ConvertTo-Json -Depth 5
-    $jsonRevision = $jsonRevision -replace "`r`n", "`n"
-    [System.IO.File]::WriteAllText($rutaRevision, $jsonRevision, (New-Object System.Text.UTF8Encoding($false)))
+    $jsonRevision = Normalizar-SaltosLineaLf -Texto ($revision | ConvertTo-Json -Depth 5)
+    Escribir-TextoUtf8SinBom -Ruta $rutaRevision -Contenido $jsonRevision
     Write-Host ("Review: " + $rutaRevision) -ForegroundColor DarkGray
     $script:RutaReviewGenerada = $rutaRevision
 
@@ -447,7 +438,7 @@ try {
         if ($lineasTxt.Count -gt 0) {
             $rutaErrores = Join-Path $DirectorioLogs ($marcaTemporal + '-errores.txt')
             $contenidoTxt = ($lineasTxt -join "`n") + "`n"
-            [System.IO.File]::WriteAllText($rutaErrores, $contenidoTxt, (New-Object System.Text.UTF8Encoding($false)))
+            Escribir-TextoUtf8SinBom -Ruta $rutaErrores -Contenido $contenidoTxt
             Write-Host ("Incidencias: " + $rutaErrores) -ForegroundColor DarkGray
         }
     }

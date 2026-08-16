@@ -148,6 +148,7 @@ function Cargar-ModulosProduccion {
     [CmdletBinding()]
     param()
     return @(
+        (Join-Path $DirectorioBinario 'GLMUtilidades.ps1')
         (Join-Path $DirectorioBinario 'CargarConfiguracion.ps1')
         (Join-Path $DirectorioBinario 'AnalizarServicio.ps1')
         (Join-Path $DirectorioBinario 'CargarMultiXPZ.ps1')
@@ -1625,6 +1626,346 @@ function Ejecutar-CasosIntegridadTransaccional {
     ) -DetalleExito 'El manifiesto conserva el mapa de versiones al actualizar los FQN y el actualizador normaliza el hash excluyendo la fila Version.' -DetalleFallo 'El manifiesto no conserva las versiones o el actualizador no normaliza el hash de documento.'
 }
 
+function Ejecutar-CasosUtilidades {
+    <#
+    .SYNOPSIS
+    Casos del modulo comun GLMUtilidades.ps1: hash, escritura atomica, rutas,
+    validacion XPZ/PDF, reportes de validacion, fabrica de registros e invocacion
+    de scripts hijo. Incluye la guarda de equivalencia de hashes contra la
+    implementacion anterior.
+    #>
+    [CmdletBinding()]
+    param()
+
+    New-DirectorioSiNoExiste -Directorio $DirectorioTmp | Out-Null
+
+    function Obtener-HashReferenciaAnterior {
+        param([AllowEmptyString()][string]$Texto)
+        $textoNormalizado = ($Texto -replace "`r`n", "`n") -replace "`r", "`n"
+        $sha256 = [System.Security.Cryptography.SHA256]::Create()
+        try {
+            $bytes = [System.Text.Encoding]::UTF8.GetBytes($textoNormalizado)
+            return (([System.BitConverter]::ToString($sha256.ComputeHash($bytes))) -replace '-', '').ToLowerInvariant()
+        } finally {
+            $sha256.Dispose()
+        }
+    }
+
+    $entradasHash = @(
+        '',
+        'texto simple',
+        "con`r`nfin de linea CRLF",
+        "con`nfin de linea LF",
+        "mezclado`r`nlf`r`n`nfinal`r",
+        ('acentos y símbolos: á é í ó ú ñ — ' + [char]0xF3)
+    )
+    $hashEquivalente = $true
+    foreach ($entradaHash in $entradasHash) {
+        if ((Obtener-Sha256TextoNormalizado -Texto $entradaHash) -ne (Obtener-HashReferenciaAnterior -Texto $entradaHash)) {
+            $hashEquivalente = $false
+            break
+        }
+    }
+    Test-Asercion -Id 'utilidades.hashEquivalenciaImplementacionAnterior' -Condicion $hashEquivalente -DetalleExito 'El hash canonico produce resultados byte-identicos a la implementacion anterior en todas las entradas de muestra.' -DetalleFallo 'El hash canonico difiere de la implementacion anterior.'
+
+    Test-Asercion -Id 'utilidades.hashTextoNormalizado' -Condicion (
+        (Obtener-Sha256TextoNormalizado -Texto "a`r`nb") -eq (Obtener-Sha256TextoNormalizado -Texto "a`nb") -and
+        (Obtener-Sha256TextoNormalizado -Texto 'abc').Length -eq 64 -and
+        (Obtener-Sha256TextoNormalizado -Texto 'abc') -ceq (Obtener-Sha256TextoNormalizado -Texto 'abc').ToLowerInvariant()
+    ) -DetalleExito 'El hash de texto normaliza saltos de linea y devuelve SHA256 hexadecimal en minusculas.' -DetalleFallo 'El hash de texto no normaliza como se espera.'
+
+    $rutaArchivoHash = Join-Path $DirectorioTmp 'utilidades-hash-archivo.bin'
+    [System.IO.File]::WriteAllText($rutaArchivoHash, "contenido`r`nbinario", (New-Object System.Text.UTF8Encoding($false)))
+    Test-Asercion -Id 'utilidades.hashArchivoBinario' -Condicion (
+        (Obtener-Sha256Archivo -Ruta $rutaArchivoHash) -eq (Get-FileHash -LiteralPath $rutaArchivoHash -Algorithm SHA256).Hash.ToLowerInvariant()
+    ) -DetalleExito 'El hash de archivo coincide con Get-FileHash SHA256 en minusculas (equivalencia con la implementacion anterior).' -DetalleFallo 'El hash de archivo no coincide con Get-FileHash.'
+
+    Test-Asercion -Id 'utilidades.normalizarLf' -Condicion (
+        (Normalizar-SaltosLineaLf -Texto "a`r`nb`rc") -eq "a`nb`nc"
+    ) -DetalleExito 'La normalizacion convierte CRLF y CR a LF.' -DetalleFallo 'La normalizacion de saltos de linea no es correcta.'
+
+    $rutaUtf8 = Join-Path $DirectorioTmp 'utilidades-utf8.txt'
+    Escribir-TextoUtf8SinBom -Ruta $rutaUtf8 -Contenido ('contenido-utf8-' + [char]0xE1)
+    $bytesUtf8 = [System.IO.File]::ReadAllBytes($rutaUtf8)
+    Test-Asercion -Id 'utilidades.escrituraUtf8SinBom' -Condicion (
+        $bytesUtf8.Length -gt 0 -and -not ($bytesUtf8[0] -eq 0xEF -and $bytesUtf8[1] -eq 0xBB -and $bytesUtf8[2] -eq 0xBF) -and
+        ([System.IO.File]::ReadAllText($rutaUtf8) -like 'contenido-utf8-*')
+    ) -DetalleExito 'La escritura UTF-8 produce un archivo sin BOM con el contenido exacto.' -DetalleFallo 'La escritura UTF-8 no produce el archivo esperado.'
+
+    $rutaAtomicoNuevo = Join-Path $DirectorioTmp 'utilidades-atomico-nuevo.txt'
+    Escribir-ArchivoAtomico -Ruta $rutaAtomicoNuevo -Contenido 'primera escritura' | Out-Null
+    Escribir-ArchivoAtomico -Ruta $rutaAtomicoNuevo -Contenido 'segunda escritura' | Out-Null
+    $residualesAtomico = @(Get-ChildItem -LiteralPath $DirectorioTmp -File | Where-Object { $_.Name.StartsWith('utilidades-atomico-nuevo.txt.') })
+    Test-Asercion -Id 'utilidades.escrituraAtomicaReemplazo' -Condicion (
+        ([System.IO.File]::ReadAllText($rutaAtomicoNuevo) -eq 'segunda escritura') -and
+        $residualesAtomico.Count -eq 0
+    ) -DetalleExito 'La escritura atomica crea y reemplaza el archivo sin dejar temporales ni respaldos.' -DetalleFallo 'La escritura atomica no reemplaza correctamente o deja residuales.'
+
+    $rutaAtomicoValidado = Join-Path $DirectorioTmp 'utilidades-atomico-validado.txt'
+    Escribir-ArchivoAtomico -Ruta $rutaAtomicoValidado -Contenido 'contenido vigente' | Out-Null
+    $bloqueRechazo = { param($RutaTemporal) throw 'validacion rechazada' }
+    $conservoContenido = $false
+    try {
+        Escribir-ArchivoAtomico -Ruta $rutaAtomicoValidado -Contenido 'contenido invalido' -Validar $bloqueRechazo | Out-Null
+    } catch {
+        $conservoContenido = ([System.IO.File]::ReadAllText($rutaAtomicoValidado) -eq 'contenido vigente')
+    }
+    $residualesValidado = @(Get-ChildItem -LiteralPath $DirectorioTmp -File | Where-Object { $_.Name.StartsWith('utilidades-atomico-validado.txt.') })
+    Test-Asercion -Id 'utilidades.escrituraAtomicaValidacionFalla' -Condicion (
+        $conservoContenido -and $residualesValidado.Count -eq 0
+    ) -DetalleExito 'Si la validacion rechaza el contenido, el archivo vigente se conserva y no quedan residuales.' -DetalleFallo 'La validacion de la escritura atomica no conserva el archivo vigente.'
+
+    $raizUtilidades = Join-Path $DirectorioTmp 'utilidades-raiz'
+    New-DirectorioSiNoExiste -Directorio $raizUtilidades | Out-Null
+    Test-Asercion -Id 'utilidades.resolverRutaRepositorio' -Condicion (
+        (Resolver-RutaRepositorio -Ruta 'sub\archivo.txt' -Raiz $raizUtilidades) -eq [System.IO.Path]::GetFullPath((Join-Path $raizUtilidades 'sub\archivo.txt')) -and
+        (Resolver-RutaRepositorio -Ruta (Join-Path $DirectorioTmp 'absoluto.txt') -Raiz $raizUtilidades) -eq [System.IO.Path]::GetFullPath((Join-Path $DirectorioTmp 'absoluto.txt'))
+    ) -DetalleExito 'El resolutor combina rutas relativas contra la raiz y conserva las absolutas.' -DetalleFallo 'El resolutor de rutas no resuelve como se espera.'
+
+    Test-Asercion -Id 'utilidades.quoteArgumento' -Condicion (
+        (Quote-ProcessArgument -Valor 'ruta con espacios\xpz.xpz') -eq '"ruta con espacios\xpz.xpz"' -and
+        (Quote-ProcessArgument -Valor 'a"b') -eq '"a\"b"'
+    ) -DetalleExito 'El quoter encierra entre comillas y escapa las comillas internas.' -DetalleFallo 'El quoter de argumentos no es correcto.'
+
+    $rutaPdfValido = Join-Path $DirectorioTmp 'utilidades-valido.pdf'
+    [System.IO.File]::WriteAllText($rutaPdfValido, '%PDF-1.4 contenido simulado', (New-Object System.Text.UTF8Encoding($false)))
+    $rutaPdfCorto = Join-Path $DirectorioTmp 'utilidades-corto.pdf'
+    [System.IO.File]::WriteAllText($rutaPdfCorto, '1234', (New-Object System.Text.UTF8Encoding($false)))
+    $rutaPdfCabecera = Join-Path $DirectorioTmp 'utilidades-cabecera.pdf'
+    [System.IO.File]::WriteAllText($rutaPdfCabecera, 'NOESUNPDF contenido', (New-Object System.Text.UTF8Encoding($false)))
+    Test-Asercion -Id 'utilidades.pdfValido' -Condicion (
+        (Test-PdfValidoParaPromocion -Ruta $rutaPdfValido) -and
+        -not (Test-PdfValidoParaPromocion -Ruta $rutaPdfCorto) -and
+        -not (Test-PdfValidoParaPromocion -Ruta $rutaPdfCabecera) -and
+        -not (Test-PdfValidoParaPromocion -Ruta (Join-Path $DirectorioTmp 'utilidades-inexistente.pdf'))
+    ) -DetalleExito 'El validador de PDF acepta %PDF y rechaza archivos cortos, con cabecera invalida o inexistentes.' -DetalleFallo 'El validador de PDF no discrimina como se espera.'
+
+    $rutaXpzFixture = Join-Path $DirectorioFixturesXpz 'SEGUROS_COMERCIAL_APIGLM_test.xpz'
+    $validacionXpzFixture = Test-XpzValido -Ruta $rutaXpzFixture
+    $rutaNoXpz = Join-Path $DirectorioTmp 'utilidades-no-xpz.bin'
+    [System.IO.File]::WriteAllText($rutaNoXpz, 'no es un zip', (New-Object System.Text.UTF8Encoding($false)))
+    $validacionNoXpz = Test-XpzValido -Ruta $rutaNoXpz
+    $validacionInexistente = Test-XpzValido -Ruta (Join-Path $DirectorioTmp 'utilidades-inexistente.xpz')
+    Test-Asercion -Id 'utilidades.xpzValido' -Condicion (
+        $validacionXpzFixture.Valid -and
+        -not $validacionNoXpz.Valid -and $validacionNoXpz.Error -and
+        -not $validacionInexistente.Valid -and $validacionInexistente.Error -like '*no se encontro*'
+    ) -DetalleExito 'El validador XPZ acepta el fixture y rechaza archivos invalidos o inexistentes con mensaje.' -DetalleFallo 'El validador XPZ no discrimina como se espera.'
+
+    $directorioLogsUtilidades = Join-Path $DirectorioTmp 'utilidades-logs'
+    New-DirectorioSiNoExiste -Directorio $directorioLogsUtilidades | Out-Null
+    $reporteIncompatible = [pscustomobject]@{
+        ejecucion = [pscustomobject]@{ id = 'ejec-incompatible'; xpz = 'otro.xpz' }
+        objectList = 'SDT:Otro'
+    }
+    $reporteCompatible = [pscustomobject]@{
+        ejecucion = [pscustomobject]@{ id = 'ejec-utilidades'; xpz = $rutaXpzFixture }
+        solicitudes = @([pscustomobject]@{ servicio = 'APIGLM.Fixture.WS'; exportar = @('SDT:Faltante'); selectores = @('SDT:APIGLM.Faltante') })
+        objectList = ''
+    }
+    Escribir-TextoUtf8SinBom -Ruta (Join-Path $directorioLogsUtilidades 'utilidades-a-validacion-xpz.json') -Contenido ($reporteIncompatible | ConvertTo-Json -Depth 10)
+    Escribir-TextoUtf8SinBom -Ruta (Join-Path $directorioLogsUtilidades 'utilidades-b-validacion-xpz.json') -Contenido ($reporteCompatible | ConvertTo-Json -Depth 10)
+    $seleccionReporte = Obtener-ReporteValidacionMasReciente -DirectorioLogs $directorioLogsUtilidades -RutaXpz $rutaXpzFixture -RaizRepositorio $RaizRepositorio -EjecucionId 'ejec-utilidades'
+    $seleccionSinEjecucion = Obtener-ReporteValidacionMasReciente -DirectorioLogs $directorioLogsUtilidades -RutaXpz $rutaXpzFixture -RaizRepositorio $RaizRepositorio -EjecucionId 'ejec-inexistente'
+    $seleccionSinReportes = Obtener-ReporteValidacionMasReciente -DirectorioLogs (Join-Path $DirectorioTmp 'utilidades-logs-vacio') -RutaXpz $rutaXpzFixture -RaizRepositorio $RaizRepositorio
+    Test-Asercion -Id 'utilidades.reporteValidacionMasReciente' -Condicion (
+        $seleccionReporte -and [string]$seleccionReporte.Datos.ejecucion.id -eq 'ejec-utilidades' -and
+        $null -eq $seleccionSinEjecucion -and
+        $null -eq $seleccionSinReportes
+    ) -DetalleExito 'La busqueda del reporte de validacion respeta XPZ compatible y ejecucion opcional.' -DetalleFallo 'La busqueda del reporte de validacion no filtra como se espera.'
+
+    $objetosPendientes = @(Obtener-ObjetosPendientes -Reporte $reporteCompatible)
+    $reporteSoloObjectList = [pscustomobject]@{ solicitudes = $null; objectList = 'SDT:A, SDT:B' }
+    $reporteSoloSelectores = [pscustomobject]@{ solicitudes = @([pscustomobject]@{ servicio = 'S'; exportar = @(); selectores = @('SDT:APIGLM.SoloSelector') }); objectList = '' }
+    Test-Asercion -Id 'utilidades.objetosPendientes' -Condicion (
+        $objetosPendientes.Count -eq 1 -and $objetosPendientes[0] -eq 'SDT:Faltante' -and
+        @(Obtener-ObjetosPendientes -Reporte $reporteSoloObjectList).Count -eq 2 -and
+        @(Obtener-ObjetosPendientes -Reporte $reporteSoloSelectores) -eq 'SoloSelector'
+    ) -DetalleExito 'Los objetos pendientes priorizan exportar, luego objectList y finalmente los selectores.' -DetalleFallo 'La extraccion de objetos pendientes no prioriza como se espera.'
+
+    Test-Asercion -Id 'utilidades.signaturaPendientes' -Condicion (
+        (Obtener-SignaturaPendientes -Reporte $reporteCompatible) -eq 'SDT:Faltante' -and
+        (Obtener-SignaturaPendientes -Reporte $reporteSoloObjectList) -eq 'SDT:A, SDT:B'
+    ) -DetalleExito 'La signatura de pendientes deriva de objectList o de solicitudes.exportar.' -DetalleFallo 'La signatura de pendientes no es correcta.'
+
+    $registroFabrica = New-RegistroServicioControl
+    $registroCompleto = New-RegistroServicioControl -WrapperGuid 'guid-1' -Revision 2 -Version '1.2' -DocumentHash 'hash-doc' -PdfHash 'hash-pdf' -Dependencias @('SDT:A', 'SDT:B') -Status 'OMITIDO'
+    Test-Asercion -Id 'utilidades.fabricaRegistroServicio' -Condicion (
+        $registroFabrica.wrapperGuid -eq '' -and $registroFabrica.revision -eq 0 -and $registroFabrica.version -eq '1.0' -and
+        $registroFabrica.documentHash -eq '' -and $registroFabrica.pdfHash -eq '' -and $registroFabrica.status -eq 'ACTIVO' -and
+        @($registroFabrica.dependencies).Count -eq 0 -and
+        $registroCompleto.wrapperGuid -eq 'guid-1' -and $registroCompleto.revision -eq 2 -and $registroCompleto.version -eq '1.2' -and
+        $registroCompleto.documentHash -eq 'hash-doc' -and $registroCompleto.pdfHash -eq 'hash-pdf' -and
+        $registroCompleto.status -eq 'OMITIDO' -and @($registroCompleto.dependencies).Count -eq 2
+    ) -DetalleExito 'La fabrica de registros de servicio produce valores por defecto y valores explicitos con dependencias copiadas.' -DetalleFallo 'La fabrica de registros de servicio no produce el registro esperado.'
+
+    $endpointsFixture = Leer-InventarioEndpoints -RutaInventario (Join-Path $DirectorioFixturesJson 'inventario-valido.json')
+    Test-Asercion -Id 'utilidades.leerInventarioEndpoints' -Condicion (
+        @($endpointsFixture).Count -gt 0
+    ) -DetalleExito 'La lectura del inventario devuelve las entradas de endpoints.json.' -DetalleFallo 'La lectura del inventario no devuelve entradas.'
+    Test-AsercionLanzaError -Id 'utilidades.leerInventarioInexistente' -Bloque { Leer-InventarioEndpoints -RutaInventario (Join-Path $DirectorioTmp 'utilidades-inexistente-endpoints.json') } -PatronMensaje 'No se encontro el inventario'
+
+    $configuracionCruda = Leer-ConfiguracionCruda -ConfigPath (Join-Path $DirectorioFixturesJson 'configuracion-prueba.json')
+    Test-Asercion -Id 'utilidades.leerConfiguracionCruda' -Condicion (
+        [string]$configuracionCruda.packagename -eq 'glmsuit.comercial.'
+    ) -DetalleExito 'La lectura cruda de configuracion.json devuelve el objeto JSON sin validar el XPZ.' -DetalleFallo 'La lectura cruda de configuracion no devuelve el objeto esperado.'
+    Test-AsercionLanzaError -Id 'utilidades.leerConfiguracionInexistente' -Bloque { Leer-ConfiguracionCruda -ConfigPath (Join-Path $DirectorioTmp 'utilidades-inexistente-config.json') } -PatronMensaje 'No se encontro el archivo de configuracion'
+
+    $rutaScriptHijo = Join-Path $DirectorioTmp 'utilidades-script-hijo.ps1'
+    Escribir-TextoUtf8SinBom -Ruta $rutaScriptHijo -Contenido "Write-Output 'hola-desde-hijo'; Write-Error 'error-consola-hijo'; exit 5"
+    $resultadoHijo = Invocar-ScriptHijo -RutaScript $rutaScriptHijo -NoImprimir
+    $resultadoHijoNormalizado = Invocar-ScriptHijo -RutaScript $rutaScriptHijo -NoImprimir -NormalizarCodigo
+    Test-Asercion -Id 'utilidades.invocarScriptHijo' -Condicion (
+        $resultadoHijo.CodigoSalida -eq 5 -and
+        (@($resultadoHijo.Salida | Where-Object { $_ -match 'hola-desde-hijo' })).Count -ge 1 -and
+        (@($resultadoHijo.Salida | Where-Object { $_ -match 'error-consola-hijo' })).Count -ge 1 -and
+        $resultadoHijoNormalizado.CodigoSalida -eq 1
+    ) -DetalleExito 'La invocacion de scripts hijo captura salida y error y normaliza codigos fuera de 0/1/2/3 a 1.' -DetalleFallo 'La invocacion de scripts hijo no captura o normaliza como se espera.'
+    Test-AsercionLanzaError -Id 'utilidades.invocarScriptInexistente' -Bloque { Invocar-ScriptHijo -RutaScript (Join-Path $DirectorioTmp 'utilidades-inexistente.ps1') -NoImprimir } -PatronMensaje 'No se encontro el script'
+}
+
+function Ejecutar-CasosProceso {
+    <#
+    .SYNOPSIS
+    Casos de invocacion real por proceso de los scripts sin cobertura directa:
+    GenerarListaEndpoints, GenerarDocumento, GenerarPdfServicios y DiagnosticoIA.
+    .DESCRIPTION
+    Los scripts se invocan como proceso hijo con fixtures o datos productivos en
+    modo staging; nada se escribe en carpetas productivas. Los casos que dependen
+    de artefactos productivos locales se omiten con SKIP cuando no existen.
+    #>
+    [CmdletBinding()]
+    param()
+
+    New-DirectorioSiNoExiste -Directorio $DirectorioTmp | Out-Null
+
+    . (Join-Path $DirectorioBinario 'DiagnosticoIA.ps1')
+
+    $rutaConfiguracionProduccion = Join-Path $RaizRepositorio 'configuracion.json'
+    $rutaXpzFixture = Join-Path $DirectorioFixturesXpz 'SEGUROS_COMERCIAL_APIGLM_test.xpz'
+
+    $directorioSalidaInventario = Join-Path $DirectorioTmp 'proceso-inventario'
+    New-DirectorioSiNoExiste -Directorio $directorioSalidaInventario | Out-Null
+    $resultadoInventario = $null
+    if (Test-Path -LiteralPath $rutaConfiguracionProduccion -PathType Leaf) {
+        $configuracionInventarioProduccion = Leer-ConfiguracionCruda -ConfigPath $rutaConfiguracionProduccion
+        $xpzInventarioProduccion = Resolver-RutaRepositorio -Ruta ([string]$configuracionInventarioProduccion.xpz) -Raiz $RaizRepositorio
+        if (Test-Path -LiteralPath $xpzInventarioProduccion -PathType Leaf) {
+            $resultadoInventario = Invocar-ScriptHijo -RutaScript (Join-Path $RaizRepositorio 'documentacion\Endpoints\binary\GenerarListaEndpoints.ps1') -Argumentos @(
+                '-XpzPath', $xpzInventarioProduccion,
+                '-ConfigPath', $rutaConfiguracionProduccion,
+                '-OutputDirectory', $directorioSalidaInventario
+            ) -NoImprimir
+        }
+    }
+    $rutaEndpointsGenerado = Join-Path $directorioSalidaInventario 'endpoints.json'
+    $inventarioGenerado = $null
+    if (Test-Path -LiteralPath $rutaEndpointsGenerado -PathType Leaf) {
+        try { $inventarioGenerado = [System.IO.File]::ReadAllText($rutaEndpointsGenerado) | ConvertFrom-Json } catch { }
+    }
+    if ($null -eq $resultadoInventario) {
+        Test-Skip -Id 'proceso.listaEndpoints' -Detalle 'No existe la configuracion o el XPZ productivo local; el caso requiere el XPZ activo.'
+    } else {
+        Test-Asercion -Id 'proceso.listaEndpoints' -Condicion (
+            $resultadoInventario.CodigoSalida -eq 0 -and
+            $inventarioGenerado -and @($inventarioGenerado.endpoints).Count -gt 0
+        ) -DetalleExito 'GenerarListaEndpoints termina con codigo 0 y produce endpoints.json con entradas en el directorio indicado.' -DetalleFallo 'GenerarListaEndpoints no produjo el inventario esperado.'
+    }
+
+    $rutaDiagnostico = $null
+    try {
+        try {
+            throw 'error de muestra para el diagnostico'
+        } catch {
+            $errorDiagnostico = New-DiagnosticoIAError -ErrorRecord $_ -Componente 'Pruebas' -Fase 'proceso' -Servicio 'APIGLM.Fixture.WS' -RaizRepositorio $RaizRepositorio
+        }
+        $rutaDiagnostico = Write-DiagnosticoIA -Errores @($errorDiagnostico) -Pipeline 'pruebas' -Inicio (Get-Date) -DirectorioLogs $DirectorioTmp -RaizRepositorio $RaizRepositorio -MarcaTemporal 'utilidades'
+    } catch {
+    }
+    $diagnosticoLeido = $null
+    if ($rutaDiagnostico -and (Test-Path -LiteralPath $rutaDiagnostico -PathType Leaf)) {
+        try { $diagnosticoLeido = [System.IO.File]::ReadAllText($rutaDiagnostico) | ConvertFrom-Json } catch { }
+    }
+    Test-Asercion -Id 'proceso.diagnosticoIA' -Condicion (
+        $diagnosticoLeido -and
+        $diagnosticoLeido.schemaVersion -eq 1 -and
+        $diagnosticoLeido.ejecucion.totalErrores -eq 1 -and
+        @($diagnosticoLeido.errores).Count -eq 1 -and
+        [string]$diagnosticoLeido.errores[0].componente -eq 'Pruebas' -and
+        [string]$diagnosticoLeido.errores[0].fase -eq 'proceso'
+    ) -DetalleExito 'DiagnosticoIA construye y escribe el informe estructurado con fase y componente.' -DetalleFallo 'DiagnosticoIA no produjo el informe esperado.'
+
+    $rutaConfiguracionProduccion = Join-Path $RaizRepositorio 'configuracion.json'
+    if (-not (Test-Path -LiteralPath $RutaInventarioProduccion -PathType Leaf) -or -not (Test-Path -LiteralPath $rutaConfiguracionProduccion -PathType Leaf)) {
+        Test-Skip -Id 'proceso.generarDocumento' -Detalle 'No existe el inventario o la configuracion productiva local; el caso requiere los artefactos generados.'
+        Test-Skip -Id 'proceso.generarPdf' -Detalle 'No existe el inventario o la configuracion productiva local; el caso requiere los artefactos generados.'
+        return
+    }
+
+    $configuracionProduccion = Leer-ConfiguracionCruda -ConfigPath $rutaConfiguracionProduccion
+    $inventarioProduccion = Leer-InventarioEndpoints -RutaInventario $RutaInventarioProduccion
+    $ignoradosProduccion = @($configuracionProduccion.serviciosIgnorados | ForEach-Object { [string]$_ })
+    $fqnProceso = $null
+    foreach ($endpointProduccion in @($inventarioProduccion)) {
+        $candidato = [string]$endpointProduccion.proceso
+        if ($candidato -notin $ignoradosProduccion) {
+            $fqnProceso = $candidato
+            break
+        }
+    }
+    if ([string]::IsNullOrWhiteSpace($fqnProceso)) {
+        Test-Skip -Id 'proceso.generarDocumento' -Detalle 'El inventario productivo local no contiene endpoints procesables.'
+        Test-Skip -Id 'proceso.generarPdf' -Detalle 'El inventario productivo local no contiene endpoints procesables.'
+        return
+    }
+    $xpzProduccion = Resolver-RutaRepositorio -Ruta ([string]$configuracionProduccion.xpz) -Raiz $RaizRepositorio
+    $fqnsInventarioProduccion = @($inventarioProduccion | ForEach-Object { [string]$_.proceso })
+    $nombreArchivoProceso = Obtener-NombreArchivoServicio -FullyQualifiedName $fqnProceso -FqnsInventario $fqnsInventarioProduccion
+
+    . (Join-Path $DirectorioBinario 'ManifiestoEjecucion.ps1')
+    $manifiestoProceso = Crear-ManifiestoEjecucion -Xpz $xpzProduccion -FullyQualifiedNames @($fqnProceso) -DirectorioBase (Join-Path $DirectorioTmp 'ejecuciones-proceso')
+    $rutaReviewProceso = Join-Path $DirectorioTmp 'proceso-review.json'
+    try {
+        $resultadoGenerador = Invocar-ScriptHijo -RutaScript (Join-Path $DirectorioBinario 'GenerarDocumento.ps1') -Argumentos @(
+            '-ConfigPath', $rutaConfiguracionProduccion,
+            '-ManifiestoPath', $manifiestoProceso.Ruta,
+            '-NoInteractivo',
+            '-RutaReview', $rutaReviewProceso
+        ) -NoImprimir
+        $reviewProceso = $null
+        if (Test-Path -LiteralPath $rutaReviewProceso -PathType Leaf) {
+            try { $reviewProceso = [System.IO.File]::ReadAllText($rutaReviewProceso) | ConvertFrom-Json } catch { }
+        }
+        $rutaMarkdownStaging = Join-Path ([string]$manifiestoProceso.Datos.staging) ('markdown\' + $nombreArchivoProceso + '.md')
+        $entradaReview = if ($reviewProceso) { @($reviewProceso.servicios | Where-Object { $_.fullyQualifiedName -eq $fqnProceso }) | Select-Object -First 1 } else { $null }
+        Test-Asercion -Id 'proceso.generarDocumento' -Condicion (
+            $resultadoGenerador.CodigoSalida -eq 0 -and
+            $entradaReview -and $entradaReview.estado -in @('OK', 'WARNING') -and
+            (Test-Path -LiteralPath $rutaMarkdownStaging -PathType Leaf) -and
+            (Test-Path -LiteralPath $rutaReviewProceso -PathType Leaf)
+        ) -DetalleExito ('GenerarDocumento como proceso hijo termina con 0, escribe el review y el Markdown en staging para ' + $fqnProceso + '.') -DetalleFallo ('GenerarDocumento como proceso hijo no produjo el resultado esperado para ' + $fqnProceso + '.')
+
+        $rutaPandocPortable = Join-Path $RaizRepositorio 'binary\tools\pandoc.exe'
+        $rutaTypstPortable = Join-Path $RaizRepositorio 'binary\tools\typst.exe'
+        if (-not (Test-Path -LiteralPath $rutaPandocPortable -PathType Leaf) -or -not (Test-Path -LiteralPath $rutaTypstPortable -PathType Leaf)) {
+            Test-Skip -Id 'proceso.generarPdf' -Detalle 'No estan disponibles las herramientas portables pandoc/typst.'
+        } else {
+            $resultadoPdf = Invocar-ScriptHijo -RutaScript (Join-Path $DirectorioBinario 'GenerarPdfServicios.ps1') -Argumentos @(
+                '-ConfigPath', $rutaConfiguracionProduccion,
+                '-ManifiestoPath', $manifiestoProceso.Ruta,
+                '-NoInteractivo'
+            ) -NoImprimir
+            $rutaPdfStaging = Join-Path ([string]$manifiestoProceso.Datos.staging) ('pdf\' + $nombreArchivoProceso + '.pdf')
+            Test-Asercion -Id 'proceso.generarPdf' -Condicion (
+                $resultadoPdf.CodigoSalida -eq 0 -and
+                (Test-PdfValidoParaPromocion -Ruta $rutaPdfStaging)
+            ) -DetalleExito 'GenerarPdfServicios como proceso hijo termina con 0 y produce un PDF valido en staging.' -DetalleFallo 'GenerarPdfServicios como proceso hijo no produjo un PDF valido en staging.'
+        }
+    } finally {
+        Eliminar-ManifiestoEjecucion -RutaManifiesto $manifiestoProceso.Ruta
+    }
+}
+
 try {
     New-DirectorioSiNoExiste -Directorio $DirectorioTmp | Out-Null
     Ejecutar-CasosFinalesLineaArchivosCmd
@@ -1640,6 +1981,8 @@ try {
     # Los grupos de casos se incorporan en los pasos 5 a 10 del plan.
     Ejecutar-CasosConfiguracion
     Ejecutar-CasosIntegridadTransaccional
+    Ejecutar-CasosUtilidades
+    Ejecutar-CasosProceso
     Ejecutar-CasosPipeline
     Ejecutar-CasosPosicionesGet
     Ejecutar-CasosMultiXpz

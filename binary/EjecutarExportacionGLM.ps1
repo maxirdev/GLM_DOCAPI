@@ -19,14 +19,7 @@ $rutaScriptSelectivo = Join-Path $raizRepositorio 'binary\ExportarXPZSelectivo.p
 $rutaPowerShell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
 $maximoCiclos = 5
 
-function Resolver-Ruta {
-    param([Parameter(Mandatory = $true)][string]$Ruta)
-
-    if ([System.IO.Path]::IsPathRooted($Ruta)) {
-        return [System.IO.Path]::GetFullPath($Ruta)
-    }
-    return [System.IO.Path]::GetFullPath((Join-Path $raizRepositorio $Ruta))
-}
+. (Join-Path $PSScriptRoot 'GLMUtilidades.ps1')
 
 function Convertir-RutaRelativa {
     param([Parameter(Mandatory = $true)][string]$Ruta)
@@ -39,31 +32,6 @@ function Convertir-RutaRelativa {
     return $rutaAbsoluta -replace '\\', '/'
 }
 
-function Test-XpzValido {
-    param([Parameter(Mandatory = $true)][string]$Ruta)
-
-    if (-not (Test-Path -LiteralPath $Ruta -PathType Leaf)) { return $false }
-    $zip = $null
-    try {
-        Add-Type -AssemblyName System.IO.Compression.FileSystem
-        $zip = [System.IO.Compression.ZipFile]::OpenRead($Ruta)
-        $entradasXml = @($zip.Entries | Where-Object { $_.Name -like '*.xml' })
-        if ($entradasXml.Count -ne 1) { return $false }
-        $lector = New-Object System.IO.StreamReader($entradasXml[0].Open())
-        try {
-            $xml = New-Object System.Xml.XmlDocument
-            $xml.LoadXml($lector.ReadToEnd())
-            return ($xml.DocumentElement.LocalName -eq 'ExportFile')
-        } finally {
-            $lector.Dispose()
-        }
-    } catch {
-        return $false
-    } finally {
-        if ($null -ne $zip) { $zip.Dispose() }
-    }
-}
-
 function Guardar-XpzActivo {
     param(
         [Parameter(Mandatory = $true)]$Configuracion,
@@ -71,42 +39,8 @@ function Guardar-XpzActivo {
     )
 
     $Configuracion.xpz = Convertir-RutaRelativa -Ruta $RutaXpz
-    $json = $Configuracion | ConvertTo-Json -Depth 10
-    $json = $json -replace "`r`n", "`n"
-    $codificacion = New-Object System.Text.UTF8Encoding($false)
-    [System.IO.File]::WriteAllText($rutaConfiguracion, $json, $codificacion)
-}
-
-function Obtener-UltimoReporteCompatible {
-    param([Parameter(Mandatory = $true)][string]$RutaXpz)
-
-    $rutaXpzEsperada = [System.IO.Path]::GetFullPath($RutaXpz)
-    $reportes = @(Get-ChildItem -LiteralPath $rutaDirectorioLogs -Filter '*-validacion-xpz.json' -File -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending)
-    foreach ($archivo in $reportes) {
-        try {
-            $reporte = Get-Content -LiteralPath $archivo.FullName -Raw | ConvertFrom-Json
-            if (-not $reporte.ejecucion -or -not $reporte.ejecucion.xpz) { continue }
-            $rutaReportada = Resolver-Ruta -Ruta ([string]$reporte.ejecucion.xpz)
-            if ([System.StringComparer]::OrdinalIgnoreCase.Equals($rutaReportada, $rutaXpzEsperada)) {
-                return [pscustomobject]@{
-                    Datos = $reporte
-                    Ruta = $archivo.FullName
-                }
-            }
-        } catch {
-        }
-    }
-    return $null
-}
-
-function Obtener-SignaturaPendientes {
-    param([Parameter(Mandatory = $true)]$Reporte)
-
-    $lista = [string]$Reporte.objectList
-    if ([string]::IsNullOrWhiteSpace($lista) -and $Reporte.solicitudes) {
-        $lista = (@($Reporte.solicitudes | ForEach-Object { @($_.exportar) } | ForEach-Object { [string]$_ } | Sort-Object -Unique) -join ',')
-    }
-    return $lista.Trim()
+    $json = Normalizar-SaltosLineaLf -Texto ($Configuracion | ConvertTo-Json -Depth 10)
+    Escribir-TextoUtf8SinBom -Ruta $rutaConfiguracion -Contenido $json
 }
 
 function Obtener-OnlyModuleAPIGLM {
@@ -137,7 +71,7 @@ try {
         New-Item -ItemType Directory -Path $rutaDirectorioXpz -Force | Out-Null
     }
 
-    $configuracion = Get-Content -LiteralPath $rutaConfiguracion -Raw | ConvertFrom-Json
+    $configuracion = Leer-ConfiguracionCruda -ConfigPath $rutaConfiguracion
     $onlyModuleAPIGLM = Obtener-OnlyModuleAPIGLM -Configuracion $configuracion
 
     if (-not $onlyModuleAPIGLM) {
@@ -191,7 +125,7 @@ try {
         -LogFile $rutaLogExportacion `
         -TargetName $targetExportacion 2>&1 | Out-Host
     $codigoExportacion = $LASTEXITCODE
-    if ($codigoExportacion -ne 0 -or -not (Test-XpzValido -Ruta $rutaXpzNuevo)) {
+    if ($codigoExportacion -ne 0 -or -not (Test-XpzValido -Ruta $rutaXpzNuevo).Valid) {
         throw ('La exportacion completa fallo. Revise el log: ' + $rutaLogExportacion)
     }
 
@@ -214,7 +148,7 @@ try {
         & $rutaPowerShell -NoProfile -ExecutionPolicy Bypass -File $rutaScriptValidacion `
             -ConfigPath $rutaConfiguracion 2>&1 | Out-Host
         $codigoValidacion = $LASTEXITCODE
-        $seleccionReporte = Obtener-UltimoReporteCompatible -RutaXpz $rutaXpzNuevo
+        $seleccionReporte = Obtener-ReporteValidacionMasReciente -DirectorioLogs $rutaDirectorioLogs -RutaXpz $rutaXpzNuevo -RaizRepositorio $raizRepositorio
         if ($codigoValidacion -eq 0) {
             Write-Host 'XPZ completo y sin exportaciones adicionales.' -ForegroundColor Green
             exit 0

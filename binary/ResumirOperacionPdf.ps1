@@ -8,6 +8,7 @@ param(
 $ErrorActionPreference = 'Stop'
 
 $raizRepositorio = [System.IO.Path]::GetFullPath($Repositorio)
+. (Join-Path $PSScriptRoot 'GLMUtilidades.ps1')
 . (Join-Path $PSScriptRoot 'CargarMultiXPZ.ps1')
 $rutaDirectorioLogs = Join-Path $raizRepositorio 'Logs'
 $rutaReporte = $null
@@ -26,20 +27,6 @@ if (-not $rutaReporte) {
 
 $reporte = Get-Content -LiteralPath $rutaReporte -Raw | ConvertFrom-Json
 
-function Test-PdfPublicadoValido {
-    param([Parameter(Mandatory = $true)][string]$Ruta)
-    if (-not (Test-Path -LiteralPath $Ruta -PathType Leaf)) { return $false }
-    if ((Get-Item -LiteralPath $Ruta).Length -lt 5) { return $false }
-    $flujo = [System.IO.File]::OpenRead($Ruta)
-    try {
-        $cabecera = New-Object byte[] 4
-        [void]$flujo.Read($cabecera, 0, 4)
-        return ([System.Text.Encoding]::ASCII.GetString($cabecera) -eq '%PDF')
-    } finally {
-        $flujo.Dispose()
-    }
-}
-
 $pdfValidos = New-Object System.Collections.Generic.List[object]
 $pdfConservados = New-Object System.Collections.Generic.List[object]
 $pdfFallidos = New-Object System.Collections.Generic.List[object]
@@ -51,13 +38,12 @@ foreach ($servicio in @($reporte.servicios)) {
         $fqnsInventario = @()
         $rutaInventarioResumen = Join-Path $raizRepositorio 'documentacion\Endpoints\assets\endpoints.json'
         if (Test-Path -LiteralPath $rutaInventarioResumen -PathType Leaf) {
-            $inventarioResumen = [System.IO.File]::ReadAllText($rutaInventarioResumen) | ConvertFrom-Json
-            $fqnsInventario = @($inventarioResumen.endpoints | ForEach-Object { [string]$_.proceso })
+            $fqnsInventario = @((Leer-InventarioEndpoints -RutaInventario $rutaInventarioResumen) | ForEach-Object { [string]$_.proceso })
         }
         $nombreLocal = Obtener-NombreArchivoServicio -FullyQualifiedName ([string]$servicio.fullyQualifiedName) -FqnsInventario $fqnsInventario
         $rutaPdf = Join-Path (Join-Path $raizRepositorio 'documentacion\servicios') ($nombreLocal + '.pdf')
     }
-    if (Test-PdfPublicadoValido -Ruta $rutaPdf) {
+    if (Test-PdfValidoParaPromocion -Ruta $rutaPdf) {
         [void]$pdfValidos.Add($servicio)
         if ([string]$servicio.estadoPdf -eq 'CONSERVADO') { [void]$pdfConservados.Add($servicio) }
     } else {

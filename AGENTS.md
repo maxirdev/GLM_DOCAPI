@@ -16,6 +16,7 @@ Ambas carpetas están en `.gitignore`: son referencias locales, no parte del pro
 En la raíz del repo:
 
 - `binary/` — scripts del generador: `GenerarDocumento.ps1` (orquestador), `ActualizarServicios.ps1`, `ControlVersiones.ps1`, `ManifiestoEjecucion.ps1`, `AnalizarServicio.ps1`, `RedactarDocumento.ps1`, `EscribirSalidas.ps1`, `CargarConfiguracion.ps1`, `DiagnosticoIA.ps1` y `ResumirOperacionPdf.ps1`.
+- `binary/GLMUtilidades.ps1` — módulo común de utilidades (hash SHA256 de texto/archivo, normalización LF, escritura UTF-8 sin BOM, escritura atómica con validación, resolución de rutas, validación XPZ/PDF, invocación de scripts hijo, reportes de validación, fábrica de registros del control). Hoja y sin dependencias: se carga por dot-source **siempre primero**, antes de cualquier otro script del proyecto (SPEC 18).
 - `binary/ExportarXPZProgreso.ps1` y `binary/ExportarXPZ.msbuild` — ejecutan la exportación de `Module:APIGLM` desde la KB local; los invoca `EjecutarExportacionGLM.ps1` (opción 1 del lanzador).
 - `binary/CompletarXPZActivoGLM.ps1` — completa el XPZ activo antes de documentar: valida con `ValidarXPZ.ps1` y exporta selectivos cuando faltan componentes (hasta cinco ciclos), preguntando si continuar cuando falla o se detiene con pendientes. Lo invoca la opción 3 (Generar PDF con el XPZ seleccionado) de `GenerarDocumentosGLM.cmd`.
 - `Logs/*-diagnostico-ia.json` — diagnóstico estructurado de excepciones con fase, ruta relativa, sentencia y stack trace. Se genera solo ante errores; revisar primero el más reciente al investigar fallos del pipeline.

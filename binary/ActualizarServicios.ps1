@@ -20,21 +20,7 @@ $rutaManifiestoEjecucion = $ManifiestoPath
 $rutaLockActualizacion = Join-Path $raizRepositorio 'estado\actualizacion.lock'
 $lockActualizacion = $null
 
-function Obtener-Sha256TextoNormalizado {
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$Texto
-    )
-
-    $textoNormalizado = ($Texto -replace "`r`n", "`n") -replace "`r", "`n"
-    $sha256 = [System.Security.Cryptography.SHA256]::Create()
-    try {
-        $bytes = [System.Text.Encoding]::UTF8.GetBytes($textoNormalizado)
-        return (([System.BitConverter]::ToString($sha256.ComputeHash($bytes))) -replace '-', '').ToLowerInvariant()
-    } finally {
-        $sha256.Dispose()
-    }
-}
+. (Join-Path $PSScriptRoot 'GLMUtilidades.ps1')
 
 function Adquirir-LockActualizacion {
     [CmdletBinding()]
@@ -42,10 +28,7 @@ function Adquirir-LockActualizacion {
         [Parameter(Mandatory = $true)][string]$RutaLock
     )
 
-    $directorioLock = [System.IO.Path]::GetDirectoryName([System.IO.Path]::GetFullPath($RutaLock))
-    if (-not (Test-Path -LiteralPath $directorioLock -PathType Container)) {
-        New-Item -ItemType Directory -Path $directorioLock -Force | Out-Null
-    }
+    Asegurar-Directorio -Ruta ([System.IO.Path]::GetDirectoryName([System.IO.Path]::GetFullPath($RutaLock)))
     try {
         return New-Object -TypeName System.IO.FileStream -ArgumentList @(
             $RutaLock,
@@ -58,15 +41,6 @@ function Adquirir-LockActualizacion {
     }
 }
 
-function Obtener-Sha256ArchivoNormalizado {
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory = $true)][string]$Ruta
-    )
-
-    return Obtener-Sha256TextoNormalizado -Texto ([System.IO.File]::ReadAllText($Ruta))
-}
-
 function Quitar-FilaVersionDocumento {
     [CmdletBinding()]
     param(
@@ -76,21 +50,6 @@ function Quitar-FilaVersionDocumento {
     $etiquetaFilaVersion = 'Versi' + [char]0xF3 + 'n'
     $patronFilaVersion = '(?m)^[ \t]*\| ' + $etiquetaFilaVersion + ' \|[^\r\n]*\r?\n?'
     return [regex]::Replace($Texto, $patronFilaVersion, '')
-}
-
-function Establecer-PropiedadObjetoControl {
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory = $true)]$Objeto,
-        [Parameter(Mandatory = $true)][string]$Nombre,
-        [Parameter(Mandatory = $false)]$Valor
-    )
-
-    if ($Objeto -is [System.Collections.IDictionary]) {
-        $Objeto[$Nombre] = $Valor
-    } else {
-        $Objeto | Add-Member -MemberType NoteProperty -Name $Nombre -Value $Valor -Force
-    }
 }
 
 function Actualizar-VersionServicioUnaVez {
@@ -130,7 +89,8 @@ function Obtener-FingerprintPerfilDocumental {
         'binary/AnalizarServicio.ps1',
         'binary/RedactarDocumento.ps1',
         'binary/EscribirSalidas.ps1',
-        'binary/CargarMultiXPZ.ps1'
+        'binary/CargarMultiXPZ.ps1',
+        'binary/GLMUtilidades.ps1'
     )
     $componentes = New-Object System.Collections.Generic.List[string]
     [void]$componentes.Add('packagename=' + $PackageName)
@@ -163,7 +123,7 @@ function Test-ServiciosPublicadosVigentes {
         if (-not (Test-Path -LiteralPath $rutaMarkdown -PathType Leaf) -or -not (Test-PdfValidoParaPromocion -Ruta $rutaPdf)) { return $false }
         $hashDocumentoPublicado = Obtener-Sha256TextoNormalizado -Texto (Quitar-FilaVersionDocumento -Texto ([System.IO.File]::ReadAllText($rutaMarkdown)))
         if ($hashDocumentoPublicado -ne [string](Obtener-PropiedadControlVersiones -Objeto $servicio -Nombre 'documentHash')) { return $false }
-        if ((Get-FileHash -LiteralPath $rutaPdf -Algorithm SHA256).Hash.ToLowerInvariant() -ne [string](Obtener-PropiedadControlVersiones -Objeto $servicio -Nombre 'pdfHash')) { return $false }
+        if ((Obtener-Sha256Archivo -Ruta $rutaPdf) -ne [string](Obtener-PropiedadControlVersiones -Objeto $servicio -Nombre 'pdfHash')) { return $false }
     }
     return $true
 }
@@ -261,21 +221,20 @@ function Obtener-ServiciosActivosSinDependencias {
 }
 
 function Invocar-PowerShellScript {
+    <#
+    .SYNOPSIS
+    Ejecuta un script PowerShell como proceso hijo devolviendo codigo y salida.
+    .DESCRIPTION
+    Wrapper de Invocar-ScriptHijo (GLMUtilidades.ps1) en modo silencioso para
+    preservar la firma historica de este orquestador.
+    #>
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)][string]$RutaScript,
         [Parameter(Mandatory = $true)][string[]]$Argumentos
     )
 
-    $rutaPowerShell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-    if (-not (Test-Path -LiteralPath $rutaPowerShell -PathType Leaf)) {
-        throw ('No se encontro Windows PowerShell en: ' + $rutaPowerShell)
-    }
-    $salida = & $rutaPowerShell -NoProfile -ExecutionPolicy Bypass -File $RutaScript @Argumentos 2>&1
-    return [pscustomobject]@{
-        CodigoSalida = [int]$LASTEXITCODE
-        Salida = @($salida | ForEach-Object { [string]$_ })
-    }
+    return (Invocar-ScriptHijo -RutaScript $RutaScript -Argumentos $Argumentos -NoImprimir)
 }
 
 function Seleccionar-XpzAlternativo {
@@ -335,15 +294,14 @@ function Obtener-RegistroServicioActual {
     }
     $hashDocumento = Obtener-Sha256TextoNormalizado -Texto (Quitar-FilaVersionDocumento -Texto (Redactar-Documento -Documentacion $Documentacion))
     $versionAnterior = Obtener-VersionServicio -ServicioAnterior $ServicioAnterior
-    return [ordered]@{
-        wrapperGuid = [string]$wrapper.GetAttribute('guid')
-        revision = $versionAnterior.Revision
-        version = $versionAnterior.Version
-        documentHash = $hashDocumento
-        pdfHash = if ($ServicioAnterior) { [string](Obtener-PropiedadControlVersiones -Objeto $ServicioAnterior -Nombre 'pdfHash') } else { '' }
-        dependencies = $dependencias
-        status = 'ACTIVO'
-    }
+    return New-RegistroServicioControl `
+        -WrapperGuid ([string]$wrapper.GetAttribute('guid')) `
+        -Revision $versionAnterior.Revision `
+        -Version $versionAnterior.Version `
+        -DocumentHash $hashDocumento `
+        -PdfHash $(if ($ServicioAnterior) { [string](Obtener-PropiedadControlVersiones -Objeto $ServicioAnterior -Nombre 'pdfHash') } else { '' }) `
+        -Dependencias $dependencias `
+        -Status 'ACTIVO'
 }
 
 function Obtener-ResultadoReviewPorFqn {
@@ -374,24 +332,6 @@ function Crear-PendienteControlVersiones {
         reason = $Reason
         attempts = $intentosAnteriores + 1
         lastError = $LastError
-    }
-}
-
-function Test-PdfValidoParaPromocion {
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory = $true)][string]$Ruta
-    )
-
-    if (-not (Test-Path -LiteralPath $Ruta -PathType Leaf)) { return $false }
-    if ((Get-Item -LiteralPath $Ruta).Length -lt 5) { return $false }
-    $flujo = [System.IO.File]::OpenRead($Ruta)
-    try {
-        $cabecera = New-Object byte[] 4
-        [void]$flujo.Read($cabecera, 0, 4)
-        return ([System.Text.Encoding]::ASCII.GetString($cabecera) -eq '%PDF')
-    } finally {
-        $flujo.Dispose()
     }
 }
 
@@ -451,7 +391,7 @@ function Promover-ServicioArtefactos {
             Markdown = $rutaMarkdownPublicado
             Pdf = $rutaPdfPublicado
             DocumentHash = Obtener-Sha256TextoNormalizado -Texto (Quitar-FilaVersionDocumento -Texto ([System.IO.File]::ReadAllText($rutaMarkdownPublicado)))
-            PdfHash = (Get-FileHash -LiteralPath $rutaPdfPublicado -Algorithm SHA256).Hash.ToLowerInvariant()
+            PdfHash = Obtener-Sha256Archivo -Ruta $rutaPdfPublicado
         }
     } catch {
         foreach ($operacion in @($operaciones | Where-Object { $_.Promocionado } | Sort-Object -Property Destino -Descending)) {
@@ -571,8 +511,7 @@ try {
     if (-not (Test-Path -LiteralPath $rutaInventario -PathType Leaf)) {
         throw ('No se encontro el inventario en: ' + $rutaInventario)
     }
-    $inventario = [System.IO.File]::ReadAllText($rutaInventario) | ConvertFrom-Json
-    $serviciosInventarioTotal = @($inventario.endpoints)
+    $serviciosInventarioTotal = @(Leer-InventarioEndpoints -RutaInventario $rutaInventario)
     $serviciosInventario = @($serviciosInventarioTotal | Where-Object { $_.proceso -notin @($configuracion.ServiciosIgnorados) })
     if ($serviciosInventarioTotal.Count -eq 0) { throw 'El inventario no contiene servicios.' }
     $nombresInventario = @($serviciosInventarioTotal | ForEach-Object { [string]$_.proceso })
@@ -614,15 +553,7 @@ try {
         if ($serviciosAnteriores.ContainsKey($fullyQualifiedName)) {
             $serviciosPreliminares[$fullyQualifiedName] = $serviciosAnteriores[$fullyQualifiedName]
         } else {
-            $serviciosPreliminares[$fullyQualifiedName] = [ordered]@{
-                wrapperGuid = ''
-                revision = 0
-                version = '1.0'
-                documentHash = ''
-                pdfHash = ''
-                dependencies = (New-Object System.Collections.ArrayList)
-                status = 'ACTIVO'
-            }
+            $serviciosPreliminares[$fullyQualifiedName] = New-RegistroServicioControl -Status 'ACTIVO'
         }
     }
     foreach ($servicioIgnorado in @($serviciosInventarioTotal | Where-Object { $_.proceso -in @($configuracion.ServiciosIgnorados) })) {
@@ -632,15 +563,7 @@ try {
             Establecer-PropiedadObjetoControl -Objeto $servicioIgnoradoAnterior -Nombre 'status' -Valor 'OMITIDO'
             $serviciosPreliminares[$fullyQualifiedName] = $servicioIgnoradoAnterior
         } else {
-            $serviciosPreliminares[$fullyQualifiedName] = [ordered]@{
-                wrapperGuid = if ($indice.PorFqn.ContainsKey($fullyQualifiedName)) { [string]$indice.PorFqn[$fullyQualifiedName].GetAttribute('guid') } else { '' }
-                revision = 0
-                version = '1.0'
-                documentHash = ''
-                pdfHash = ''
-                dependencies = (New-Object System.Collections.ArrayList)
-                status = 'OMITIDO'
-            }
+            $serviciosPreliminares[$fullyQualifiedName] = New-RegistroServicioControl -WrapperGuid $(if ($indice.PorFqn.ContainsKey($fullyQualifiedName)) { [string]$indice.PorFqn[$fullyQualifiedName].GetAttribute('guid') } else { '' }) -Status 'OMITIDO'
         }
     }
     $controlObjetivoPreliminar = New-ControlVersiones -LineageId $lineageId -SourceFingerprint $sourceFingerprint -ProfileFingerprint $profileFingerprint -Objects $objetosActuales -Services $serviciosPreliminares -Pendientes @{}
@@ -730,15 +653,14 @@ try {
                     [void]$dependenciasAnteriores.Add($claveDependencia)
                 }
             }
-            $serviciosActuales[$fullyQualifiedName] = [ordered]@{
-                wrapperGuid = if ($servicioAnterior) { [string](Obtener-PropiedadControlVersiones -Objeto $servicioAnterior -Nombre 'wrapperGuid') } else { [string]$indice.PorFqn[$fullyQualifiedName].GetAttribute('guid') }
-                revision = if ($servicioAnterior) { [int](Obtener-PropiedadControlVersiones -Objeto $servicioAnterior -Nombre 'revision') } else { 0 }
-                version = if ($servicioAnterior) { [string](Obtener-PropiedadControlVersiones -Objeto $servicioAnterior -Nombre 'version') } else { '1.0' }
-                documentHash = if ($servicioAnterior) { [string](Obtener-PropiedadControlVersiones -Objeto $servicioAnterior -Nombre 'documentHash') } else { '' }
-                pdfHash = if ($servicioAnterior) { [string](Obtener-PropiedadControlVersiones -Objeto $servicioAnterior -Nombre 'pdfHash') } else { '' }
-                dependencies = $dependenciasAnteriores
-                status = 'ACTIVO'
-            }
+            $serviciosActuales[$fullyQualifiedName] = New-RegistroServicioControl `
+                -WrapperGuid $(if ($servicioAnterior) { [string](Obtener-PropiedadControlVersiones -Objeto $servicioAnterior -Nombre 'wrapperGuid') } else { [string]$indice.PorFqn[$fullyQualifiedName].GetAttribute('guid') }) `
+                -Revision $(if ($servicioAnterior) { [int](Obtener-PropiedadControlVersiones -Objeto $servicioAnterior -Nombre 'revision') } else { 0 }) `
+                -Version $(if ($servicioAnterior) { [string](Obtener-PropiedadControlVersiones -Objeto $servicioAnterior -Nombre 'version') } else { '1.0' }) `
+                -DocumentHash $(if ($servicioAnterior) { [string](Obtener-PropiedadControlVersiones -Objeto $servicioAnterior -Nombre 'documentHash') } else { '' }) `
+                -PdfHash $(if ($servicioAnterior) { [string](Obtener-PropiedadControlVersiones -Objeto $servicioAnterior -Nombre 'pdfHash') } else { '' }) `
+                -Dependencias $dependenciasAnteriores `
+                -Status 'ACTIVO'
             $analisisActuales[$fullyQualifiedName] = [pscustomobject]@{ Documentacion = $null; Documento = ''; Error = $_.Exception.Message }
         }
     }
@@ -794,7 +716,7 @@ try {
     Establecer-VersionesManifiesto -RutaManifiesto $rutaManifiestoEjecucion -Versiones $versionesObjetivo | Out-Null
 
     $directorioLogs = Join-Path $raizRepositorio 'Logs'
-    if (-not (Test-Path -LiteralPath $directorioLogs -PathType Container)) { New-Item -ItemType Directory -Path $directorioLogs -Force | Out-Null }
+    Asegurar-Directorio -Ruta $directorioLogs
     $marcaTemporal = (Get-Date).ToString('yyyyMMdd-HHmmss')
     $rutaReviewGeneracion = Join-Path $directorioLogs ($datosManifiestoEjecucion.ejecucionId + '-actualizacion-review.json')
     $rutaGenerador = Join-Path $PSScriptRoot 'GenerarDocumento.ps1'
@@ -948,7 +870,7 @@ try {
                 $analisis = $analisisActuales[$fullyQualifiedName]
                 $resultadoReview = if ($reviewGeneracion) { Obtener-ResultadoReviewPorFqn -Review $reviewGeneracion -FullyQualifiedName $fullyQualifiedName } else { $null }
                 $estadoMarkdown = if (-not $analisis.Error -and $resultadoReview -and $resultadoReview.documento -and $resultadoReview.estado -in @('OK', 'WARNING')) { 'OK' } else { 'ERROR' }
-                $estadoPdf = if ($estaPublicado -and $servicioAnterior -and [string](Obtener-PropiedadControlVersiones -Objeto $servicioAnterior -Nombre 'pdfHash') -eq (Get-FileHash -LiteralPath $rutaPdfPublicado -Algorithm SHA256).Hash.ToLowerInvariant()) { 'CONSERVADO' } else { 'ERROR' }
+                $estadoPdf = if ($estaPublicado -and $servicioAnterior -and [string](Obtener-PropiedadControlVersiones -Objeto $servicioAnterior -Nombre 'pdfHash') -eq (Obtener-Sha256Archivo -Ruta $rutaPdfPublicado)) { 'CONSERVADO' } else { 'ERROR' }
             } elseif ($estaPublicado) {
                 $estadoMarkdown = 'OK'
                 $estadoPdf = 'OK'
@@ -990,8 +912,8 @@ try {
         throw ('No se pudo construir el review final: ' + $_.Exception.Message)
     }
     try {
-        $jsonReviewFinal = ($reviewFinal | ConvertTo-Json -Depth 10) -replace "`r`n", "`n"
-        [System.IO.File]::WriteAllText($rutaReviewGeneracion, $jsonReviewFinal, (New-Object System.Text.UTF8Encoding($false)))
+        $jsonReviewFinal = Normalizar-SaltosLineaLf -Texto ($reviewFinal | ConvertTo-Json -Depth 10)
+        Escribir-TextoUtf8SinBom -Ruta $rutaReviewGeneracion -Contenido $jsonReviewFinal
     } catch {
         throw ('No se pudo escribir el review final: ' + $_.Exception.Message)
     }
