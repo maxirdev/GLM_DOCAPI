@@ -18,6 +18,8 @@ if (-not $ConfigPath) { $ConfigPath = Join-Path $raizRepositorio 'configuracion.
 if (-not $RutaControl) { $RutaControl = Join-Path $raizRepositorio 'estado\controlVersiones.json' }
 $rutaManifiestoEjecucion = $ManifiestoPath
 $rutaLockActualizacion = Join-Path $raizRepositorio 'estado\actualizacion.lock'
+$rutaHistorial = Join-Path $raizRepositorio 'estado\historialVersiones.md'
+$fechaHistorial = (Get-Date).ToString('yyyy-MM-dd')
 $lockActualizacion = $null
 
 . (Join-Path $PSScriptRoot 'GLMUtilidades.ps1')
@@ -443,6 +445,7 @@ try {
     . (Join-Path $PSScriptRoot 'CargarMultiXPZ.ps1')
     . (Join-Path $PSScriptRoot 'RedactarDocumento.ps1')
     . (Join-Path $PSScriptRoot 'ControlVersiones.ps1')
+    . (Join-Path $PSScriptRoot 'HistorialVersiones.ps1')
     . (Join-Path $PSScriptRoot 'ManifiestoEjecucion.ps1')
 
     if ($ManifiestoPath) {
@@ -811,6 +814,7 @@ try {
     }
 
     $directorioServiciosProductivo = Join-Path $raizRepositorio 'documentacion\servicios'
+    $entradasHistorial = New-Object System.Collections.Generic.List[object]
     if ($nombresParaPdf.Count -gt 0) {
         Write-Host 'Validando y publicando Markdown y PDF... aguarde.' -ForegroundColor Cyan
     }
@@ -819,6 +823,11 @@ try {
         $rutaMarkdownStaging = Join-Path ([string]$datosManifiestoEjecucion.staging) ('markdown\' + $nombreArchivo + '.md')
         $rutaPdfStaging = Join-Path ([string]$datosManifiestoEjecucion.staging) ('pdf\' + $nombreArchivo + '.pdf')
         $servicioAnterior = if ($serviciosAnteriores.ContainsKey($fullyQualifiedName)) { $serviciosAnteriores[$fullyQualifiedName] } else { $null }
+        $rutaMarkdownPublicado = Join-Path $directorioServiciosProductivo ($nombreArchivo + '.md')
+        $contenidoMarkdownAnterior = ''
+        if (Test-Path -LiteralPath $rutaMarkdownPublicado -PathType Leaf) {
+            $contenidoMarkdownAnterior = [System.IO.File]::ReadAllText($rutaMarkdownPublicado)
+        }
         try {
             $promocion = Promover-ServicioArtefactos -FullyQualifiedName $fullyQualifiedName -RutaMarkdownStaging $rutaMarkdownStaging -RutaPdfStaging $rutaPdfStaging -DirectorioServicios $directorioServiciosProductivo -FqnsInventario $nombresInventario
             $servicioObjetivo = $serviciosObjetivo[$fullyQualifiedName]
@@ -828,6 +837,25 @@ try {
             $serviciosObjetivo[$fullyQualifiedName] = $servicioObjetivo
             $promocionesExitosas[$fullyQualifiedName] = $promocion
             Write-Host ('  [PUBLICADO] ' + $fullyQualifiedName + ' | Markdown y PDF validados.') -ForegroundColor Green
+
+            $versionAnterior = if ($servicioAnterior) { [string](Obtener-PropiedadControlVersiones -Objeto $servicioAnterior -Nombre 'version') } else { '' }
+            $versionNueva = [string](Obtener-PropiedadControlVersiones -Objeto $servicioObjetivo -Nombre 'version')
+            if ($versionAnterior -ne $versionNueva) {
+                $objetosHistorial = @()
+                $cambiosHistorial = @()
+                if ($servicioAnterior) {
+                    $dependenciasServicio = @(Obtener-DependenciasServicioControlVersiones -Servicio $servicioObjetivo)
+                    $clavesObjetos = @($comparacion.ObjetosModificados | Where-Object { $dependenciasServicio -contains $_ } | Select-Object -Unique)
+                    $objetosHistorial = @(Resolver-ObjetosHistorial -Claves $clavesObjetos -ObjetosEfectivos $indice.ObjetosEfectivos)
+                    $contenidoMarkdownNuevo = [System.IO.File]::ReadAllText($promocion.Markdown)
+                    $cambiosHistorial = @(Describir-CambiosDocumento -DocumentoAnterior $contenidoMarkdownAnterior -DocumentoNuevo $contenidoMarkdownNuevo)
+                }
+                $textoEntrada = Redactar-EntradaHistorial -Version $versionNueva -Fecha $fechaHistorial -Objetos $objetosHistorial -Cambios $cambiosHistorial
+                $entradasHistorial.Add([pscustomobject]@{
+                    FullyQualifiedName = $fullyQualifiedName
+                    Texto = $textoEntrada
+                })
+            }
         } catch {
             $mensajeError = $_.Exception.Message
             $erroresPublicacion[$fullyQualifiedName] = $mensajeError
@@ -919,6 +947,16 @@ try {
     }
 
     Escribir-ControlVersionesAtomico -ControlVersiones $controlObjetivo -RutaControl $RutaControl | Out-Null
+    try {
+        $encabezadoHistorial = Obtener-EncabezadoHistorial -RutaHistorial $rutaHistorial
+        $requiereReemplazo = $null -eq $controlAnterior -or ($encabezadoHistorial -and $encabezadoHistorial.LineageId -ne $lineageId)
+        if ($requiereReemplazo -or $entradasHistorial.Count -gt 0) {
+            Escribir-HistorialVersionado -RutaHistorial $rutaHistorial -LineageId $lineageId -Creado $fechaHistorial -Entradas $entradasHistorial.ToArray() -Reemplazar:$requiereReemplazo | Out-Null
+            Write-Host ('Historial de versiones actualizado (' + $entradasHistorial.Count + ' entrada(s)).') -ForegroundColor DarkGray
+        }
+    } catch {
+        Write-Host ('  [WARNING] No se pudo actualizar el historial de versiones: ' + $_.Exception.Message) -ForegroundColor Yellow
+    }
     Write-Host ('Actualizacion completada. Servicios candidatos: ' + $nombresCandidatos.Count) -ForegroundColor Cyan
     Write-Host ('Control: ' + [System.IO.Path]::GetFullPath($RutaControl)) -ForegroundColor DarkGray
     if ($comparacion.EsFastPath) { Write-Host 'Fast-path: sin cambios de fuente, perfil ni pendientes.' -ForegroundColor DarkGray }

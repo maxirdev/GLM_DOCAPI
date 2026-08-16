@@ -15,7 +15,7 @@ Ambas carpetas están en `.gitignore`: son referencias locales, no parte del pro
 
 En la raíz del repo:
 
-- `binary/` — scripts del generador: `GenerarDocumento.ps1` (orquestador), `ActualizarServicios.ps1`, `ControlVersiones.ps1`, `ManifiestoEjecucion.ps1`, `AnalizarServicio.ps1`, `RedactarDocumento.ps1`, `EscribirSalidas.ps1`, `CargarConfiguracion.ps1`, `DiagnosticoIA.ps1` y `ResumirOperacionPdf.ps1`.
+- `binary/` — scripts del generador: `GenerarDocumento.ps1` (orquestador), `ActualizarServicios.ps1`, `ControlVersiones.ps1`, `HistorialVersiones.ps1`, `ManifiestoEjecucion.ps1`, `AnalizarServicio.ps1`, `RedactarDocumento.ps1`, `EscribirSalidas.ps1`, `CargarConfiguracion.ps1`, `DiagnosticoIA.ps1` y `ResumirOperacionPdf.ps1`.
 - `binary/GLMUtilidades.ps1` — módulo común de utilidades (hash SHA256 de texto/archivo, normalización LF, escritura UTF-8 sin BOM, escritura atómica con validación, resolución de rutas, validación XPZ/PDF, invocación de scripts hijo, reportes de validación, fábrica de registros del control). Hoja y sin dependencias: se carga por dot-source **siempre primero**, antes de cualquier otro script del proyecto (SPEC 18).
 - `binary/ExportarXPZProgreso.ps1` y `binary/ExportarXPZ.msbuild` — ejecutan la exportación de `Module:APIGLM` desde la KB local; los invoca `EjecutarExportacionGLM.ps1` (opción 1 del lanzador).
 - `binary/CompletarXPZActivoGLM.ps1` — completa el XPZ activo antes de documentar: valida con `ValidarXPZ.ps1` y exporta selectivos cuando faltan componentes (hasta cinco ciclos), preguntando si continuar cuando falla o se detiene con pendientes. Lo invoca la opción 3 (Generar PDF con el XPZ seleccionado) de `GenerarDocumentosGLM.cmd`.
@@ -33,7 +33,7 @@ En `documentacion/` (commiteada):
 - `Endpoints/web/` — visor estático: `APIServicios.html` (generado e ignorado), `style.css`, `app.js`.
 - `GenerarDocumentosGLM.cmd` (raíz del repo) — entrada principal: valida la configuración, permite elegir el XPZ, exporta y completa el XPZ, y genera los PDF con el XPZ seleccionado.
 - `configuracion.json` (raíz del repo) — configuración operativa: ruta del XPZ, `packagename` constante del endpoint publicado por XPZ, `serviciosIgnorados` (lista de FQN referenciados que no se documentan) y rutas de GeneXus, Knowledge Base, MSBuild y Edge.
-- `estado/` — estado local ignorado por Git: `controlVersiones.json` (esquema 2) y `actualizacion.lock` durante una actualización.
+- `estado/` — estado local ignorado por Git: `controlVersiones.json` (esquema 2), `historialVersiones.md` y `actualizacion.lock` durante una actualización.
 - `servicios/` — documentos Markdown por servicio (p. ej. `wsobtenertotalessolicitud.md`). La conversión a PDF se ejecuta bajo demanda desde `binary/GenerarPdfServicios.ps1` mediante Pandoc + Typst portable; la plantilla normativa continúa en `templateDoc.md`.
 
 Orden obligatorio por servicio: analisisXPZ → reglasEditoriales → templateDoc. No recalcular decisiones durante la redacción.
@@ -54,6 +54,7 @@ Orden obligatorio por servicio: analisisXPZ → reglasEditoriales → templateDo
 - Errores HTTP: únicamente llamadas a `GenerarAPIGLMResponse` con código ≠ 200 dentro del programa principal. `HttpCode.BadRequest`→400, `NotFound`→404, `MethodNotAllowed`→405. Excluir errores funcionales bajo HTTP 200.
 - Fuente única: solo el XPZ de `configuracion.json`. Si el programa principal delegado o el SDT de entrada/salida no está exportado en ese XPZ, detener con el mensaje correspondiente (`El programa principal <X> no está exportado en el XPZ configurado. No puede inferirse.` / `La salida del SDT <X> no está exportada en el XPZ configurado. No puede inferirse.`). No buscarlo en otros XPZ ni inferir por analogía.
 - `serviciosIgnorados` en `configuracion.json`: FQN referenciados en el inventario que no se documentan. Al abrir la consola se informan y se excluyen del procesamiento con estado `OMITIDO` (ni ERROR ni documento).
+- `estado/historialVersiones.md` (ignorado por Git): historial legible por servicio con una entrada por bump de versión (incluida la `1.0` de un servicio nuevo). Es un artefacto derivado **best-effort**: el control de versiones sigue siendo la fuente de verdad, se escribe siempre después de la escritura atómica del control y su fallo solo emite advertencia. Dos modos: **append** (lotes normales, inserta la entrada dentro del bloque `## <FQN>` existente; un servicio tiene un único bloque con versiones acumuladas) y **reemplazo** (reinicio del control: `-Inicializar`, control inválido/incompatible, control inexistente con historial previo o `lineageId` del encabezado distinto del control; reescribe encabezado nuevo + entradas `1.0`). La versión de cada entrada se deriva del control (`Obtener-VersionServicio`), nunca del archivo. El fast-path no toca el archivo.
 - Ante evidencia insuficiente o contradictoria, **detener y registrar** `PENDIENTE DE CONFIRMACIÓN: <dato faltante>. Evidencia requerida: <fuente necesaria>.` Nunca completar por analogía ni suposiciones.
 
 ## Verificación e inconsistencias conocidas
