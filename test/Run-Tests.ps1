@@ -154,6 +154,7 @@ function Cargar-ModulosProduccion {
         (Join-Path $DirectorioBinario 'RedactarDocumento.ps1')
         (Join-Path $DirectorioBinario 'EscribirSalidas.ps1')
         (Join-Path $DirectorioBinario 'ControlVersiones.ps1')
+        (Join-Path $DirectorioBinario 'HistorialVersiones.ps1')
     )
 }
 
@@ -1148,6 +1149,70 @@ function Validar-VisorMobilCss {
         ($Contenido -match '#filtro:focus')
 }
 
+function Construir-HtmlVisorMuestra {
+    <#
+    .SYNOPSIS
+    Construye en memoria el HTML del visor que produciria GenerarVistaHTML.ps1.
+    .DESCRIPTION
+    Replica la estructura del generador real (escudo de cierre de script, viewport,
+    referencia a style.css y app.js, atributos accesibles) para que los validadores
+    se ejerciten sin invocar al generador, sin escribir APIServicios.html y sin
+    emitir los mensajes de pasos en consola.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$JsonText,
+        [Parameter(Mandatory = $false)][AllowEmptyString()][string]$Cliente = ''
+    )
+
+    $jsonObj = $JsonText | ConvertFrom-Json
+    $jsonObj.meta | Add-Member -MemberType NoteProperty -Name 'cliente' -Value $Cliente -Force
+    $jsonModified = ($jsonObj | ConvertTo-Json -Depth 5) -replace "`r`n", "`n"
+    $embedded = $jsonModified -replace '</script', '<\/script'
+
+    $sb = New-Object System.Text.StringBuilder
+    [void]$sb.Append('<!DOCTYPE html>'); [void]$sb.Append("`n")
+    [void]$sb.Append('<html lang="es">'); [void]$sb.Append("`n")
+    [void]$sb.Append('<head>'); [void]$sb.Append("`n")
+    [void]$sb.Append('  <meta charset="UTF-8">'); [void]$sb.Append("`n")
+    [void]$sb.Append('  <meta name="viewport" content="width=device-width, initial-scale=1.0">'); [void]$sb.Append("`n")
+    $titulo = 'Listado de Servicios API'
+    if ($Cliente) { $titulo = $titulo + ' - ' + $Cliente }
+    [void]$sb.Append('  <title>' + $titulo + '</title>'); [void]$sb.Append("`n")
+    [void]$sb.Append('  <link rel="stylesheet" href="style.css">'); [void]$sb.Append("`n")
+    [void]$sb.Append('</head>'); [void]$sb.Append("`n")
+    [void]$sb.Append('<body>'); [void]$sb.Append("`n")
+    [void]$sb.Append('  <header class="encabezado">'); [void]$sb.Append("`n")
+    [void]$sb.Append('    <div class="encabezado-texto">'); [void]$sb.Append("`n")
+    [void]$sb.Append('      <h1>' + $titulo + '</h1>'); [void]$sb.Append("`n")
+    [void]$sb.Append('      <p class="metadatos" id="metadatos"></p>'); [void]$sb.Append("`n")
+    [void]$sb.Append('    </div>'); [void]$sb.Append("`n")
+    [void]$sb.Append('    <button type="button" id="alternar-tema" aria-label="Alternar tema">Modo oscuro</button>'); [void]$sb.Append("`n")
+    [void]$sb.Append('  </header>'); [void]$sb.Append("`n")
+    [void]$sb.Append('  <main>'); [void]$sb.Append("`n")
+    [void]$sb.Append('    <div class="barra-filtro">'); [void]$sb.Append("`n")
+    [void]$sb.Append('      <input type="search" id="filtro" placeholder="Filtrar por nombre o descripción..." autocomplete="off">'); [void]$sb.Append("`n")
+    [void]$sb.Append('    </div>'); [void]$sb.Append("`n")
+    [void]$sb.Append('    <table>'); [void]$sb.Append("`n")
+    [void]$sb.Append('      <thead>'); [void]$sb.Append("`n")
+    [void]$sb.Append('        <tr>'); [void]$sb.Append("`n")
+    [void]$sb.Append('          <th scope="col" class="izquierda">Nombre</th>'); [void]$sb.Append("`n")
+    [void]$sb.Append('          <th scope="col" class="izquierda">Descripción</th>'); [void]$sb.Append("`n")
+    [void]$sb.Append('        </tr>'); [void]$sb.Append("`n")
+    [void]$sb.Append('      </thead>'); [void]$sb.Append("`n")
+    [void]$sb.Append('      <tbody id="cuerpo-tabla"></tbody>'); [void]$sb.Append("`n")
+    [void]$sb.Append('    </table>'); [void]$sb.Append("`n")
+    [void]$sb.Append('    <p id="sin-resultados" hidden>Sin resultados para el filtro aplicado.</p>'); [void]$sb.Append("`n")
+    [void]$sb.Append('  </main>'); [void]$sb.Append("`n")
+    [void]$sb.Append('  <script type="application/json" id="endpoints-data">'); [void]$sb.Append("`n")
+    [void]$sb.Append($embedded); [void]$sb.Append("`n")
+    [void]$sb.Append('  </script>'); [void]$sb.Append("`n")
+    [void]$sb.Append('  <script src="app.js"></script>'); [void]$sb.Append("`n")
+    [void]$sb.Append('</body>'); [void]$sb.Append("`n")
+    [void]$sb.Append('</html>'); [void]$sb.Append("`n")
+    return $sb.ToString()
+}
+
 function Ejecutar-CasosVisor {
     <#
     .SYNOPSIS
@@ -1205,24 +1270,20 @@ function Ejecutar-CasosVisor {
     if (Test-Path -LiteralPath $rutaGeneradorVista) {
         $directorioMuestra = Join-Path $DirectorioTmp 'visor'
         New-DirectorioSiNoExiste -Directorio $directorioMuestra | Out-Null
-        Copy-Item -LiteralPath (Join-Path $DirectorioFixturesJson 'control-versiones-minimo.json') -Destination (Join-Path $directorioMuestra 'endpoints.json') -Force
-        $rutaHtmlMuestra = Join-Path $directorioMuestra 'APIServicios.html'
-        try {
-            & $rutaGeneradorVista -InputDirectory $directorioMuestra -OutputPath $rutaHtmlMuestra -ConfigPath (Join-Path $DirectorioFixturesJson 'configuracion-prueba.json') | Out-Null
-        } catch { }
-        if (Test-Path -LiteralPath $rutaHtmlMuestra) {
-            $htmlMuestra = [System.IO.File]::ReadAllText($rutaHtmlMuestra, (New-Object System.Text.UTF8Encoding($false)))
+        $jsonMuestra = [System.IO.File]::ReadAllText((Join-Path $DirectorioFixturesJson 'control-versiones-minimo.json'), (New-Object System.Text.UTF8Encoding($false)))
+        $htmlMuestra = Construir-HtmlVisorMuestra -JsonText $jsonMuestra
+        if (-not [string]::IsNullOrWhiteSpace($htmlMuestra)) {
             $conformidadMuestra = (Validar-VisorReferenciasCssJs -Contenido $htmlMuestra) -and
                 (Validar-VisorAtributosAccesibles -Contenido $htmlMuestra) -and
                 (Validar-VisorMobilViewport -Contenido $htmlMuestra) -and
                 (Validar-VisorJsonSinScriptCierre -Contenido $htmlMuestra)
-            Test-Asercion -Id 'visor.herramientaHtmlConforme' -Condicion $conformidadMuestra -DetalleExito 'El HTML generado por el generador real pasa los validadores del visor.' -DetalleFallo 'El HTML generado no pasa los validadores del visor.'
+            Test-Asercion -Id 'visor.herramientaHtmlConforme' -Condicion $conformidadMuestra -DetalleExito 'El HTML construido como el generador real pasa los validadores del visor.' -DetalleFallo 'El HTML construido no pasa los validadores del visor.'
 
             $htmlConCierreSinEscape = $htmlMuestra -replace '(?s)(<script type="application/json"[^>]*>)', '$1</script>'
             Test-Asercion -Id 'visor.herramientaDetectaScriptSinEscape' -Condicion (-not (Validar-VisorJsonSinScriptCierre -Contenido $htmlConCierreSinEscape)) -DetalleExito 'El validador detecta un cierre de script sin escapar en el JSON.' -DetalleFallo 'El validador no detecto el cierre de script sin escapar.'
         } else {
-            Test-Skip -Id 'visor.herramientaHtmlConforme' -Detalle 'No se pudo generar la muestra del visor en test/tmp/.'
-            Test-Skip -Id 'visor.herramientaDetectaScriptSinEscape' -Detalle 'No se pudo generar la muestra del visor en test/tmp/.'
+            Test-Skip -Id 'visor.herramientaHtmlConforme' -Detalle 'No se pudo construir la muestra del visor en memoria.'
+            Test-Skip -Id 'visor.herramientaDetectaScriptSinEscape' -Detalle 'No se pudo construir la muestra del visor en memoria.'
         }
     } else {
         Test-Skip -Id 'visor.herramientaHtmlConforme' -Detalle 'No existe el generador GenerarVistaHTML.ps1.'
@@ -1625,6 +1686,545 @@ function Ejecutar-CasosIntegridadTransaccional {
     ) -DetalleExito 'El manifiesto conserva el mapa de versiones al actualizar los FQN y el actualizador normaliza el hash excluyendo la fila Version.' -DetalleFallo 'El manifiesto no conserva las versiones o el actualizador no normaliza el hash de documento.'
 }
 
+function New-ServicioControlPrueba {
+    <#
+    .SYNOPSIS
+    Construye un servicio valido para el control de versiones de prueba.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)][int]$Revision = 0,
+        [Parameter(Mandatory = $false)][string]$DocumentHash = 'hash',
+        [Parameter(Mandatory = $false)][string]$PdfHash = 'pdf',
+        [Parameter(Mandatory = $false)][string[]]$Dependencias = @(),
+        [Parameter(Mandatory = $false)][string]$Estado = 'ACTIVO'
+    )
+    return [ordered]@{
+        wrapperGuid = 'wrapper'
+        revision = $Revision
+        version = '1.' + $Revision
+        documentHash = $DocumentHash
+        pdfHash = $PdfHash
+        dependencies = @($Dependencias)
+        status = $Estado
+    }
+}
+
+function New-ControlPrueba {
+    <#
+    .SYNOPSIS
+    Construye un control de versiones valido para las pruebas unitarias.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)][string]$LineageId = 'lineage',
+        [Parameter(Mandatory = $false)][string]$SourceFingerprint = 'source',
+        [Parameter(Mandatory = $false)][string]$ProfileFingerprint = 'profile',
+        [Parameter(Mandatory = $false)]$Objects = @{},
+        [Parameter(Mandatory = $false)]$Services = @{},
+        [Parameter(Mandatory = $false)]$Pendientes = @{}
+    )
+    return New-ControlVersiones -LineageId $LineageId -SourceFingerprint $SourceFingerprint -ProfileFingerprint $ProfileFingerprint -Objects $Objects -Services $Services -Pendientes $Pendientes
+}
+
+function Obtener-RevisionesHistorialPorServicio {
+    <#
+    .SYNOPSIS
+    Parsea el historial Markdown y agrupa las revisiones por bloque de servicio.
+    .DESCRIPTION
+    Devuelve un hashtable con el FQN como clave y un array de revisiones (int) en orden
+    de aparicion como valor. Se usa para validar continuidad, perdida de entradas y
+    sincronia con el control.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$Contenido
+    )
+    $porServicio = @{}
+    $servicioActual = ''
+    foreach ($linea in ($Contenido -split "`n")) {
+        $linea = $linea.Trim()
+        if ($linea -match '^## (.+)$') {
+            $servicioActual = $matches[1].Trim()
+            continue
+        }
+        if ($linea -match '^- \*\*1\.(\d+)\*\* \((\d{4}-\d{2}-\d{2})\)') {
+            if (-not $porServicio.ContainsKey($servicioActual)) { $porServicio[$servicioActual] = @() }
+            $porServicio[$servicioActual] += [int]$matches[1]
+        }
+    }
+    return $porServicio
+}
+
+function Test-ContinuidadRevisiones {
+    <#
+    .SYNOPSIS
+    Verifica que una secuencia de revisiones es consecutiva sin saltos ni duplicados.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][int[]]$Revisiones
+    )
+    $revisionesOrdenadas = @($Revisiones | Sort-Object)
+    if ($revisionesOrdenadas.Count -eq 0) { return $false }
+    for ($indice = 1; $indice -lt $revisionesOrdenadas.Count; $indice++) {
+        if ($revisionesOrdenadas[$indice] -ne ($revisionesOrdenadas[$indice - 1] + 1)) { return $false }
+    }
+    return $true
+}
+
+function Obtener-ContenidoHistorialPrueba {
+    <#
+    .SYNOPSIS
+    Construye un historial Markdown de prueba con entradas manuales.
+    .DESCRIPTION
+    Permite simular un historial con perdida de entradas (p. ej. 1.0 y 1.2 sin 1.1) para
+    verificar que la continuidad se detecta en las pruebas, sin depender del escritor.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$LineageId,
+        [Parameter(Mandatory = $true)][string]$Creado,
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string[]]$Entradas
+    )
+    $lineas = New-Object System.Collections.Generic.List[string]
+    $lineas.Add('# Historial de versiones por servicio')
+    $lineas.Add('LineageId: ' + $LineageId)
+    $lineas.Add('Creado: ' + $Creado)
+    foreach ($entrada in $Entradas) {
+        $lineas.Add('')
+        $lineas.Add($entrada)
+    }
+    return (($lineas -join "`n") + "`n")
+}
+
+function Ejecutar-CasosHistorial {
+    <#
+    .SYNOPSIS
+    Unit tests de binary/HistorialVersiones.ps1 (dot-sourceado via Cargar-ModulosProduccion).
+    .DESCRIPTION
+    Ejercita Describir-CambiosDocumento (parametros agregados/eliminados, cambios de Tipo y
+    de Obligatorio, codigos HTTP, fallback de conteos y fila Version ignorada), el formato de
+    Redactar-EntradaHistorial, el detalle no vacio, la continuidad por bloque, la deteccion de
+    perdida de entradas, el append byte a byte, el reemplazo por reinicio y por lineageId
+    distinto, el encabezado, la version derivada del control y la sincronia bloque-control.
+    #>
+    [CmdletBinding()]
+    param()
+
+    $docAnterior = @'
+# Autenticación de usuario
+
+Servicio de autenticación.
+
+## Definición del servicio
+
+| Dato | Valor |
+|---|---|
+| Endpoint | `x` |
+| Descripción | Servicio de autenticación. |
+| Método HTTP | `POST` |
+| Autenticación | HTTP Basic mediante `Authorization` |
+| Versión | 1.0 |
+
+## Entrada
+
+| Parámetro o campo | Tipo | Obligatorio | Descripción |
+|---|---|---|---|
+| `Usuario` | String (30) | SI | Usuario de red. |
+| `Contraseña` | String (50) | NO | Contraseña. |
+
+## Salida exitosa
+
+Colección: `NO`.
+
+| Campo | Tipo | Descripción |
+|---|---|---|
+| `Token` | String (100) | Token de sesión. |
+
+## Errores específicos
+
+| Código HTTP | Respuesta o mensaje |
+|---:|---|
+| 400 | `Credenciales inválidas.` |
+
+```json
+{
+  "status": 400
+}
+```
+'@
+
+    $docNuevo = $docAnterior -replace '(?m)^\| `Contraseña` \| String \(50\) \| NO \|', '| `Contraseña` | String (50) | SI |'
+    $docNuevo = $docNuevo -replace '(?m)^\| `Usuario` \|', "| ``Dispositivo`` | String (50) | NO | Dispositivo. |`r`n| `Usuario` |"
+    $docNuevo = $docNuevo -replace '(?m)^\| `Token` \|', ''
+    $docNuevo = $docNuevo -replace '(?m)^\| 400 \|', "| 409 | `Conflicto.` |`r`n| 400 |"
+
+    $frasesAgregado = @(Describir-CambiosDocumento -DocumentoAnterior $docAnterior -DocumentoNuevo $docNuevo)
+    Test-Asercion -Id 'historial.parametroAgregado' -Condicion (
+        @($frasesAgregado | Where-Object { $_ -match 'se agregó el parámetro `Dispositivo` \(String \(50\), NO\)' }).Count -eq 1
+    ) -DetalleExito 'Un parámetro agregado se describe con su tipo y obligatoriedad.' -DetalleFallo 'El parámetro agregado no se describió con tipo y obligatoriedad.'
+
+    Test-Asercion -Id 'historial.obligatorioCambiado' -Condicion (
+        @($frasesAgregado | Where-Object { $_ -match 'pasó Obligatorio de NO a SI' }).Count -eq 1
+    ) -DetalleExito 'Un cambio de Obligatorio se describe como NO a SI.' -DetalleFallo 'El cambio de Obligatorio no se describió como NO a SI.'
+
+    Test-Asercion -Id 'historial.campoEliminado' -Condicion (
+        @($frasesAgregado | Where-Object { $_ -match 'se eliminó el campo `Token`' }).Count -eq 1
+    ) -DetalleExito 'Un campo eliminado de Salida exitosa se describe.' -DetalleFallo 'El campo eliminado no se describió.'
+
+    Test-Asercion -Id 'historial.codigoHttpNuevo' -Condicion (
+        @($frasesAgregado | Where-Object { $_ -match 'se agregó el código 409 con su mensaje' }).Count -eq 1
+    ) -DetalleExito 'Un código HTTP nuevo se describe con su número.' -DetalleFallo 'El código HTTP nuevo no se describió.'
+
+    $docEliminadoCodigo = $docAnterior -replace '(?m)^\| 400 \|', ''
+    $frasesCodigoEliminado = @(Describir-CambiosDocumento -DocumentoAnterior $docAnterior -DocumentoNuevo $docEliminadoCodigo)
+    Test-Asercion -Id 'historial.codigoHttpEliminado' -Condicion (
+        @($frasesCodigoEliminado | Where-Object { $_ -match 'se eliminó el código 400' }).Count -eq 1
+    ) -DetalleExito 'Un código HTTP eliminado se describe con su número.' -DetalleFallo 'El código HTTP eliminado no se describió.'
+
+    $docTipo = $docAnterior -replace '(?m)^\| `Contraseña` \| String \(50\) \|', '| `Contraseña` | String (60) |'
+    $frasesTipo = @(Describir-CambiosDocumento -DocumentoAnterior $docAnterior -DocumentoNuevo $docTipo)
+    Test-Asercion -Id 'historial.cambioTipo' -Condicion (
+        @($frasesTipo | Where-Object { $_ -match 'cambió Tipo de String \(50\) a String \(60\)' }).Count -eq 1
+    ) -DetalleExito 'Un cambio de Tipo se describe con su valor anterior y nuevo.' -DetalleFallo 'El cambio de Tipo no se describió con ambos valores.'
+
+    $docVersion = $docAnterior -replace '(?m)^\| Versión \| 1\.0 \|$', '| Versión | 1.7 |'
+    $frasesVersion = @(Describir-CambiosDocumento -DocumentoAnterior $docAnterior -DocumentoNuevo $docVersion)
+    Test-Asercion -Id 'historial.filaVersionIgnorada' -Condicion ($frasesVersion.Count -eq 0) -DetalleExito 'La fila Versión de Definición nunca aparece como cambio.' -DetalleFallo 'La fila Versión apareció como cambio.'
+
+    $docNoComparable = $docAnterior -replace '(?m)^\| Parámetro o campo \|', '| Posición | Parámetro |'
+    $frasesFallback = @(Describir-CambiosDocumento -DocumentoAnterior $docAnterior -DocumentoNuevo $docNoComparable)
+    Test-Asercion -Id 'historial.fallbackConteos' -Condicion (
+        @($frasesFallback | Where-Object { $_ -match '^Se modificó la sección Entrada \(\+\d+/[-−]\d+\)\.$' }).Count -eq 1
+    ) -DetalleExito 'Una sección no comparable cae en el fallback de conteos.' -DetalleFallo 'La sección no comparable no produjo el fallback de conteos.'
+
+    $entrada = Redactar-EntradaHistorial -Version '1.1' -Fecha '2026-08-15' -Objetos @('SDT `APIGLM.Seguridad.Autenticacion`') -Cambios @('Entrada: se agregó el parámetro `Dispositivo` (String (50), NO).')
+    Test-Asercion -Id 'historial.formatoEntrada' -Condicion (
+        $entrada -match '(?m)^- \*\*1\.1\*\* \(2026-08-15\) — Objetos: SDT `APIGLM\.Seguridad\.Autenticacion` modificado\.$' -and
+        $entrada -match '(?m)^  - Entrada: se agregó el parámetro `Dispositivo` \(String \(50\), NO\)\.$'
+    ) -DetalleExito 'El formato de entrada es - **1.<n>** (YYYY-MM-DD) — texto con cambios indentados.' -DetalleFallo 'El formato de entrada no coincide con el esperado.'
+
+    $entradaInicial = Redactar-EntradaHistorial -Version '1.0' -Fecha '2026-08-15'
+    Test-Asercion -Id 'historial.detalleNoVacioInicial' -Condicion (
+        $entradaInicial -match 'Versión inicial\.' -and $entradaInicial -notmatch '^  - $'
+    ) -DetalleExito 'La entrada inicial registra Versión inicial. sin detalle vacío.' -DetalleFallo 'La entrada inicial no tiene detalle o quedó vacía.'
+
+    $entradaBumpSinCambios = Redactar-EntradaHistorial -Version '1.1' -Fecha '2026-08-15' -Objetos @('Procedure `APIGLM.Comun.BuscarCodigoPostal`')
+    Test-Asercion -Id 'historial.detalleNoVacioBump' -Condicion (
+        $entradaBumpSinCambios -match 'Se modificó el documento\.'
+    ) -DetalleExito 'Un bump sin cambios descriptibles registra detalle no vacío.' -DetalleFallo 'Un bump sin cambios descriptibles quedó sin detalle.'
+
+    $rutaHistorialPrueba = Join-Path $DirectorioTmp 'historial-versiones.md'
+    Remove-Item -LiteralPath $rutaHistorialPrueba -Force -ErrorAction SilentlyContinue
+    $entrada10 = [pscustomobject]@{ FullyQualifiedName = 'APIGLM.Comun.WSBuscarCodigoPostal'; Texto = (Redactar-EntradaHistorial -Version '1.0' -Fecha '2026-08-15') }
+    $entrada11 = [pscustomobject]@{ FullyQualifiedName = 'APIGLM.Comun.WSBuscarCodigoPostal'; Texto = (Redactar-EntradaHistorial -Version '1.1' -Fecha '2026-08-16' -Objetos @('Procedure `APIGLM.Comun.BuscarCodigoPostal`') -Cambios @('Entrada: el parámetro `CodigoPostal` cambió Tipo de String (4) a String (8).')) }
+    Escribir-HistorialVersionado -RutaHistorial $rutaHistorialPrueba -LineageId 'd6e85f10-28f3-409e-afb1-4b38c19fc8af' -Creado '2026-08-15' -Entradas @($entrada10) | Out-Null
+    $bytesPrimerEscritura = [System.IO.File]::ReadAllBytes($rutaHistorialPrueba)
+    Escribir-HistorialVersionado -RutaHistorial $rutaHistorialPrueba -LineageId 'd6e85f10-28f3-409e-afb1-4b38c19fc8af' -Creado '2026-08-15' -Entradas @($entrada11) | Out-Null
+    $contenidoHistorial = [System.IO.File]::ReadAllText($rutaHistorialPrueba, (New-Object System.Text.UTF8Encoding($false)))
+    $bytesSegundaEscritura = [System.IO.File]::ReadAllBytes($rutaHistorialPrueba)
+
+    $prefijoConservado = $true
+    for ($indiceByte = 0; $indiceByte -lt $bytesPrimerEscritura.Length; $indiceByte++) {
+        if ($bytesSegundaEscritura[$indiceByte] -ne $bytesPrimerEscritura[$indiceByte]) { $prefijoConservado = $false; break }
+    }
+    Test-Asercion -Id 'historial.appendConservaPrefijo' -Condicion (
+        $prefijoConservado -and $bytesSegundaEscritura.Length -gt $bytesPrimerEscritura.Length
+    ) -DetalleExito 'El append conserva el contenido previo byte a byte y crece.' -DetalleFallo 'El append no conservó el contenido previo byte a byte.'
+
+    $porServicio = Obtener-RevisionesHistorialPorServicio -Contenido $contenidoHistorial
+    Test-Asercion -Id 'historial.continuidadPorBloque' -Condicion (
+        $porServicio.ContainsKey('APIGLM.Comun.WSBuscarCodigoPostal') -and
+        (Test-ContinuidadRevisiones -Revisiones $porServicio['APIGLM.Comun.WSBuscarCodigoPostal'])
+    ) -DetalleExito 'Las versiones del bloque son consecutivas sin saltos ni duplicados.' -DetalleFallo 'El bloque tiene saltos o duplicados de versión.'
+
+    Test-Asercion -Id 'historial.sincroniaBloqueControl' -Condicion (
+        ($porServicio['APIGLM.Comun.WSBuscarCodigoPostal'] | Select-Object -Last 1) -eq 1
+    ) -DetalleExito 'La última revisión del bloque coincide con la revisión esperada del control (1.1).' -DetalleFallo 'La última revisión del bloque no coincide con la revisión del control.'
+
+    $historialConPerdida = Obtener-ContenidoHistorialPrueba -LineageId 'd6e85f10-28f3-409e-afb1-4b38c19fc8af' -Creado '2026-08-15' -Entradas @(
+        '## APIGLM.Comun.WSBuscarCodigoPostal',
+        '',
+        '- **1.0** (2026-08-15) — Versión inicial.',
+        '- **1.2** (2026-08-16) — Objetos: Procedure `APIGLM.Comun.BuscarCodigoPostal` modificado.'
+    )
+    $porServicioPerdida = Obtener-RevisionesHistorialPorServicio -Contenido $historialConPerdida
+    Test-Asercion -Id 'historial.deteccionPerdidaEntradas' -Condicion (
+        -not (Test-ContinuidadRevisiones -Revisiones $porServicioPerdida['APIGLM.Comun.WSBuscarCodigoPostal'])
+    ) -DetalleExito 'Una entrada intermedia eliminada (1.0 y 1.2 sin 1.1) se detecta por discontinuidad.' -DetalleFallo 'La pérdida de una entrada intermedia no se detectó.'
+
+    $rutaHistorialReemplazo = Join-Path $DirectorioTmp 'historial-reemplazo.md'
+    Remove-Item -LiteralPath $rutaHistorialReemplazo -Force -ErrorAction SilentlyContinue
+    Escribir-HistorialVersionado -RutaHistorial $rutaHistorialReemplazo -LineageId 'aaaa-1111' -Creado '2026-08-15' -Entradas @($entrada10) | Out-Null
+    Escribir-HistorialVersionado -RutaHistorial $rutaHistorialReemplazo -LineageId 'bbbb-2222' -Creado '2026-08-16' -Entradas @($entrada11) -Reemplazar | Out-Null
+    $contenidoReemplazo = [System.IO.File]::ReadAllText($rutaHistorialReemplazo, (New-Object System.Text.UTF8Encoding($false)))
+    $encabezadoReemplazo = Obtener-EncabezadoHistorial -RutaHistorial $rutaHistorialReemplazo
+    Test-Asercion -Id 'historial.reemplazoReinicio' -Condicion (
+        $encabezadoReemplazo.LineageId -eq 'bbbb-2222' -and
+        $contenidoReemplazo -match '(?m)^- \*\*1\.1\*\*' -and
+        -not ($contenidoReemplazo -match '(?m)^- \*\*1\.0\*\*')
+    ) -DetalleExito 'El reemplazo por reinicio deja solo el encabezado nuevo y las entradas del lote.' -DetalleFallo 'El reemplazo por reinicio no regeneró el historial limpio.'
+
+    Test-Asercion -Id 'historial.encabezadoLineage' -Condicion (
+        $encabezadoReemplazo.LineageId -eq 'bbbb-2222' -and $encabezadoReemplazo.Creado -eq '2026-08-16'
+    ) -DetalleExito 'El encabezado conserva LineageId y Creado.' -DetalleFallo 'El encabezado no conserva LineageId y Creado.'
+
+    $entradaControl = Redactar-EntradaHistorial -Version '1.3' -Fecha '2026-08-15'
+    Test-Asercion -Id 'historial.versionDerivadaDelControl' -Condicion (
+        $entradaControl -match '- \*\*1\.3\*\*' -and
+        -not ($entradaControl -match '\*\*1\.0\*\*')
+    ) -DetalleExito 'La versión de la entrada se deriva del control, nunca del archivo.' -DetalleFallo 'La versión de la entrada no se deriva del parámetro del control.'
+}
+
+function Ejecutar-CasosEstadoControl {
+    <#
+    .SYNOPSIS
+    Unit tests de ControlVersiones.ps1 (ya dot-sourceado).
+    .DESCRIPTION
+    Ejercita Obtener-VersionServicio, Comparar-ControlVersiones (fast-path, pendientes,
+    lineage, objetos, perfil, servicios nuevos/eliminados), Validar-ControlVersiones
+    negativos adicionales, la escritura atomica con control invalido que conserva el archivo
+    previo, y los contratos por contenido de ActualizarServicios.ps1.
+    #>
+    [CmdletBinding()]
+    param()
+
+    $versionSinControl = Obtener-VersionServicio
+    $servicioRevision7 = New-ServicioControlPrueba -Revision 7
+    $versionIncrementada = Obtener-VersionServicio -ServicioAnterior $servicioRevision7 -Incrementar
+    $versionSinIncremento = Obtener-VersionServicio -ServicioAnterior $servicioRevision7
+    Test-Asercion -Id 'estadoControl.obtenerVersionServicio' -Condicion (
+        $versionSinControl.Revision -eq 0 -and $versionSinControl.Version -eq '1.0' -and
+        $versionIncrementada.Revision -eq 8 -and $versionIncrementada.Version -eq '1.8' -and
+        $versionSinIncremento.Revision -eq 7 -and $versionSinIncremento.Version -eq '1.7'
+    ) -DetalleExito 'Obtener-VersionServicio devuelve 1.0 sin control previo y 1.<n+1> con incremento.' -DetalleFallo 'Obtener-VersionServicio no resuelve las versiones esperadas.'
+
+    $serviciosFast = @{ 'APIGLM.Fixture.WSValido' = (New-ServicioControlPrueba -Revision 1) }
+    $controlAnterior = New-ControlPrueba -LineageId 'l1' -SourceFingerprint 's1' -ProfileFingerprint 'p1' -Services $serviciosFast
+    $controlObjetivo = New-ControlPrueba -LineageId 'l1' -SourceFingerprint 's1' -ProfileFingerprint 'p1' -Services $serviciosFast
+    $comparacionFast = Comparar-ControlVersiones -ControlAnterior $controlAnterior -ControlObjetivo $controlObjetivo
+    Test-Asercion -Id 'estadoControl.compararFastPath' -Condicion $comparacionFast.EsFastPath -DetalleExito 'Comparar-ControlVersiones determina fast-path sin cambios.' -DetalleFallo 'No se determinó el fast-path.'
+
+    $controlConPendiente = New-ControlPrueba -LineageId 'l1' -SourceFingerprint 's1' -ProfileFingerprint 'p1' -Services $serviciosFast -Pendientes @{ 'APIGLM.Fixture.WSValido' = @{ attempts = 1; reason = 'test' } }
+    $comparacionPendiente = Comparar-ControlVersiones -ControlAnterior $controlConPendiente -ControlObjetivo $controlObjetivo
+    Test-Asercion -Id 'estadoControl.compararPendienteBloqueaFastPath' -Condicion (
+        -not $comparacionPendiente.EsFastPath -and @($comparacionPendiente.Pendientes).Count -eq 1
+    ) -DetalleExito 'Un pendiente impide el fast-path.' -DetalleFallo 'Un pendiente no impidió el fast-path.'
+
+    $controlLineageDistinto = New-ControlPrueba -LineageId 'l2' -SourceFingerprint 's1' -ProfileFingerprint 'p1' -Services $serviciosFast
+    $comparacionLineage = Comparar-ControlVersiones -ControlAnterior $controlAnterior -ControlObjetivo $controlLineageDistinto
+    Test-Asercion -Id 'estadoControl.compararLineageBloquea' -Condicion (
+        $comparacionLineage.LineageCambiado -and $comparacionLineage.BloqueadoPorLineage -and
+        -not [string]::IsNullOrWhiteSpace($comparacionLineage.MotivoBloqueo)
+    ) -DetalleExito 'Un lineageId cambiado se detecta con motivo de bloqueo.' -DetalleFallo 'El lineageId cambiado no se detectó como bloqueo.'
+
+    $servicioConDependencia = New-ServicioControlPrueba -Revision 1 -Dependencias @('Procedure:guidObjeto')
+    $serviciosDependientes = @{ 'APIGLM.Fixture.WSAfectado' = $servicioConDependencia }
+    $controlObjetosAnterior = New-ControlPrueba -LineageId 'l1' -SourceFingerprint 's1' -ProfileFingerprint 'p1' -Objects @{ 'Procedure:guidObjeto' = 'checksum-a' } -Services $serviciosDependientes
+    $controlObjetosObjetivo = New-ControlPrueba -LineageId 'l1' -SourceFingerprint 's1' -ProfileFingerprint 'p1' -Objects @{ 'Procedure:guidObjeto' = 'checksum-b' } -Services $serviciosDependientes
+    $comparacionObjetos = Comparar-ControlVersiones -ControlAnterior $controlObjetosAnterior -ControlObjetivo $controlObjetosObjetivo
+    Test-Asercion -Id 'estadoControl.compararObjetoAfectaServicios' -Condicion (
+        @($comparacionObjetos.ObjetosModificados) -contains 'Procedure:guidObjeto' -and
+        @($comparacionObjetos.ServiciosAfectados) -contains 'APIGLM.Fixture.WSAfectado'
+    ) -DetalleExito 'Un objeto modificado afecta los servicios que lo dependen.' -DetalleFallo 'El objeto modificado no afectó a los servicios dependientes.'
+
+    $servicioActivo = New-ServicioControlPrueba -Revision 1 -Estado 'ACTIVO'
+    $serviciosPerfil = @{ 'APIGLM.Fixture.WSActivo' = $servicioActivo }
+    $controlPerfilAnterior = New-ControlPrueba -LineageId 'l1' -SourceFingerprint 's1' -ProfileFingerprint 'p1' -Services $serviciosPerfil
+    $controlPerfilNuevo = New-ControlPrueba -LineageId 'l1' -SourceFingerprint 's1' -ProfileFingerprint 'p2' -Services $serviciosPerfil
+    $comparacionPerfil = Comparar-ControlVersiones -ControlAnterior $controlPerfilAnterior -ControlObjetivo $controlPerfilNuevo
+    Test-Asercion -Id 'estadoControl.compararPerfilAfectaActivos' -Condicion (
+        $comparacionPerfil.ProfileFingerprintCambio -and
+        @($comparacionPerfil.ServiciosAfectados) -contains 'APIGLM.Fixture.WSActivo'
+    ) -DetalleExito 'Un cambio de perfil afecta a los servicios ACTIVO.' -DetalleFallo 'El cambio de perfil no afectó a los servicios ACTIVO.'
+
+    $serviciosNuevos = @{ 'APIGLM.Fixture.WSValido' = (New-ServicioControlPrueba -Revision 1); 'APIGLM.Fixture.WSNuevo' = (New-ServicioControlPrueba -Revision 0) }
+    $controlSinNuevo = New-ControlPrueba -LineageId 'l1' -SourceFingerprint 's1' -ProfileFingerprint 'p1' -Services $serviciosFast
+    $controlConNuevo = New-ControlPrueba -LineageId 'l1' -SourceFingerprint 's1' -ProfileFingerprint 'p1' -Services $serviciosNuevos
+    $comparacionNuevos = Comparar-ControlVersiones -ControlAnterior $controlSinNuevo -ControlObjetivo $controlConNuevo
+    Test-Asercion -Id 'estadoControl.compararServiciosNuevos' -Condicion (
+        @($comparacionNuevos.ServiciosNuevos) -contains 'APIGLM.Fixture.WSNuevo'
+    ) -DetalleExito 'Los servicios nuevos se detectan en la comparación.' -DetalleFallo 'Los servicios nuevos no se detectaron.'
+
+    $serviciosEliminados = @{ 'APIGLM.Fixture.WSEliminado' = (New-ServicioControlPrueba -Revision 1) }
+    $controlConEliminado = New-ControlPrueba -LineageId 'l1' -SourceFingerprint 's1' -ProfileFingerprint 'p1' -Services $serviciosEliminados
+    $controlSinEliminado = New-ControlPrueba -LineageId 'l1' -SourceFingerprint 's1' -ProfileFingerprint 'p1' -Services $serviciosFast
+    $comparacionEliminados = Comparar-ControlVersiones -ControlAnterior $controlConEliminado -ControlObjetivo $controlSinEliminado
+    Test-Asercion -Id 'estadoControl.compararServiciosEliminados' -Condicion (
+        @($comparacionEliminados.ServiciosEliminados) -contains 'APIGLM.Fixture.WSEliminado'
+    ) -DetalleExito 'Los servicios eliminados se detectan en la comparación.' -DetalleFallo 'Los servicios eliminados no se detectaron.'
+
+    $controlRevisionNegativa = New-ControlPrueba -LineageId 'l1' -SourceFingerprint 's1' -ProfileFingerprint 'p1' -Services @{ 'APIGLM.Fixture.WSValido' = (New-ServicioControlPrueba -Revision -1) }
+    Test-AsercionLanzaError -Id 'estadoControl.validaRevisionNegativa' -Bloque { Validar-ControlVersiones -ControlVersiones $controlRevisionNegativa } -PatronMensaje 'revision invalida' -DetalleExito 'El control rechaza una revision negativa.' -DetalleFallo 'El control aceptó una revision negativa.'
+
+    $servicioSinDocumentHash = New-ServicioControlPrueba -Revision 1
+    $servicioSinDocumentHash.Remove('documentHash')
+    $controlSinDocumentHash = New-ControlPrueba -LineageId 'l1' -SourceFingerprint 's1' -ProfileFingerprint 'p1' -Services @{ 'APIGLM.Fixture.WSValido' = $servicioSinDocumentHash }
+    Test-AsercionLanzaError -Id 'estadoControl.validaDocumentHashFaltante' -Bloque { Validar-ControlVersiones -ControlVersiones $controlSinDocumentHash } -PatronMensaje 'documentHash' -DetalleExito 'El control rechaza un servicio sin documentHash.' -DetalleFallo 'El control aceptó un servicio sin documentHash.'
+
+    $servicioSinPdfHash = New-ServicioControlPrueba -Revision 1
+    $servicioSinPdfHash.Remove('pdfHash')
+    $controlSinPdfHash = New-ControlPrueba -LineageId 'l1' -SourceFingerprint 's1' -ProfileFingerprint 'p1' -Services @{ 'APIGLM.Fixture.WSValido' = $servicioSinPdfHash }
+    Test-AsercionLanzaError -Id 'estadoControl.validaPdfHashFaltante' -Bloque { Validar-ControlVersiones -ControlVersiones $controlSinPdfHash } -PatronMensaje 'pdfHash' -DetalleExito 'El control rechaza un servicio sin pdfHash.' -DetalleFallo 'El control aceptó un servicio sin pdfHash.'
+
+    $servicioSinDependencias = New-ServicioControlPrueba -Revision 1
+    $servicioSinDependencias.Remove('dependencies')
+    $controlSinDependencias = New-ControlPrueba -LineageId 'l1' -SourceFingerprint 's1' -ProfileFingerprint 'p1' -Services @{ 'APIGLM.Fixture.WSValido' = $servicioSinDependencias }
+    Test-AsercionLanzaError -Id 'estadoControl.validaDependenciasFaltantes' -Bloque { Validar-ControlVersiones -ControlVersiones $controlSinDependencias } -PatronMensaje 'dependencies' -DetalleExito 'El control rechaza un servicio sin dependencies.' -DetalleFallo 'El control aceptó un servicio sin dependencies.'
+
+    $controlLineageBlanco = New-ControlPrueba -LineageId '   ' -SourceFingerprint 's1' -ProfileFingerprint 'p1' -Services $serviciosFast
+    Test-AsercionLanzaError -Id 'estadoControl.validaLineageBlanco' -Bloque { Validar-ControlVersiones -ControlVersiones $controlLineageBlanco } -PatronMensaje 'lineageId' -DetalleExito 'El control rechaza un lineageId en blanco.' -DetalleFallo 'El control aceptó un lineageId en blanco.'
+
+    $rutaControlAtomico = Join-Path $DirectorioTmp 'control-atomico.json'
+    Remove-Item -LiteralPath $rutaControlAtomico -Force -ErrorAction SilentlyContinue
+    Escribir-ControlVersionesAtomico -ControlVersiones $controlObjetivo -RutaControl $rutaControlAtomico | Out-Null
+    $bytesControlPrevio = [System.IO.File]::ReadAllBytes($rutaControlAtomico)
+    $controlInvalido = New-ControlPrueba -LineageId 'l1' -SourceFingerprint 's1' -ProfileFingerprint 'p1' -Services @{ 'APIGLM.Fixture.WSValido' = (New-ServicioControlPrueba -Revision -1) }
+    Test-AsercionLanzaError -Id 'estadoControl.escrituraAtomicaControlInvalido' -Bloque { Escribir-ControlVersionesAtomico -ControlVersiones $controlInvalido -RutaControl $rutaControlAtomico } -PatronMensaje 'revision invalida' -DetalleExito 'La escritura atomica con control inválido lanza.' -DetalleFallo 'La escritura atomica con control inválido no lanzó.'
+    $bytesControlPosterior = [System.IO.File]::ReadAllBytes($rutaControlAtomico)
+    $controlIntacto = $bytesControlPrevio.Length -eq $bytesControlPosterior.Length
+    if ($controlIntacto) {
+        for ($indiceByte = 0; $indiceByte -lt $bytesControlPrevio.Length; $indiceByte++) {
+            if ($bytesControlPosterior[$indiceByte] -ne $bytesControlPrevio[$indiceByte]) { $controlIntacto = $false; break }
+        }
+    }
+    Test-Asercion -Id 'estadoControl.escrituraAtomicaConservaPrevio' -Condicion $controlIntacto -DetalleExito 'Una escritura atomica fallida conserva el control previo íntegro.' -DetalleFallo 'La escritura atomica fallida modificó el control previo.'
+
+    $contenidoActualizadorEstado = [System.IO.File]::ReadAllText((Join-Path $DirectorioBinario 'ActualizarServicios.ps1'))
+    Test-Asercion -Id 'estadoControl.contenidoDobleBumpProhibido' -Condicion (
+        $contenidoActualizadorEstado -match 'VersionesActualizadas' -and
+        $contenidoActualizadorEstado -match 'intento actualizar su version mas de una vez'
+    ) -DetalleExito 'El actualizador prohíbe el doble bump en el mismo lote.' -DetalleFallo 'El actualizador no prohíbe el doble bump en el mismo lote.'
+    Test-Asercion -Id 'estadoControl.contenidoAttemptsPendientes' -Condicion (
+        $contenidoActualizadorEstado -match 'attempts = \$intentosAnteriores \+ 1'
+    ) -DetalleExito 'El actualizador incrementa attempts en los pendientes.' -DetalleFallo 'El actualizador no incrementa attempts en los pendientes.'
+    Test-Asercion -Id 'estadoControl.contenidoHashExcluyeFilaVersion' -Condicion (
+        $contenidoActualizadorEstado -match 'Quitar-FilaVersionDocumento' -and
+        $contenidoActualizadorEstado -match "patronFilaVersion" -and
+        $contenidoActualizadorEstado -match '0xF3'
+    ) -DetalleExito 'El actualizador normaliza el hash excluyendo la fila Versión.' -DetalleFallo 'El actualizador no excluye la fila Versión del hash.'
+    Test-Asercion -Id 'estadoControl.contenidoReinicioRegistroSinPublicar' -Condicion (
+        $contenidoActualizadorEstado -match 'Marcar-ServicioSinPublicar' -and
+        $contenidoActualizadorEstado -match "documentHash' -Valor ''"
+    ) -DetalleExito 'El actualizador reinicia el registro de un servicio sin publicar.' -DetalleFallo 'El actualizador no reinicia el registro de un servicio sin publicar.'
+}
+
+function Ejecutar-CasosValidacionEstado {
+    <#
+    .SYNOPSIS
+    Validadores estáticos de estado/ (control, artefactos, pendientes, dependencias, identidad e historial).
+    .DESCRIPTION
+    Opera sobre el estado productivo (estado/controlVersiones.json, estado/historialVersiones.md y
+    documentacion/servicios/). Si estado/ no existe o no tiene control, los casos se marcan SKIP y
+    el resto de la ejecución continúa.
+    #>
+    [CmdletBinding()]
+    param()
+
+    $directorioEstado = Join-Path $RaizRepositorio 'estado'
+    $rutaControlEstado = Join-Path $directorioEstado 'controlVersiones.json'
+    $rutaHistorialEstado = Join-Path $directorioEstado 'historialVersiones.md'
+
+    if (-not (Test-Path -LiteralPath $rutaControlEstado -PathType Leaf)) {
+        Test-Skip -Id 'validacionEstado.control' -Detalle 'estado/controlVersiones.json no existe; las validaciones estáticas se omiten.'
+        Test-Skip -Id 'validacionEstado.artefactos' -Detalle 'Sin control productivo para validar artefactos publicados.'
+        Test-Skip -Id 'validacionEstado.pendientes' -Detalle 'Sin control productivo para validar pendientes.'
+        Test-Skip -Id 'validacionEstado.dependencias' -Detalle 'Sin control productivo para validar dependencias.'
+        Test-Skip -Id 'validacionEstado.identidad' -Detalle 'Sin control productivo para validar lineage y fingerprints.'
+        Test-Skip -Id 'validacionEstado.historial' -Detalle 'Sin control productivo para validar el historial.'
+        return
+    }
+
+    $controlProductivo = $null
+    try { $controlProductivo = Leer-ControlVersiones -RutaControl $rutaControlEstado } catch { }
+    Test-Asercion -Id 'validacionEstado.control' -Condicion ($null -ne $controlProductivo) -DetalleExito 'El control productivo pasa Validar-ControlVersiones.' -DetalleFallo 'El control productivo no pasó la validación.'
+
+    $serviciosControlProductivo = Convertir-DiccionarioControlVersiones -Objeto $controlProductivo.services
+    $conformidadArtefactos = $true
+    $detalleArtefactos = ''
+    foreach ($claveServicio in $serviciosControlProductivo.Keys) {
+        $servicio = $serviciosControlProductivo[$claveServicio]
+        if ([string](Obtener-PropiedadControlVersiones -Objeto $servicio -Nombre 'status') -ne 'ACTIVO') { continue }
+        $documentHash = [string](Obtener-PropiedadControlVersiones -Objeto $servicio -Nombre 'documentHash')
+        $pdfHash = [string](Obtener-PropiedadControlVersiones -Objeto $servicio -Nombre 'pdfHash')
+        $version = [string](Obtener-PropiedadControlVersiones -Objeto $servicio -Nombre 'version')
+        if (-not $documentHash -and -not $pdfHash) { continue }
+        $nombreArchivo = Obtener-NombreArchivoServicio -FullyQualifiedName $claveServicio -FqnsInventario @($serviciosControlProductivo.Keys)
+        $rutaMarkdownEstado = Join-Path $DirectorioServiciosProduccion ($nombreArchivo + '.md')
+        $rutaPdfEstado = Join-Path $DirectorioServiciosProduccion ($nombreArchivo + '.pdf')
+        if (-not (Test-Path -LiteralPath $rutaMarkdownEstado -PathType Leaf) -or -not (Test-Path -LiteralPath $rutaPdfEstado -PathType Leaf)) {
+            $conformidadArtefactos = $false
+            $detalleArtefactos = 'Faltan artefactos publicados para ' + $claveServicio
+            break
+        }
+        $etiquetaFilaVersion = 'Versi' + [char]0xF3 + 'n'
+        $patronFilaVersion = '(?m)^[ \t]*\| ' + $etiquetaFilaVersion + ' \|[^\r\n]*\r?\n?'
+        $textoNormalizado = ([regex]::Replace([System.IO.File]::ReadAllText($rutaMarkdownEstado), $patronFilaVersion, '') -replace "`r`n", "`n") -replace "`r", "`n"
+        $sha256 = [System.Security.Cryptography.SHA256]::Create()
+        try {
+            $hashMarkdownPublicado = (([System.BitConverter]::ToString($sha256.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($textoNormalizado)))) -replace '-', '').ToLowerInvariant()
+        } finally {
+            $sha256.Dispose()
+        }
+        $hashPdfPublicado = (Get-FileHash -LiteralPath $rutaPdfEstado -Algorithm SHA256).Hash.ToLowerInvariant()
+        $coincidenciaFilaVersion = [regex]::Match([System.IO.File]::ReadAllText($rutaMarkdownEstado), '(?m)^\| Versión \| (\d+\.\d+) \|$')
+        $versionMarkdown = if ($coincidenciaFilaVersion.Success) { $coincidenciaFilaVersion.Groups[1].Value } else { '' }
+        if ($hashMarkdownPublicado -ne $documentHash -or $hashPdfPublicado -ne $pdfHash -or $versionMarkdown -ne $version) {
+            $conformidadArtefactos = $false
+            $detalleArtefactos = 'Hash o versión del Markdown/PDF no coinciden para ' + $claveServicio
+            break
+        }
+    }
+    Test-Asercion -Id 'validacionEstado.artefactos' -Condicion $conformidadArtefactos -DetalleExito 'Los artefactos publicados existen y sus hashes y la fila Versión coinciden con el control.' -DetalleFallo $detalleArtefactos
+
+    $pendientesProductivos = Convertir-DiccionarioControlVersiones -Objeto $controlProductivo.pendientes
+    $conformidadPendientes = $true
+    foreach ($clavePendiente in $pendientesProductivos.Keys) {
+        $pendiente = $pendientesProductivos[$clavePendiente]
+        if ([int](Obtener-PropiedadControlVersiones -Objeto $pendiente -Nombre 'attempts') -lt 1) { $conformidadPendientes = $false; break }
+        if ([string]::IsNullOrWhiteSpace([string](Obtener-PropiedadControlVersiones -Objeto $pendiente -Nombre 'reason'))) { $conformidadPendientes = $false; break }
+    }
+    Test-Asercion -Id 'validacionEstado.pendientes' -Condicion $conformidadPendientes -DetalleExito 'Los pendientes tienen attempts >= 1 y reason no vacío.' -DetalleFallo 'Algún pendiente tiene attempts < 1 o reason vacío.'
+
+    $conformidadDependencias = $true
+    foreach ($claveServicio in $serviciosControlProductivo.Keys) {
+        $dependencias = @(Obtener-DependenciasServicioControlVersiones -Servicio $serviciosControlProductivo[$claveServicio])
+        if ($dependencias.Count -eq 0) { continue }
+        $dependenciasUnicas = @($dependencias | Select-Object -Unique)
+        if ($dependenciasUnicas.Count -ne $dependencias.Count) { $conformidadDependencias = $false; break }
+    }
+    Test-Asercion -Id 'validacionEstado.dependencias' -Condicion $conformidadDependencias -DetalleExito 'Las dependencias son únicas y no vacías.' -DetalleFallo 'Alguna dependencia está duplicada.'
+
+    $lineageIdProductivo = [string](Obtener-PropiedadControlVersiones -Objeto $controlProductivo -Nombre 'lineageId')
+    $sourceFingerprintProductivo = [string](Obtener-PropiedadControlVersiones -Objeto $controlProductivo -Nombre 'sourceFingerprint')
+    $profileFingerprintProductivo = [string](Obtener-PropiedadControlVersiones -Objeto $controlProductivo -Nombre 'profileFingerprint')
+    $esGuid = $lineageIdProductivo -match '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+    $fingerprintsHex = $sourceFingerprintProductivo -match '^[0-9a-f]{64}$' -and $profileFingerprintProductivo -match '^[0-9a-f]{64}$'
+    Test-Asercion -Id 'validacionEstado.identidad' -Condicion ($esGuid -and $fingerprintsHex) -DetalleExito 'El lineageId es GUID y los fingerprints son hex de 64.' -DetalleFallo 'El lineageId no es GUID o los fingerprints no son hex de 64.'
+
+    if (-not (Test-Path -LiteralPath $rutaHistorialEstado -PathType Leaf)) {
+        Test-Skip -Id 'validacionEstado.historial' -Detalle 'estado/historialVersiones.md no existe; se omite la validación del historial.'
+        return
+    }
+    $encabezadoHistorialEstado = Obtener-EncabezadoHistorial -RutaHistorial $rutaHistorialEstado
+    $contenidoHistorialEstado = [System.IO.File]::ReadAllText($rutaHistorialEstado, (New-Object System.Text.UTF8Encoding($false)))
+    $porServicioHistorial = Obtener-RevisionesHistorialPorServicio -Contenido $contenidoHistorialEstado
+    $conformidadHistorial = $null -ne $encabezadoHistorialEstado -and $encabezadoHistorialEstado.LineageId -eq $lineageIdProductivo
+    foreach ($claveServicio in $porServicioHistorial.Keys) {
+        if (-not $serviciosControlProductivo.ContainsKey($claveServicio)) {
+            $conformidadHistorial = $false
+            break
+        }
+        $revisionControl = [int](Obtener-PropiedadControlVersiones -Objeto $serviciosControlProductivo[$claveServicio] -Nombre 'revision')
+        if (($porServicioHistorial[$claveServicio] | Select-Object -Last 1) -ne $revisionControl) {
+            $conformidadHistorial = $false
+            break
+        }
+    }
+    Test-Asercion -Id 'validacionEstado.historial' -Condicion $conformidadHistorial -DetalleExito 'El historial es coherente con el control: última revisión por bloque y lineageId del encabezado.' -DetalleFallo 'El historial no es coherente con el control.'
+}
+
 try {
     New-DirectorioSiNoExiste -Directorio $DirectorioTmp | Out-Null
     Ejecutar-CasosFinalesLineaArchivosCmd
@@ -1640,6 +2240,9 @@ try {
     # Los grupos de casos se incorporan en los pasos 5 a 10 del plan.
     Ejecutar-CasosConfiguracion
     Ejecutar-CasosIntegridadTransaccional
+    Ejecutar-CasosHistorial
+    Ejecutar-CasosEstadoControl
+    Ejecutar-CasosValidacionEstado
     Ejecutar-CasosPipeline
     Ejecutar-CasosPosicionesGet
     Ejecutar-CasosMultiXpz

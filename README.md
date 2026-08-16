@@ -17,6 +17,7 @@ La fuente principal es el XPZ indicado en `configuracion.json`. El archivo conti
 | Generación de PDF con el XPZ seleccionado | Operativo y transaccional | La opción 3 advierte que la regeneración reinicia el control de versiones y solicita confirmación. Luego regenera el inventario, valida la completitud del XPZ con el mismo control previo a la exportación selectiva (`ValidarXPZ.ps1`) y, si el XPZ requiere componentes adicionales, exporta los elementos necesarios informando al usuario. Finalmente genera Markdown y PDF en staging; cada servicio se publica solo después de validar ambos artefactos. |
 | Diagnósticos y review | Operativo | Una ejecución completada produce un review con estados Markdown/PDF, hashes, versiones y promoción. Los `WARNING`/`ERROR`/`OMITIDO` pueden generar `errores.txt` y las excepciones generan `diagnostico-ia.json` en `Logs/`. |
 | Actualización incremental | Operativo | `ActualizarServicios.ps1` compara el control de versiones, regenera únicamente los servicios afectados, publica Markdown y PDF conjuntamente y conserva los artefactos anteriores ante fallos. |
+| Historial de versiones por servicio | Operativo (best-effort) | Cada bump de versión registra en `estado/historialVersiones.md` una entrada legible con fecha, objetos GeneXus modificados y la descripción de los cambios de parámetros, campos, tipos, obligatoriedad y códigos HTTP. El control sigue siendo la fuente de verdad: el historial es un artefacto derivado y su fallo nunca altera el lote. |
 | Artefactos generados | Bajo demanda | El inventario, el visor, los documentos de servicios y los logs se crean al ejecutar los generadores; no se presupone que existan en una copia nueva. |
 
 Los valores `xpz`, `packagename`, `cliente` y `serviciosIgnorados` se leen de `configuracion.json` y pueden cambiar entre ejecuciones. La cantidad de endpoints confirmados se calcula desde el XPZ activo; las cantidades de resultados `OK`, `WARNING`, `ERROR` y `OMITIDO` dependen de la evidencia de cada export.
@@ -29,6 +30,17 @@ El control persistente está en `estado/controlVersiones.json`, que usa `schemaV
 
 Durante la actualización se mantiene un lock exclusivo en `estado/actualizacion.lock`. Una segunda ejecución termina con código `1` sin modificar los artefactos vigentes. Los códigos son `0` completo, `1` error fatal, `2` parcial y `3` abortado.
 
+### Historial de versiones por servicio
+
+Además del control, cada actualización mantiene un historial legible en `estado/historialVersiones.md` (ignorado por Git, UTF-8 sin BOM y LF). Es un artefacto **derivado y best-effort**: el control de versiones sigue siendo la fuente de verdad y el historial nunca lo modifica. Registra una entrada por bump de versión —incluida la `1.0` de un servicio nuevo— con fecha y una descripción en lenguaje natural de qué cambió: parámetros o campos agregados o eliminados, cambios de `Tipo` o de `Obligatorio` (NO→SI, SI→NO), cambios de descripción, códigos HTTP agregados o eliminados y, como respaldo, conteos por sección cuando las tablas no son comparables. La fila `Versión` de la tabla Definición se ignora siempre.
+
+El historial tiene dos modos de escritura:
+
+- **Append** (lotes normales): después de la escritura atómica del control, se agrega una entrada dentro del bloque `## <FQN>` de cada servicio promovido con bump. Cada servicio tiene un único bloque con todas sus versiones acumuladas. Un reanálisis sin cambio de contenido no agrega nada y el fast-path no toca el archivo.
+- **Reemplazo** (reinicio del control): cuando la ejecución reinicializa el control (`-Inicializar`, control inválido/incompatible, control inexistente con historial previo o `lineageId` del encabezado distinto del control), el archivo se reescribe con un encabezado nuevo (`LineageId` y `Creado`) y las entradas `1.0` del lote.
+
+El historial se escribe únicamente después de la escritura atómica del control y nunca altera el resultado del lote: un fallo del historial emite una advertencia sin efecto sobre el control, los artefactos ni el código de salida. La versión de cada entrada se deriva del control (`Obtener-VersionServicio`), nunca del archivo.
+
 ## Pruebas locales
 
 El harness se ejecuta sin Pester, Node.js ni dependencias externas:
@@ -37,7 +49,7 @@ El harness se ejecuta sin Pester, Node.js ni dependencias externas:
 .\test\Run-Tests.ps1
 ```
 
-Actualmente cubre el pipeline, configuración, selección no interactiva, inventario multi-XPZ, análisis de contratos, validación Markdown, visor, control de versiones esquema 2, staging/promoción y lock. La última ejecución verificada produjo `83 casos, 0 fallos`. Los temporales se escriben únicamente en `test/tmp/` y los logs de prueba en `test/Logs/`.
+Actualmente cubre el pipeline, configuración, selección no interactiva, inventario multi-XPZ, análisis de contratos, validación Markdown, visor, control de versiones esquema 2, staging/promoción, lock, historial de versiones, estado del control y validadores estáticos de `estado/`. La última ejecución verificada produjo `138 casos, 0 fallos`. Los temporales se escriben únicamente en `test/tmp/` y los logs de prueba en `test/Logs/`.
 
 Hay dos mecanismos de deduplicación distintos según el proceso:
 
@@ -272,8 +284,9 @@ Cada documento se produce en tres etapas, implementadas como módulos PowerShell
 | `GenerarPdfServicios.ps1` | Convierte bajo demanda los `.md` existentes a `.pdf` mediante Pandoc + Typst portable, Poppins y la plantilla visual del proyecto, sin modificar el Markdown. Con un manifiesto genera el PDF en staging y devuelve su hash. |
 | `CargarConfiguracion.ps1` | Módulo común de carga de `configuracion.json`: resuelve la ruta del XPZ contra la raíz del repositorio, aplica el override de `-XpzPath` y expone `PackageName`, `Cliente` y `ServiciosIgnorados`. Se importa por dot-source desde el generador, el inventario y el visor. |
 | `GenerarDocumento.ps1` | Orquestador: carga el XPZ principal y sus complementos mediante `CargarMultiXPZ.ps1`, lee inventario, filtra ignorados, detecta duplicados, despliega menú, encadena los tres módulos anteriores, conserva documentos previos ante `ERROR` y escribe los logs. |
-| `ActualizarServicios.ps1` | Orquestador incremental: compara fingerprints y dependencias, genera en staging, publica Markdown/PDF conjuntamente, conserva pendientes y actualiza el control de versiones esquema 2. |
+| `ActualizarServicios.ps1` | Orquestador incremental: compara fingerprints y dependencias, genera en staging, publica Markdown/PDF conjuntamente, conserva pendientes, actualiza el control de versiones esquema 2 y alimenta el historial de versiones. |
 | `ControlVersiones.ps1` | Valida, compara, persiste atómicamente y calcula versiones, hashes, estados y pendientes del control global. |
+| `HistorialVersiones.ps1` | Compara las tablas del Markdown anterior y nuevo de un servicio, redacta las entradas del historial y escribe `estado/historialVersiones.md` en modo append o reemplazo (best-effort, sin alterar los contratos del control). |
 | `ManifiestoEjecucion.ps1` | Crea y valida el manifiesto por ejecución, sus FQN solicitados y el directorio de staging; elimina el staging al finalizar. |
 | `GestionDocumentosGLM.ps1` | Orquestador PowerShell del lanzador: preflight, menú, selección de XPZ, exportación, completitud, actualización transaccional y propagación de códigos de salida. |
 | `DiagnosticoIA.ps1` | Captura excepciones del pipeline en un JSON estructurado para análisis técnico, con rutas relativas al repositorio y rutas externas enmascaradas. |
@@ -345,7 +358,7 @@ La marca temporal de los logs tiene precisión de un segundo: dos ejecuciones qu
 | `binary/RenderizarMarkdownTypstPdf.ps1` | Renderiza un `.md` a `.pdf` mediante Typst portable y la plantilla visual del proyecto. |
 | `binary/ResumirOperacionPdf.ps1` | Resume la operación PDF validando físicamente los PDF existentes y separando publicados, conservados, omitidos y fallidos. |
 | `test/Run-Tests.ps1` | Harness local sin dependencias externas para pipeline, analizador, visor y contratos transaccionales; escribe solo en `test/tmp/` y `test/Logs/`. |
-| `estado/` | Estado local ignorado por Git: `controlVersiones.json` esquema 2 y `actualizacion.lock` durante una actualización. |
+| `estado/` | Estado local ignorado por Git: `controlVersiones.json` esquema 2, `historialVersiones.md` y `actualizacion.lock` durante una actualización. |
 | `Logs/exportarXPZ_<marca>.log` | Log completo generado por MSBuild durante una exportación automática del XPZ. |
 | `Logs/yyyyMMdd-HHmmss-review.json` | Review del generador directo; el review de actualización usa el `ejecucionId` del manifiesto e incluye estados Markdown/PDF, hashes, versiones y `promocionado`. |
 | `Logs/yyyyMMdd-HHmmss-errores.txt` | `WARNING`, `ERROR` y `OMITIDO` legibles; se genera solo cuando hay al menos un warning o error. |
@@ -508,6 +521,7 @@ La secuencia por servicio es:
 4. Calcular `documentHash` y `pdfHash` sobre los archivos publicados.
 5. Incrementar `revision` una sola vez y conservar `version = 1.<revision>`.
 6. Escribir el control de versiones de forma atómica después de resolver el lote.
+7. Actualizar `estado/historialVersiones.md` (best-effort): una entrada por bump con los objetos modificados y la descripción de los cambios del documento.
 
 Los estados persistidos son `ACTIVO`, `ELIMINADO` y `OMITIDO`. Los servicios ignorados conservan su historial como `OMITIDO`; los ausentes del inventario se conservan como `ELIMINADO`; los reactivados vuelven a `ACTIVO` solo después de publicar Markdown y PDF válidos. Un fallo crea o actualiza un pendiente y no reemplaza el baseline anterior.
 

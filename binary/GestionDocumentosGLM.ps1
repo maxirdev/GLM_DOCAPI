@@ -18,6 +18,7 @@ $codigoCompleto = 0
 $codigoErrorFatal = 1
 $codigoParcial = 2
 $codigoAbortado = 3
+$script:ColorConsolaBase = [Console]::ForegroundColor
 
 . (Join-Path $PSScriptRoot 'ManifiestoEjecucion.ps1')
 
@@ -55,6 +56,16 @@ function Leer-Configuracion {
     return ([System.IO.File]::ReadAllText($rutaConfiguracion) | ConvertFrom-Json)
 }
 
+function Restaurar-ColorConsola {
+    [CmdletBinding()]
+    param()
+
+    try {
+        [Console]::ForegroundColor = $script:ColorConsolaBase
+    } catch {
+    }
+}
+
 function Invocar-ScriptPowerShell {
     [CmdletBinding()]
     param(
@@ -65,14 +76,20 @@ function Invocar-ScriptPowerShell {
     if (-not (Test-Path -LiteralPath $RutaScript -PathType Leaf)) {
         throw ('No se encontro el script: ' + $RutaScript)
     }
-    & $rutaPowerShell -NoProfile -ExecutionPolicy Bypass -File $RutaScript @Argumentos 2>&1 | ForEach-Object {
-        if ($_ -is [System.Management.Automation.ErrorRecord]) {
-            Write-Host $_ -ForegroundColor Red
-        } else {
-            Write-Host ([string]$_)
+    $codigoSalida = 0
+    try {
+        & $rutaPowerShell -NoProfile -ExecutionPolicy Bypass -File $RutaScript @Argumentos 2>&1 | ForEach-Object {
+            if ($_ -is [System.Management.Automation.ErrorRecord]) {
+                Write-Host $_ -ForegroundColor Red
+            } else {
+                Restaurar-ColorConsola
+                Write-Host ([string]$_)
+            }
         }
+        $codigoSalida = [int]$LASTEXITCODE
+    } finally {
+        Restaurar-ColorConsola
     }
-    $codigoSalida = [int]$LASTEXITCODE
     return (Normalizar-CodigoSalida -Codigo $codigoSalida)
 }
 

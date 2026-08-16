@@ -29,8 +29,48 @@ $manifiestoEjecucion = $null
 
 $script:ultimaSalida = @()
 $script:objetosPendientes = @()
+$script:ColorConsolaBase = [Console]::ForegroundColor
 
 . (Join-Path $PSScriptRoot 'ManifiestoEjecucion.ps1')
+
+function Restaurar-ColorConsola {
+    [CmdletBinding()]
+    param()
+
+    try {
+        [Console]::ForegroundColor = $script:ColorConsolaBase
+    } catch {
+    }
+}
+
+function Invocar-Script {
+    param(
+        [Parameter(Mandatory = $true)][string]$RutaScript,
+        [string[]]$Argumentos = @()
+    )
+
+    $lineas = New-Object System.Collections.Generic.List[string]
+    $codigoSalida = 0
+    try {
+        & $rutaPowerShell -NoProfile -ExecutionPolicy Bypass -File $RutaScript @Argumentos 2>&1 | ForEach-Object {
+            $texto = $_.ToString()
+            $lineas.Add($texto)
+            if ($_ -is [System.Management.Automation.ErrorRecord]) {
+                Write-Host $texto -ForegroundColor Red
+            } elseif ($texto -match '(?i)^\s*error\s*:') {
+                Write-Host $texto -ForegroundColor Red
+            } else {
+                Restaurar-ColorConsola
+                Write-Host $texto
+            }
+        }
+        $codigoSalida = $LASTEXITCODE
+    } finally {
+        Restaurar-ColorConsola
+    }
+    $script:ultimaSalida = @($lineas)
+    return $codigoSalida
+}
 
 function Resolver-Ruta {
     param([Parameter(Mandatory = $true)][string]$Ruta)
@@ -91,28 +131,6 @@ function Obtener-SignaturaPendientes {
         $lista = (@($Reporte.solicitudes | ForEach-Object { @($_.exportar) } | ForEach-Object { [string]$_ } | Sort-Object -Unique) -join ',')
     }
     return $lista.Trim()
-}
-
-function Invocar-Script {
-    param(
-        [Parameter(Mandatory = $true)][string]$RutaScript,
-        [string[]]$Argumentos = @()
-    )
-
-    $lineas = New-Object System.Collections.Generic.List[string]
-    & $rutaPowerShell -NoProfile -ExecutionPolicy Bypass -File $RutaScript @Argumentos 2>&1 | ForEach-Object {
-        $texto = $_.ToString()
-        $lineas.Add($texto)
-        if ($_ -is [System.Management.Automation.ErrorRecord]) {
-            Write-Host $texto -ForegroundColor Red
-        } elseif ($texto -match '(?i)^\s*error\s*:') {
-            Write-Host $texto -ForegroundColor Red
-        } else {
-            Write-Host $texto
-        }
-    }
-    $script:ultimaSalida = @($lineas)
-    return $LASTEXITCODE
 }
 
 function Obtener-MotivoError {
