@@ -175,7 +175,7 @@ function Obtener-ObjetosModificadosSinVinculo {
     #>
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory = $true)][string[]]$ObjetosModificados,
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$ObjetosModificados,
         [Parameter(Mandatory = $true)]$IndiceInverso,
         [Parameter(Mandatory = $true)]$Servicios
     )
@@ -531,7 +531,9 @@ try {
         $serviciosAnterioresFastPath = Obtener-PropiedadControlVersiones -Objeto $controlAnterior -Nombre 'services'
         $artefactosVigentes = Test-ServiciosPublicadosVigentes -Servicios $serviciosAnterioresFastPath -DirectorioServicios (Join-Path $raizRepositorio 'documentacion\servicios')
         if (-not $ForzarRegeneracionCompleta -and $sourceFingerprintAnterior -eq $sourceFingerprint -and $profileFingerprintAnterior -eq $profileFingerprint -and $pendientesAnteriores.Count -eq 0 -and $artefactosVigentes) {
-            Write-Host 'Fast-path: no cambiaron el conjunto XPZ ni el perfil documental y no hay pendientes.' -ForegroundColor DarkGray
+            Write-Host 'No se detectaron cambios en el XPZ, el perfil documental ni los pendientes.' -ForegroundColor Yellow
+            Write-Host 'La documentacion publicada esta vigente; no se requiere actualizacion.' -ForegroundColor Yellow
+            if (-not [Console]::IsInputRedirected) { [void](Read-Host 'Presione ENTER para volver al menu') }
             exit 0
         }
     }
@@ -572,6 +574,21 @@ try {
     $controlObjetivoPreliminar = New-ControlVersiones -LineageId $lineageId -SourceFingerprint $sourceFingerprint -ProfileFingerprint $profileFingerprint -Objects $objetosActuales -Services $serviciosPreliminares -Pendientes @{}
     $comparacionPreliminar = Comparar-ControlVersiones -ControlAnterior $controlAnterior -ControlObjetivo $controlObjetivoPreliminar
     if ($comparacionPreliminar.BloqueadoPorLineage) { throw $comparacionPreliminar.MotivoBloqueo }
+
+    if ($comparacionPreliminar.ObjetosModificados.Count -eq 0) {
+        if ($comparacionPreliminar.ProfileFingerprintCambio) {
+            Write-Host 'No se detectaron objetos modificados en el XPZ, pero cambio el perfil documental (plantilla, reglas o redactor).' -ForegroundColor Yellow
+            Write-Host 'Se interrumpe la actualizacion para no regenerar servicios sin cambios en la fuente.' -ForegroundColor Yellow
+        } elseif ($comparacionPreliminar.Pendientes.Count -gt 0) {
+            Write-Host ('No se detectaron objetos modificados en el XPZ, pero hay ' + $comparacionPreliminar.Pendientes.Count + ' pendiente(s) previo(s).' ) -ForegroundColor Yellow
+            Write-Host 'Se interrumpe la actualizacion; los pendientes se reintentaran en una corrida posterior.' -ForegroundColor Yellow
+        } else {
+            Write-Host 'ADVERTENCIA: no se detectaron objetos modificados ni cambio de perfil documental.' -ForegroundColor Yellow
+            Write-Host 'Esto puede indicar que el XPZ no cambio desde la ultima generacion o que la traza de dependencias no captura los cambios.' -ForegroundColor Yellow
+        }
+        if (-not [Console]::IsInputRedirected) { [void](Read-Host 'Presione ENTER para volver al menu') }
+        exit 0
+    }
 
     foreach ($fullyQualifiedName in $serviciosAnteriores.Keys) {
         foreach ($claveDependencia in (Obtener-DependenciasServicioControlVersiones -Servicio $serviciosAnteriores[$fullyQualifiedName])) {

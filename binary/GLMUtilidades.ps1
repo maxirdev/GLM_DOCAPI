@@ -17,6 +17,26 @@ function Inicializar-ConsolaUtf8 {
     }
 }
 
+function Restaurar-ColorConsola {
+    <#
+    .SYNOPSIS
+    Restaura el color de consola capturado antes de invocar un proceso hijo.
+    .DESCRIPTION
+    Un proceso hijo que escribe con colores a la consola compartida puede dejarla
+    en su ultimo color (p. ej. Cyan). Esta funcion devuelve [Console]::ForegroundColor
+    al valor capturado antes de la invocacion.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)][System.ConsoleColor]$ColorBase
+    )
+
+    try {
+        [Console]::ForegroundColor = $ColorBase
+    } catch {
+    }
+}
+
 function Normalizar-SaltosLineaLf {
     [CmdletBinding()]
     param(
@@ -242,6 +262,7 @@ function Invocar-ScriptHijo {
 
     $lineas = New-Object System.Collections.Generic.List[string]
     $preferenciaErrorPrevia = $ErrorActionPreference
+    $colorBase = [Console]::ForegroundColor
     $ErrorActionPreference = 'Continue'
     try {
         & $rutaPowerShell -NoProfile -ExecutionPolicy Bypass -File $RutaScript @Argumentos 2>&1 | ForEach-Object {
@@ -259,6 +280,7 @@ function Invocar-ScriptHijo {
         }
     } finally {
         $ErrorActionPreference = $preferenciaErrorPrevia
+        Restaurar-ColorConsola -ColorBase $colorBase
     }
     $codigoSalida = [int]$LASTEXITCODE
     if ($NormalizarCodigo) {

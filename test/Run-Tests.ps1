@@ -1647,6 +1647,7 @@ function Ejecutar-CasosIntegridadTransaccional {
 
     Test-Asercion -Id 'integridad.deteccionObjetosSinVinculo' -Condicion (
         $contenidoActualizador -match 'Obtener-ObjetosModificadosSinVinculo' -and
+        $contenidoActualizador -match 'AllowEmptyCollection\(\).*ObjetosModificados' -and
         $contenidoActualizador -match 'Obtener-ServiciosActivosSinDependencias' -and
         $contenidoActualizador -match 'Objetos modificados sin vinculo de dependencias' -and
         $contenidoActualizador -match 'servicio\(s\) ACTIVO sin dependencias registradas'
@@ -1883,6 +1884,17 @@ function Ejecutar-CasosUtilidades {
         $resultadoHijoNormalizado.CodigoSalida -eq 1
     ) -DetalleExito 'La invocacion de scripts hijo captura salida y error y normaliza codigos fuera de 0/1/2/3 a 1.' -DetalleFallo 'La invocacion de scripts hijo no captura o normaliza como se espera.'
     Test-AsercionLanzaError -Id 'utilidades.invocarScriptInexistente' -Bloque { Invocar-ScriptHijo -RutaScript (Join-Path $DirectorioTmp 'utilidades-inexistente.ps1') -NoImprimir } -PatronMensaje 'No se encontro el script'
+
+    $rutaScriptColor = Join-Path $DirectorioTmp 'utilidades-script-color.ps1'
+    Escribir-TextoUtf8SinBom -Ruta $rutaScriptColor -Contenido "Write-Host 'texto-color' -ForegroundColor Cyan; exit 0"
+    $colorAntes = [Console]::ForegroundColor
+    Invocar-ScriptHijo -RutaScript $rutaScriptColor -NoImprimir | Out-Null
+    $colorDespues = [Console]::ForegroundColor
+    Restaurar-ColorConsola -ColorBase $colorAntes
+    Test-Asercion -Id 'utilidades.restaurarColorConsola' -Condicion (
+        $colorDespues -eq $colorAntes -and
+        [Console]::ForegroundColor -eq $colorAntes
+    ) -DetalleExito 'Invocar-ScriptHijo restaura el color de consola tras un hijo que escribe en Cyan.' -DetalleFallo 'Invocar-ScriptHijo no restauró el color de consola dejado en Cyan por el hijo.'
 }
 
 function Ejecutar-CasosProceso {
