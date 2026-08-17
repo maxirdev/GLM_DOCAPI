@@ -4,6 +4,11 @@ xpz
 GeneXus-XPZ-Skills-main
 
 clientes/
+# Todo el árbol contextual es mutable: XPZ, documentos, generaciones, estado,
+# logs y resultados de prueba permanecen fuera del control de versiones.
+clientes/**/documentacionServicios/Endpoints/
+clientes/**/Logs/
+clientes/**/test/resultados/
 
 servicios/
 logs/

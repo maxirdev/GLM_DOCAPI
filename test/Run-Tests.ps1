@@ -2819,6 +2819,65 @@ function Ejecutar-CasosValidacionEstado {
     Test-Asercion -Id 'validacionEstado.historial' -Condicion $conformidadHistorial -DetalleExito 'El historial es coherente con el control: última revisión por bloque y lineageId del encabezado.' -DetalleFallo 'El historial no es coherente con el control.'
 }
 
+function Ejecutar-CasosPanelWeb {
+    $rutaServidorPanel = Join-Path $DirectorioBinario 'ServidorPanelWeb.ps1'
+    $archivosWeb = @('web/index.html', 'web/app.js', 'web/style.css') | ForEach-Object { Join-Path $RaizRepositorio $_ }
+    $dependenciasExternas = $false
+    foreach ($rutaWeb in $archivosWeb) {
+        if (-not (Test-Path -LiteralPath $rutaWeb -PathType Leaf)) { $dependenciasExternas = $true; continue }
+        $contenidoWeb = [System.IO.File]::ReadAllText($rutaWeb)
+        if ($contenidoWeb -match '(?i)https?://|cdn|node_modules|(^|[^A-Za-z])import\s|require\s*\(') { $dependenciasExternas = $true }
+    }
+    Test-Asercion -Id 'panelWeb.sinDependenciasExternas' -Condicion (-not $dependenciasExternas) -DetalleExito 'El frontend del panel no referencia frameworks, CDN ni paquetes externos.' -DetalleFallo 'El frontend contiene una referencia externa o falta un archivo web.'
+
+    $puerto = 8140 + (Get-Random -Minimum 0 -Maximum 100)
+    $rutaPowerShell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    $procesoPanel = $null
+    try {
+        $procesoPanel = Start-Process -FilePath $rutaPowerShell -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $rutaServidorPanel, '-RepositoryRoot', $RaizRepositorio, '-Port', $puerto, '-NoBrowser') -WindowStyle Hidden -PassThru
+        $respuestaInicio = $null
+        for ($intento = 0; $intento -lt 20; $intento++) {
+            Start-Sleep -Milliseconds 250
+            try { $respuestaInicio = Invoke-WebRequest -UseBasicParsing -Uri ('http://127.0.0.1:' + $puerto + '/') -ErrorAction Stop; break } catch { }
+        }
+        Test-Asercion -Id 'panelWeb.estaticos' -Condicion ($null -ne $respuestaInicio -and $respuestaInicio.StatusCode -eq 200) -DetalleExito 'El servidor entrega el frontend por loopback.' -DetalleFallo 'El servidor no entregó index.html.'
+        if ($null -eq $respuestaInicio) { return }
+
+        $tokenMatch = [regex]::Match($respuestaInicio.Content, 'window\.PANEL_TOKEN="([a-f0-9]+)"')
+        Test-Asercion -Id 'panelWeb.tokenSesion' -Condicion $tokenMatch.Success -DetalleExito 'El token de sesión se inyecta en el HTML.' -DetalleFallo 'No se encontró el token de sesión inyectado.'
+        if (-not $tokenMatch.Success) { return }
+        $token = $tokenMatch.Groups[1].Value
+        $headersPanel = @{ 'X-Panel-Token' = $token }
+        $estadoPanel = Invoke-RestMethod -Uri ('http://127.0.0.1:' + $puerto + '/api/estado')
+        Test-Asercion -Id 'panelWeb.estado' -Condicion ([bool]$estadoPanel.ok -and $null -eq $estadoPanel.data.context) -DetalleExito 'El servidor inicia sin activar un contexto automáticamente.' -DetalleFallo 'El estado inicial activó un contexto o no respondió correctamente.'
+        $contextosPanel = Invoke-RestMethod -Uri ('http://127.0.0.1:' + $puerto + '/api/contextos')
+        Test-Asercion -Id 'panelWeb.contextos' -Condicion ([bool]$contextosPanel.ok -and @($contextosPanel.data.contextos).Count -ge 2) -DetalleExito 'La API lista los contextos configurados.' -DetalleFallo 'La API no listó los contextos configurados.'
+
+        $activacionPanel = Invoke-WebRequest -Method Post -UseBasicParsing -Uri ('http://127.0.0.1:' + $puerto + '/api/contexto/activar') -Headers $headersPanel -ContentType 'application/json' -Body '{"clienteId":"trunk","ambienteId":"testing"}'
+        $activacionDatos = $activacionPanel.Content | ConvertFrom-Json
+        Test-Asercion -Id 'panelWeb.activacion' -Condicion ($activacionPanel.StatusCode -in @(200, 202) -and $activacionDatos.data.contextId -eq 'trunk/testing') -DetalleExito 'La activación valida y establece el contexto solicitado.' -DetalleFallo 'La activación contextual falló.'
+
+        $inventarioPanel = Invoke-RestMethod -Uri ('http://127.0.0.1:' + $puerto + '/api/endpoints')
+        Test-Asercion -Id 'panelWeb.inventario' -Condicion ([bool]$inventarioPanel.ok -and $null -ne $inventarioPanel.data) -DetalleExito 'La API devuelve el estado del inventario contextual.' -DetalleFallo 'La API no devolvió el inventario contextual.'
+        $configuracionPanel = Invoke-RestMethod -Uri ('http://127.0.0.1:' + $puerto + '/api/configuracion')
+        Test-Asercion -Id 'panelWeb.configHash' -Condicion ([bool]$configuracionPanel.ok -and [string]$configuracionPanel.data.configHash -match '^[0-9a-f]{64}$') -DetalleExito 'La configuración expone el hash SHA-256 actual.' -DetalleFallo 'El hash de configuración no es válido.'
+
+        $rechazoRuta = $false
+        try { Invoke-WebRequest -UseBasicParsing -Uri ('http://127.0.0.1:' + $puerto + '/api/documentos/..%2Fconfiguracion.json') -ErrorAction Stop | Out-Null } catch { $rechazoRuta = $_.Exception.Response.StatusCode.value__ -in @(400, 404) }
+        Test-Asercion -Id 'panelWeb.seguridadRutas' -Condicion $rechazoRuta -DetalleExito 'La API rechaza traversal en identificadores lógicos.' -DetalleFallo 'Una ruta de traversal no fue rechazada.'
+
+        $trabajoPanel = Invoke-WebRequest -Method Post -UseBasicParsing -Uri ('http://127.0.0.1:' + $puerto + '/api/validar') -Headers $headersPanel -ContentType 'application/json' -Body '{}'
+        $trabajoDatos = $trabajoPanel.Content | ConvertFrom-Json
+        Test-Asercion -Id 'panelWeb.trabajo202' -Condicion ($trabajoPanel.StatusCode -eq 202 -and [string]$trabajoDatos.data.jobId) -DetalleExito 'La validación se acepta como trabajo asincrónico.' -DetalleFallo 'La validación no devolvió un trabajo 202.'
+    } catch {
+        Registrar-Caso -Id 'panelWeb.error' -Estado 'FAIL' -Detalle $_.Exception.Message
+    } finally {
+        if ($procesoPanel -and -not $procesoPanel.HasExited) {
+            try { & taskkill.exe /PID $procesoPanel.Id /T /F | Out-Null } catch { try { Stop-Process -Id $procesoPanel.Id -Force -ErrorAction SilentlyContinue } catch { } }
+        }
+    }
+}
+
 try {
     Ejecutar-CasosFinalesLineaArchivosCmd
     foreach ($rutaModulo in Cargar-ModulosProduccion) {
@@ -2839,6 +2898,7 @@ try {
     Ejecutar-CasosIntegridadTransaccional
     Ejecutar-CasosUtilidades
     Ejecutar-CasosProceso
+    Ejecutar-CasosPanelWeb
     Ejecutar-CasosHistorial
     Ejecutar-CasosEstadoControl
     Ejecutar-CasosValidacionEstado

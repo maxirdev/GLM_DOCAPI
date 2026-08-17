@@ -17,9 +17,10 @@ En la raíz del repo:
 
 - `binary/` — scripts del generador: `GenerarDocumento.ps1` (orquestador), `ActualizarServicios.ps1`, `ControlVersiones.ps1`, `HistorialVersiones.ps1`, `ManifiestoEjecucion.ps1`, `AnalizarServicio.ps1`, `RedactarDocumento.ps1`, `EscribirSalidas.ps1`, `CargarConfiguracion.ps1`, `DiagnosticoIA.ps1` y `ResumirOperacionPdf.ps1`.
 - `binary/GLMUtilidades.ps1` — módulo común de utilidades (hash SHA256 de texto/archivo, normalización LF, escritura UTF-8 sin BOM, escritura atómica con validación, resolución de rutas, validación XPZ/PDF, invocación de scripts hijo, reportes de validación, fábrica de registros del control). Hoja y sin dependencias: se carga por dot-source **siempre primero**, antes de cualquier otro script del proyecto (SPEC 18).
+- `binary/ServidorPanelWeb.ps1` — servidor local Windows PowerShell 5.1 con `HttpListener`, limitado a `127.0.0.1`, sesión global y API contextual del panel.
 - `binary/ExportarXPZProgreso.ps1` y `binary/ExportarXPZ.msbuild` — ejecutan la exportación de `Module:APIGLM` desde la KB local; los invoca `EjecutarExportacionGLM.ps1` (opción 1 del lanzador).
 - `binary/CompletarXPZActivoGLM.ps1` — completa el XPZ activo antes de documentar: valida con `ValidarXPZ.ps1` y exporta selectivos cuando faltan componentes (hasta cinco ciclos), preguntando si continuar cuando falla o se detiene con pendientes. Lo invoca la opción 3 (Generar PDF con el XPZ seleccionado) de `GenerarDocumentosGLM.cmd`.
-- `binary/GenerarListaEndpoints.ps1` — herramienta independiente heredada para exportar un inventario explícito; no forma parte del pipeline contextual. Los procesos operativos descubren los servicios HTTP en memoria desde `APIGLM.APIGLMMain`.
+- `binary/GenerarListaEndpoints.ps1` — genera inventarios independientes o generaciones contextuales para el panel; los procesos operativos descubren los servicios HTTP en memoria desde `APIGLM.APIGLMMain`.
 - `Logs/*-diagnostico-ia.json` — diagnóstico estructurado de excepciones con fase, ruta relativa, sentencia y stack trace. Se genera solo ante errores; revisar primero el más reciente al investigar fallos del pipeline.
 
 En `normativas/` (commiteada):
@@ -30,6 +31,8 @@ En `normativas/` (commiteada):
 - `analisisEndpoint.md` — cómo reproducir el inventario de endpoints desde `APIGLM.APIGLMMain`.
 
 - `GenerarDocumentosGLM.cmd` (raíz del repo) — entrada principal: valida la configuración global, pide elegir cliente y ambiente, valida el contexto elegido (preflight), exporta y completa el XPZ, y genera los PDF del contexto activo.
+- `IniciarPanelWeb.cmd` (raíz del repo) — entrada web: inicia el panel local en el puerto `panel.puerto` o `8123` y abre el navegador.
+- `web/` — única interfaz web vigente del producto: HTML, CSS y JavaScript vanilla sin CDN, paquetes ni fuentes remotas.
 - `configuracion.json` (raíz del repo) — configuración central multicliente (SPEC 19): `rutas.clientesRoot` (relativo a la raíz del repo o absoluto), `herramientas` globales (GeneXus, MSBuild, Pandoc, Typst), `exportacion.onlyModuleAPIGLM` y la colección `clientes`. Cada cliente define `id` (slug en minúsculas), `nombre`, `packagename`, `serviciosIgnorados` y `ambientes`. Cada ambiente define `id`, `nombre` y `kbPath` explícito. El archivo no contiene `xpz` ni `kbPath` globales: el XPZ y la KB se derivan del contexto.
 - `clientes/<clienteId>/<ambienteId>/` — árbol contextual mutable (ignorado por Git): `documentacionServicios/` (Markdown y PDF publicados), `estado/` (`controlVersiones.json` esquema 2, `historialVersiones.md`, `actualizacion.lock`), `xpz/`, `Logs/` y `test/{fixtures,resultados}`. Cada ambiente aísla documentos, estado, XPZ, logs y datos de prueba; las líneas de versionado son independientes por ambiente.
 - Las carpetas globales `estado/`, `documentacionServicios/`, `xpz/` y `Logs/` eran legado monocliente y se eliminaron: el pipeline contextual no las lee ni las escribe (SPEC 19).
@@ -40,6 +43,7 @@ Orden obligatorio por servicio: analisisXPZ → reglasEditoriales → templateDo
 ## Pipeline multicliente y multiambiente (SPEC 19)
 
 - La configuración es central (`configuracion.json` en la raíz) y declarativa: agregar un cliente o ambiente válido requiere editar solo ese archivo, sin copiar ni modificar scripts. Los IDs deben ser slugs en minúsculas (`^[a-z0-9][a-z0-9-]*$`), únicos sin distinguir mayúsculas en su nivel, y se usan como nombres de carpeta. Dos ambientes que normalicen al mismo `kbPath` invalidan la configuración.
+- El panel es la interfaz web unificada vigente. No genera `APIServicios.html` ni consume un visor estático separado; `documentacionServicios/Endpoints/` contiene únicamente generaciones persistidas y `current.json`.
 - Al iniciar `GenerarDocumentosGLM.cmd` se elige primero cliente y después ambiente; el menú muestra el contexto activo (nombre visible e ID de carpeta por separado) y permite cambiar de contexto repitiendo el preflight completo antes de activarlo.
 - `rutas.clientesRoot` relativo se resuelve contra la raíz del repositorio y un `kbPath` relativo contra la misma raíz; nunca se deduce una ruta de KB desde `id` o `nombre`. Un contexto válido crea exactamente `documentacionServicios`, `estado`, `xpz`, `Logs`, `test/fixtures` y `test/resultados` bajo `clientes/<clienteId>/<ambienteId>/`.
 - La aplicación no infiere un XPZ activo al iniciar. El usuario debe seleccionar explícitamente un XPZ principal desde el menú; seleccionar otro XPZ solo afecta la sesión y no modifica `configuracion.json`. Los nuevos XPZ principales y complementos se escriben únicamente en la carpeta `xpz/` del ambiente activo.

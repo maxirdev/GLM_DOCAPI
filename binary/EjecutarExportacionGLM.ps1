@@ -4,7 +4,9 @@
 param(
     [Parameter(Mandatory = $true)][string]$Repositorio,
     [Parameter(Mandatory = $true)][string]$ClienteId,
-    [Parameter(Mandatory = $true)][string]$AmbienteId
+    [Parameter(Mandatory = $true)][string]$AmbienteId,
+    [switch]$ConfirmarExportacionCompleta,
+    [ValidateSet('abort', 'continue')][string]$PoliticaPendientes = 'abort'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -53,7 +55,7 @@ try {
     $configuracion = Leer-ConfiguracionCruda -ConfigPath $rutaConfiguracion
     $onlyModuleAPIGLM = Obtener-OnlyModuleAPIGLM -Configuracion $configuracion
 
-    if (-not $onlyModuleAPIGLM) {
+        if (-not $onlyModuleAPIGLM -and -not $ConfirmarExportacionCompleta) {
         Write-Host ''
         Write-Host 'ADVERTENCIA: se configuro la exportacion de toda la Knowledge Base.' -ForegroundColor Yellow
         Write-Host 'La operacion puede tardar aproximadamente entre 20 y 30 minutos.' -ForegroundColor Yellow
@@ -139,11 +141,11 @@ try {
         }
         if ($signaturaAnterior -and $signaturaAnterior -eq $signaturaActual) {
             Write-Host 'La validacion no produjo progreso; se detiene el ciclo automatico.' -ForegroundColor Yellow
-            exit 1
+            if ($PoliticaPendientes -eq 'continue') { exit 0 } else { exit 1 }
         }
         if ($ciclo -eq $maximoCiclos) {
             Write-Host ('Se alcanzo el limite de ' + $maximoCiclos + ' ciclos. Pendientes: ' + $signaturaActual) -ForegroundColor Yellow
-            exit 1
+            if ($PoliticaPendientes -eq 'continue') { exit 0 } else { exit 1 }
         }
 
         $signaturaAnterior = $signaturaActual
@@ -159,6 +161,7 @@ try {
             -ManifiestoPath $rutaManifiestoExportacion 2>&1 | Out-Host
         $codigoSelectivo = $LASTEXITCODE
         if ($codigoSelectivo -ne 0) {
+            if ($PoliticaPendientes -eq 'continue') { exit 0 }
             throw 'La exportacion selectiva fallo. Revise el log generado por el script.'
         }
     }

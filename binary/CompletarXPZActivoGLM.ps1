@@ -11,7 +11,8 @@
 param(
     [Parameter(Mandatory = $true)][string]$Repositorio,
     [Parameter(Mandatory = $true)][string]$XpzActivo,
-    [Parameter(Mandatory = $true)][string]$ManifiestoPath
+    [Parameter(Mandatory = $true)][string]$ManifiestoPath,
+    [ValidateSet('abort', 'continue')][string]$PoliticaPendientes = 'abort'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -64,6 +65,14 @@ function Obtener-DetalleSinReporte {
 function Preguntar-Continuar {
     param([string]$Motivo)
 
+    if ($PoliticaPendientes -eq 'continue') {
+        Write-Host 'La politica no interactiva permite continuar con la evidencia disponible.' -ForegroundColor Yellow
+        return $true
+    }
+    if ($PoliticaPendientes -eq 'abort') {
+        Write-Host 'La politica no interactiva aborta ante pendientes o falta de progreso.' -ForegroundColor Yellow
+        return $false
+    }
     Write-Host ''
     Write-Host ('Motivo: ' + $Motivo) -ForegroundColor Red
     if ($script:objetosPendientes.Count -gt 0) {

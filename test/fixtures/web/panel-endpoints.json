@@ -1,0 +1,33 @@
+{
+    "meta": {
+        "contextId": "trunk/testing",
+        "clienteId": "trunk",
+        "ambienteId": "testing",
+        "xpz": "APIGLM_20260816.xpz",
+        "xpzSha256": "fixture-sha256",
+        "generatedAt": "2026-08-16T12:00:00Z",
+        "totalConfirmed": 3,
+        "totalProcessable": 2,
+        "totalIgnored": 1
+    },
+    "endpoints": [
+        {
+            "nombre": "WS - Obtener Productor",
+            "descripcion": "WSObtenerProductor",
+            "proceso": "APIGLM.Cotizacion.WSObtenerProductor",
+            "endpoint": "glmsuit.comercial.apiglm.cotizacion.awsobtenerproductor"
+        },
+        {
+            "nombre": "WS - Consultar Solicitud",
+            "descripcion": "Consulta el estado de una solicitud",
+            "proceso": "APIGLM.Emision.WSConsultarSolicitud",
+            "endpoint": "glmsuit.comercial.apiglm.emision.awsconsultarsolicitud"
+        },
+        {
+            "nombre": "WS - Listar Estados",
+            "descripcion": "WSListarEstados",
+            "proceso": "APIGLM.Comun.WSListarEstados",
+            "endpoint": "glmsuit.comercial.apiglm.comun.awslistarestados"
+        }
+    ]
+}

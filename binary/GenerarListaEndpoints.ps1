@@ -32,6 +32,84 @@ function Write-Step {
     Write-Host $Text -ForegroundColor Cyan
 }
 
+function Write-ContextualEndpointGeneration {
+    param(
+        [Parameter(Mandatory = $true)]$Manifest,
+        [Parameter(Mandatory = $true)]$Configuration,
+        [Parameter(Mandatory = $true)]$Index,
+        [Parameter(Mandatory = $true)][string]$GenerationId
+    )
+
+    $endpointsRoot = Join-Path $Manifest.servicesDirectory 'Endpoints'
+    $generationsRoot = Join-Path $endpointsRoot 'generations'
+    $generationDirectory = Join-Path $generationsRoot $GenerationId
+    Asegurar-Directorio -Ruta $generationDirectory
+
+    $allEndpoints = @(Obtener-ServiciosHttpDesdeIndice -Indice $Index -ProcedureTypeGuid $ProcedureTypeGuid)
+    $ignoredNames = @($Configuration.ServiciosIgnorados | ForEach-Object { [string]$_ })
+    $ignoredEndpoints = @($allEndpoints | Where-Object { $ignoredNames -contains [string]$_.proceso })
+    $publishedEndpoints = @($allEndpoints | Where-Object { $ignoredNames -notcontains [string]$_.proceso } | ForEach-Object {
+        $publishedEndpoint = [string]$_.endpoint
+        if ($Configuration.PackageName) { $publishedEndpoint = $Configuration.PackageName.TrimEnd('.') + '.' + $publishedEndpoint }
+        [pscustomobject]@{
+            nombre = [string]$_.nombre
+            descripcion = [string]$_.descripcion
+            proceso = [string]$_.proceso
+            endpoint = $publishedEndpoint
+        }
+    })
+    $xpzHash = Obtener-Sha256Archivo -Ruta ([string]$Manifest.xpz)
+    $meta = [pscustomobject]@{
+        generationId = $GenerationId
+        contextId = [string]$Manifest.contextId
+        clienteId = [string]$Manifest.clienteId
+        ambienteId = [string]$Manifest.ambienteId
+        xpz = [System.IO.Path]::GetFullPath([string]$Manifest.xpz)
+        xpzSha256 = $xpzHash
+        generatedAt = (Get-Date).ToUniversalTime().ToString('o')
+        totalConfirmed = $publishedEndpoints.Count
+        totalProcessable = $publishedEndpoints.Count
+        totalIgnored = $ignoredEndpoints.Count
+    }
+    $payload = [pscustomobject]@{
+        schemaVersion = 1
+        meta = $meta
+        endpoints = @($publishedEndpoints)
+    }
+    $jsonContent = Normalizar-SaltosLineaLf -Texto ($payload | ConvertTo-Json -Depth 8)
+    $markdownBuilder = New-Object System.Text.StringBuilder
+    Add-Line $markdownBuilder '# Inventario de endpoints APIGLM'
+    Add-Line $markdownBuilder
+    Add-Line $markdownBuilder ('Contexto: **' + $meta.contextId + '** | XPZ: `' + [System.IO.Path]::GetFileName($meta.xpz) + '`')
+    Add-Line $markdownBuilder ('Total confirmado: **' + $meta.totalConfirmed + '** | Ignorados: **' + $meta.totalIgnored + '**')
+    Add-Line $markdownBuilder
+    Add-Line $markdownBuilder '| Nombre | Descripción | Proceso | Endpoint |'
+    Add-Line $markdownBuilder '|---|---|---|---|'
+    foreach ($endpoint in $publishedEndpoints) {
+        Add-Line $markdownBuilder ('| ' + $endpoint.nombre + ' | ' + $endpoint.descripcion + ' | `' + $endpoint.proceso + '` | `' + $endpoint.endpoint + '` |')
+    }
+    $markdownContent = $markdownBuilder.ToString()
+    $jsonPath = Join-Path $generationDirectory 'endpoints.json'
+    $markdownPath = Join-Path $generationDirectory 'endpoints.md'
+    Escribir-TextoUtf8SinBom -Ruta $jsonPath -Contenido $jsonContent
+    Escribir-TextoUtf8SinBom -Ruta $markdownPath -Contenido $markdownContent
+    if (-not (Test-Path -LiteralPath $jsonPath -PathType Leaf) -or -not (Test-Path -LiteralPath $markdownPath -PathType Leaf)) {
+        throw 'No se pudo publicar el par completo del inventario contextual.'
+    }
+
+    $pointer = [pscustomobject]@{ schemaVersion = 1; generationId = $GenerationId; updatedAt = $meta.generatedAt }
+    Escribir-ArchivoAtomico -Ruta (Join-Path $endpointsRoot 'current.json') -Contenido (Normalizar-SaltosLineaLf -Texto ($pointer | ConvertTo-Json -Depth 4)) | Out-Null
+
+    try {
+        $generationDirectories = @(Get-ChildItem -LiteralPath $generationsRoot -Directory | Sort-Object LastWriteTime -Descending)
+        foreach ($oldGeneration in @($generationDirectories | Select-Object -Skip 2)) {
+            Remove-Item -LiteralPath $oldGeneration.FullName -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    } catch {
+        Write-Warning ('No se pudieron limpiar generaciones antiguas: ' + $_.Exception.Message)
+    }
+}
+
 try {
     Write-Host '==============================================================' -ForegroundColor Cyan
     Write-Host '  ANALISIS DE XPZ APIGLM' -ForegroundColor Cyan
@@ -61,7 +139,13 @@ try {
     $clienteId = ''
     $ambienteId = ''
     if ($ManifiestoPath) {
-        throw 'GenerarListaEndpoints.ps1 ya no forma parte del pipeline contextual y no acepta manifiestos. Use -XpzPath y -OutputDirectory solo para una exportacion independiente.'
+        $manifiestoEjecucion = Leer-ManifiestoEjecucion -RutaManifiesto $ManifiestoPath
+        $XpzPath = [string]$manifiestoEjecucion.xpz
+        $ConfigPath = [string]$manifiestoEjecucion.configPath
+        $clienteId = [string]$manifiestoEjecucion.clienteId
+        $ambienteId = [string]$manifiestoEjecucion.ambienteId
+        $ejecucionId = [string]$manifiestoEjecucion.ejecucionId
+        $OutputDirectory = Join-Path ([string]$manifiestoEjecucion.servicesDirectory) ('Endpoints\generations\' + $ejecucionId)
     } else {
         $ejecucionId = Obtener-NuevoIdentificadorEjecucion
         if (-not $OutputDirectory) {
@@ -91,6 +175,14 @@ try {
     $xml = $indiceMultiXpz.XmlUnificado
     $XpzName = ($indiceMultiXpz.NombresXpz -join ', ')
     Write-Host ("  Archivos: " + $XpzName) -ForegroundColor DarkGray
+
+    if ($ManifiestoPath) {
+        $faseActual = 'publicacion-generacion-contextual'
+        Write-Step 2 'Publicando generación contextual de endpoints...'
+        Write-ContextualEndpointGeneration -Manifest $manifiestoEjecucion -Configuration $configuracion -Index $indiceMultiXpz -GenerationId $ejecucionId
+        Write-Host ('  Generación: ' + $ejecucionId) -ForegroundColor Green
+        exit 0
+    }
 
     $faseActual = 'localizacion-main'
     $mainNodes = $xml.SelectNodes("//Object[@fullyQualifiedName='APIGLM.APIGLMMain']")

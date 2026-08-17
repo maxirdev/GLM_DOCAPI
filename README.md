@@ -10,11 +10,12 @@ La única fuente de evidencia es el XPZ del ambiente activo. No se completan dat
 - Configuración central multicliente y multiambiente implementada (SPEC 19).
 - Exportación de `Module:APIGLM` o de toda la KB mediante GeneXus y MSBuild.
 - Validación y completitud automática mediante XPZ principal y complementos numerados.
-- Descubrimiento contextual de servicios HTTP, sin publicar ni consumir `endpoints.json` o `endpoints.md`.
+- Descubrimiento contextual de servicios HTTP y publicación versionada de `endpoints.json`/`endpoints.md` para el panel.
 - Generación de Markdown y PDF con publicación transaccional por servicio.
 - Actualización incremental con control de versiones esquema 2, historial, fingerprints, dependencias y lock por ambiente.
 - Diagnósticos estructurados y reviews por ejecución.
-- El visor web de endpoints y la exportación OpenAPI no forman parte del pipeline implementado. La SPEC 20 de OpenAPI está en borrador.
+- Panel web local unificado, sin frameworks ni dependencias externas, para operar el pipeline y consultar endpoints, documentos, reportes y logs.
+- No se genera `APIServicios.html` ni existe un visor estático separado. La SPEC 20 de OpenAPI está en borrador.
 
 ## Requisitos
 
@@ -38,7 +39,13 @@ El repositorio auxiliar `GeneXus-XPZ-Skills-main/` es opcional. Su catálogo se 
 
 4. Seleccionar cliente y ambiente. El preflight valida el esquema, las herramientas y la Knowledge Base antes de crear el árbol contextual.
 5. Seleccionar un XPZ principal existente o exportar uno nuevo.
-6. Usar el menú para buscar actualizaciones, regenerar toda la documentación y PDF, cambiar de contexto o ejecutar las pruebas.
+6. Para usar el panel unificado, ejecutar:
+
+```powershell
+.\IniciarPanelWeb.cmd
+```
+
+7. Usar la consola o el panel para validar, exportar, regenerar documentación y consultar artefactos del contexto activo.
 
 También se pueden ejecutar scripts directamente para automatización:
 
@@ -105,6 +112,7 @@ Cada ejecución activa un contexto `<clienteId>/<ambienteId>`. Todo lo mutable q
 ```text
 clientes/<clienteId>/<ambienteId>/
 ├── documentacionServicios/    # Markdown y PDF publicados
+│   └── Endpoints/              # generaciones de endpoints y current.json
 ├── estado/                    # control, historial y lock
 ├── xpz/                       # XPZ principales y complementos _N
 ├── Logs/                      # review, diagnósticos y reportes
@@ -141,7 +149,7 @@ El inventario se obtiene desde el código fuente de `APIGLM.APIGLMMain`:
 3. Se conserva el FQN literal y la primera aparición de cada FQN.
 4. `ValidarXPZ.ps1` revisa el XPZ principal y los complementos `_N.xpz`, construye un índice unificado y escribe el reporte de completitud en `Logs/`.
 
-`GenerarListaEndpoints.ps1` continúa disponible como herramienta independiente heredada para exportar un inventario explícito, pero el pipeline contextual no depende de sus archivos.
+`GenerarListaEndpoints.ps1` también acepta manifiestos del panel y publica generaciones bajo `documentacionServicios/Endpoints/`. `current.json` apunta al único par JSON/Markdown vigente; no se genera un visor HTML estático.
 
 ### Generación y actualización
 

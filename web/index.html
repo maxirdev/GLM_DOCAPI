@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="es" data-theme="light">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="Panel local de documentación APIGLM">
+    <title>Panel APIGLM</title>
+    <link rel="icon" href="favicon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <header class="site-header">
+        <div class="brand-block">
+            <p class="eyebrow">DOCUMENTACIÓN LOCAL</p>
+            <h1>Panel APIGLM</h1>
+        </div>
+        <div class="context-controls" aria-label="Contexto activo">
+            <label>Cliente
+                <select id="client-select">
+                    <option value="">Seleccionar cliente</option>
+                    <option value="trunk">Trunk</option>
+                    <option value="lps">LPS</option>
+                </select>
+            </label>
+            <label>Ambiente
+                <select id="environment-select" disabled>
+                    <option value="">Seleccionar ambiente</option>
+                </select>
+            </label>
+            <button class="icon-button" id="theme-toggle" type="button" aria-label="Cambiar tema">Tema</button>
+        </div>
+    </header>
+
+    <main class="page-shell">
+        <div class="readonly-banner" role="status">
+            <strong>Modo demostración</strong>
+            Selecciona un cliente y un ambiente. Las operaciones se habilitarán cuando exista un contexto validado.
+        </div>
+
+        <nav class="tabs" aria-label="Secciones del panel" role="tablist">
+            <button class="tab is-active" data-tab="estado" role="tab" aria-selected="true">Estado</button>
+            <button class="tab" data-tab="xpz" role="tab" aria-selected="false">XPZ</button>
+            <button class="tab" data-tab="exportar" role="tab" aria-selected="false">Exportar</button>
+            <button class="tab" data-tab="endpoints" role="tab" aria-selected="false">Endpoints</button>
+            <button class="tab" data-tab="documentacion" role="tab" aria-selected="false">Documentación</button>
+            <button class="tab" data-tab="documentos" role="tab" aria-selected="false">Documentos</button>
+            <button class="tab" data-tab="logs" role="tab" aria-selected="false">Logs</button>
+            <button class="tab" data-tab="configuracion" role="tab" aria-selected="false">Configuración</button>
+        </nav>
+
+        <section class="tab-panel is-active" id="tab-estado" role="tabpanel">
+            <div class="section-heading">
+                <div><p class="eyebrow">CONTEXTO</p><h2>Estado del ambiente</h2></div>
+                <span class="badge badge-muted" id="context-badge">SIN CONTEXTO</span>
+            </div>
+            <div class="summary-grid" id="state-summary"></div>
+            <div class="work-card" id="work-card" hidden>
+                <div class="work-card-heading"><strong>Trabajo en curso</strong><span class="badge badge-muted" id="work-status">RUNNING</span></div>
+                <p id="work-description">Validando XPZ...</p>
+                <div class="progress-track" aria-hidden="true"><span id="work-progress"></span></div>
+                <pre id="work-lines"></pre>
+            </div>
+            <div class="empty-state" id="state-empty">Selecciona un cliente y un ambiente para comenzar.</div>
+        </section>
+
+        <section class="tab-panel" id="tab-xpz" role="tabpanel" hidden>
+            <div class="section-heading"><div><p class="eyebrow">FUENTE</p><h2>XPZ disponible</h2></div></div>
+            <div class="empty-state">No hay un contexto activo.</div>
+        </section>
+
+        <section class="tab-panel" id="tab-exportar" role="tabpanel" hidden>
+            <div class="section-heading"><div><p class="eyebrow">PIPELINE</p><h2>Exportar y validar</h2></div></div>
+            <div class="action-card"><p>Las operaciones requieren un contexto validado y se ejecutarán como trabajos aislados.</p><button type="button" disabled>Exportar XPZ</button><button id="validate-xpz" type="button" disabled>Validar XPZ</button></div>
+        </section>
+
+        <section class="tab-panel" id="tab-endpoints" role="tabpanel" hidden>
+            <div class="section-heading"><div><p class="eyebrow">INVENTARIO</p><h2>Endpoints confirmados</h2></div><span class="badge badge-ok" id="endpoint-count">3 CONFIRMADOS</span></div>
+            <div class="inventory-meta" id="inventory-meta"></div>
+            <div class="toolbar"><label class="search-field">Filtrar endpoints<input id="endpoint-filter" type="search" placeholder="Nombre o descripción"></label><button id="regenerate-endpoints" type="button" disabled>Regenerar</button></div>
+            <div class="table-wrap"><table><thead><tr><th>Nombre</th><th>Descripción</th><th>Proceso</th><th>Endpoint publicado</th></tr></thead><tbody id="endpoint-table"></tbody></table></div>
+        </section>
+
+        <section class="tab-panel" id="tab-documentacion" role="tabpanel" hidden><div class="section-heading"><div><p class="eyebrow">PUBLICACIÓN</p><h2>Documentación</h2></div></div><div class="empty-state">Selecciona un contexto para descubrir servicios.</div></section>
+        <section class="tab-panel" id="tab-documentos" role="tabpanel" hidden><div class="section-heading"><div><p class="eyebrow">ARTEFACTOS</p><h2>Documentos publicados</h2></div></div><div class="file-list" id="document-list"><div class="empty-state">No hay documentos publicados en este contexto.</div></div></section>
+        <section class="tab-panel" id="tab-logs" role="tabpanel" hidden><div class="section-heading"><div><p class="eyebrow">SEGUIMIENTO</p><h2>Logs y reportes</h2></div></div><div class="file-list" id="log-list"><div class="empty-state">No hay logs disponibles para este contexto.</div></div></section>
+        <section class="tab-panel" id="tab-configuracion" role="tabpanel" hidden><div class="section-heading"><div><p class="eyebrow">ADMINISTRACIÓN</p><h2>Configuración</h2></div></div><div class="configuration-list" id="configuration-list"><div class="empty-state">La configuración se consultará al conectar con el servidor.</div></div><div class="action-card"><p>Los cambios se validan sobre el documento completo y requieren su `configHash` vigente.</p><button type="button" disabled>Editar configuración</button></div></section>
+    </main>
+
+    <script id="panel-fixture" type="application/json">{"meta":{"contextId":"trunk/testing","clienteId":"trunk","ambienteId":"testing","xpz":"APIGLM_20260816.xpz","generatedAt":"2026-08-16T12:00:00Z","totalConfirmed":3},"endpoints":[{"nombre":"WS - Obtener Productor","descripcion":"WSObtenerProductor","proceso":"APIGLM.Cotizacion.WSObtenerProductor","endpoint":"glmsuit.comercial.apiglm.cotizacion.awsobtenerproductor"},{"nombre":"WS - Consultar Solicitud","descripcion":"Consulta el estado de una solicitud","proceso":"APIGLM.Emision.WSConsultarSolicitud","endpoint":"glmsuit.comercial.apiglm.emision.awsconsultarsolicitud"},{"nombre":"WS - Listar Estados","descripcion":"WSListarEstados","proceso":"APIGLM.Comun.WSListarEstados","endpoint":"glmsuit.comercial.apiglm.comun.awslistarestados"}]}</script>
+    <script src="app.js"></script>
+</body>
+</html>
