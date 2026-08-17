@@ -1,4 +1,4 @@
-# Orquestador interactivo de la gestion de documentos APIGLM.
+# Orquestador interactivo de la gestion de documentos APIGLM (multicliente).
 
 [CmdletBinding()]
 param(
@@ -8,11 +8,14 @@ param(
 $ErrorActionPreference = 'Stop'
 $raizRepositorio = [System.IO.Path]::GetFullPath($Repositorio)
 $rutaPowerShell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-$rutaConfiguracion = Join-Path $raizRepositorio 'configuracion.json'
-$rutaDirectorioXpz = Join-Path $raizRepositorio 'xpz'
-$rutaDirectorioServicios = Join-Path $raizRepositorio 'documentacion\servicios'
-$xpzActivo = ''
-$xpzActivoEstablecido = $false
+
+$script:Contexto = $null
+$script:rutaConfiguracion = Join-Path $raizRepositorio 'configuracion.json'
+$script:rutaDirectorioXpz = ''
+$script:rutaDirectorioServicios = ''
+$script:rutaControl = ''
+$script:xpzActivo = ''
+$script:xpzActivoEstablecido = $false
 $ultimoCodigo = 0
 $codigoCompleto = 0
 $codigoErrorFatal = 1
@@ -21,6 +24,7 @@ $codigoAbortado = 3
 
 . (Join-Path $PSScriptRoot 'GLMUtilidades.ps1')
 . (Join-Path $PSScriptRoot 'ManifiestoEjecucion.ps1')
+. (Join-Path $PSScriptRoot 'CargarConfiguracion.ps1')
 
 function Normalizar-CodigoSalida {
     [CmdletBinding()]
@@ -34,14 +38,14 @@ function Normalizar-CodigoSalida {
     return $codigoErrorFatal
 }
 
-function Leer-Configuracion {
+function Leer-ConfiguracionGlobal {
     [CmdletBinding()]
     param()
 
-    if (-not (Test-Path -LiteralPath $rutaConfiguracion -PathType Leaf)) {
-        throw ('No se encontro la configuracion: ' + $rutaConfiguracion)
+    if (-not (Test-Path -LiteralPath $script:rutaConfiguracion -PathType Leaf)) {
+        throw ('No se encontro la configuracion: ' + $script:rutaConfiguracion)
     }
-    return ([System.IO.File]::ReadAllText($rutaConfiguracion) | ConvertFrom-Json)
+    return ([System.IO.File]::ReadAllText($script:rutaConfiguracion) | ConvertFrom-Json)
 }
 
 function Invocar-ScriptPowerShell {
@@ -66,12 +70,12 @@ function Obtener-XpzPrincipales {
     [CmdletBinding()]
     param()
 
-    if (-not (Test-Path -LiteralPath $rutaDirectorioXpz -PathType Container)) {
+    if (-not (Test-Path -LiteralPath $script:rutaDirectorioXpz -PathType Container)) {
         return @()
     }
 
     $rutaListado = Join-Path $PSScriptRoot 'ListarXPZPrincipales.ps1'
-    $salida = @(& $rutaPowerShell -NoProfile -ExecutionPolicy Bypass -File $rutaListado -DirectorioXpz $rutaDirectorioXpz 2>&1)
+    $salida = @(& $rutaPowerShell -NoProfile -ExecutionPolicy Bypass -File $rutaListado -DirectorioXpz $script:rutaDirectorioXpz 2>&1)
     $codigoSalida = Normalizar-CodigoSalida -Codigo ([int]$LASTEXITCODE)
     if ($codigoSalida -ne $codigoCompleto) {
         throw 'No se pudo listar los XPZ principales.'
@@ -84,7 +88,7 @@ function Obtener-XpzPrincipales {
         if ($partes.Count -ne 3) { continue }
         [void]$entradas.Add([pscustomobject]@{
             Nombre = $partes[0]
-            Ruta = Join-Path $rutaDirectorioXpz $partes[0]
+            Ruta = Join-Path $script:rutaDirectorioXpz $partes[0]
             Fecha = $partes[1]
             EsUltimo = $partes[2]
         })
@@ -96,21 +100,12 @@ function Establecer-XpzActivoConfigurado {
     [CmdletBinding()]
     param()
 
-    if ($xpzActivoEstablecido) { return }
-    $configuracion = Leer-Configuracion
-    $rutaConfigurada = [string]$configuracion.xpz
-    if (-not [string]::IsNullOrWhiteSpace($rutaConfigurada)) {
-        $rutaResuelta = Resolver-RutaRepositorio -Ruta $rutaConfigurada -Raiz $raizRepositorio
-        if (Test-Path -LiteralPath $rutaResuelta -PathType Leaf) {
-            $script:xpzActivo = $rutaResuelta
-        }
-    }
-
-    if ([string]::IsNullOrWhiteSpace($script:xpzActivo)) {
-        $principales = @(Obtener-XpzPrincipales)
-        if ($principales.Count -gt 0) {
-            $script:xpzActivo = [string]$principales[0].Ruta
-        }
+    if ($script:xpzActivoEstablecido) { return }
+    $principales = @(Obtener-XpzPrincipales)
+    if ($principales.Count -gt 0) {
+        $masReciente = @($principales | Where-Object { $_.EsUltimo -eq '1' }) | Select-Object -First 1
+        if ($null -eq $masReciente) { $masReciente = $principales[$principales.Count - 1] }
+        $script:xpzActivo = [string]$masReciente.Ruta
     }
     $script:xpzActivoEstablecido = $true
 }
@@ -141,7 +136,7 @@ function Seleccionar-XpzActivo {
             $script:xpzActivoEstablecido = $true
             Write-Host ''
             Write-Host ('XPZ activo de la sesion: ' + [System.IO.Path]::GetFileName($script:xpzActivo)) -ForegroundColor Green
-            Write-Host 'ADVERTENCIA: El packagename de configuracion.json no se modifica al cambiar de XPZ.' -ForegroundColor Yellow
+            Write-Host 'ADVERTENCIA: El packagename del cliente no se modifica al cambiar de XPZ.' -ForegroundColor Yellow
             Write-Host 'El endpoint publicado podria no corresponder al XPZ seleccionado.' -ForegroundColor Yellow
             return $codigoCompleto
         }
@@ -151,7 +146,10 @@ function Seleccionar-XpzActivo {
 
 function Ejecutar-Preflight {
     [CmdletBinding()]
-    param()
+    param(
+        [Parameter(Mandatory = $false)][AllowEmptyString()][string]$ClienteId = '',
+        [Parameter(Mandatory = $false)][AllowEmptyString()][string]$AmbienteId = ''
+    )
 
     Write-Host ''
     Write-Host '==============================================================' -ForegroundColor Cyan
@@ -159,7 +157,151 @@ function Ejecutar-Preflight {
     Write-Host '==============================================================' -ForegroundColor Cyan
     Write-Host ''
     $rutaValidador = Join-Path $PSScriptRoot 'ValidarConfiguracionGLM.ps1'
-    return (Invocar-ScriptPowerShell -RutaScript $rutaValidador -Argumentos @('-Repositorio', $raizRepositorio))
+    $argumentos = @('-Repositorio', $raizRepositorio)
+    if (-not [string]::IsNullOrWhiteSpace($ClienteId) -and -not [string]::IsNullOrWhiteSpace($AmbienteId)) {
+        $argumentos += @('-ClienteId', $ClienteId, '-AmbienteId', $AmbienteId)
+    }
+    return (Invocar-ScriptPowerShell -RutaScript $rutaValidador -Argumentos $argumentos)
+}
+
+function Seleccionar-Contexto {
+    <#
+    .SYNOPSIS
+    Selecciona cliente y ambiente y valida el contexto con el preflight completo.
+    .DESCRIPTION
+    Muestra los clientes configurados y luego los ambientes del cliente elegido.
+    Ejecuta el preflight del contexto (esquema, herramientas, cliente, ambiente y
+    KB) y solo si supera devuelve el objeto de contexto. Con -PermitirCancelar la
+    opcion 0 cancela sin cambiar nada. Devuelve $null si cancela o si el preflight falla.
+    #>
+    [CmdletBinding()]
+    param(
+        [switch]$PermitirCancelar
+    )
+
+    $configuracionGlobal = $null
+    try {
+        $configuracionGlobal = Leer-ConfiguracionGlobal
+    } catch {
+        Write-Host ('ERROR: ' + $_.Exception.Message) -ForegroundColor Red
+        return $null
+    }
+
+    $clientes = @(Obtener-ClientesConfigurados -ConfiguracionRaw $configuracionGlobal)
+    if ($clientes.Count -eq 0) {
+        Write-Host 'ERROR: La configuracion no define clientes.' -ForegroundColor Red
+        return $null
+    }
+
+    Write-Host ''
+    Write-Host 'Clientes configurados:' -ForegroundColor Cyan
+    for ($indice = 0; $indice -lt $clientes.Count; $indice++) {
+        Write-Host ('  {0}. {1} ({2})' -f ($indice + 1), $clientes[$indice].Nombre, $clientes[$indice].Id)
+    }
+    if ($PermitirCancelar) {
+        Write-Host '  0. Cancelar' -ForegroundColor Gray
+    }
+    $clienteSeleccionado = $null
+    while ($null -eq $clienteSeleccionado) {
+        $rango = '1-' + $clientes.Count
+        if ($PermitirCancelar) { $rango = '0-' + $clientes.Count }
+        $textoSeleccion = Read-Host ('Seleccione el cliente [' + $rango + ']')
+        $seleccion = 0
+        if ([int]::TryParse($textoSeleccion, [ref]$seleccion)) {
+            if ($PermitirCancelar -and $seleccion -eq 0) { return $null }
+            if ($seleccion -ge 1 -and $seleccion -le $clientes.Count) {
+                $clienteSeleccionado = $clientes[$seleccion - 1]
+                continue
+            }
+        }
+        Write-Host 'Seleccion invalida.' -ForegroundColor Yellow
+    }
+
+    $ambientes = @(Obtener-AmbientesConfigurados -ConfiguracionRaw $configuracionGlobal -ClienteId $clienteSeleccionado.Id)
+    if ($ambientes.Count -eq 0) {
+        Write-Host ('ERROR: El cliente ' + $clienteSeleccionado.Id + ' no define ambientes.') -ForegroundColor Red
+        return $null
+    }
+
+    Write-Host ''
+    Write-Host ('Ambientes de ' + $clienteSeleccionado.Nombre + ' (' + $clienteSeleccionado.Id + '):') -ForegroundColor Cyan
+    for ($indice = 0; $indice -lt $ambientes.Count; $indice++) {
+        Write-Host ('  {0}. {1} ({2})' -f ($indice + 1), $ambientes[$indice].Nombre, $ambientes[$indice].Id)
+    }
+    if ($PermitirCancelar) {
+        Write-Host '  0. Cancelar' -ForegroundColor Gray
+    }
+    $ambienteSeleccionado = $null
+    while ($null -eq $ambienteSeleccionado) {
+        $rango = '1-' + $ambientes.Count
+        if ($PermitirCancelar) { $rango = '0-' + $ambientes.Count }
+        $textoSeleccion = Read-Host ('Seleccione el ambiente [' + $rango + ']')
+        $seleccion = 0
+        if ([int]::TryParse($textoSeleccion, [ref]$seleccion)) {
+            if ($PermitirCancelar -and $seleccion -eq 0) { return $null }
+            if ($seleccion -ge 1 -and $seleccion -le $ambientes.Count) {
+                $ambienteSeleccionado = $ambientes[$seleccion - 1]
+                continue
+            }
+        }
+        Write-Host 'Seleccion invalida.' -ForegroundColor Yellow
+    }
+
+    Write-Host ''
+    Write-Host ('Preflight del contexto ' + $clienteSeleccionado.Id + '/' + $ambienteSeleccionado.Id + '...') -ForegroundColor Cyan
+    $codigoPreflight = Ejecutar-Preflight -ClienteId $clienteSeleccionado.Id -AmbienteId $ambienteSeleccionado.Id
+    if ($codigoPreflight -ne $codigoCompleto) {
+        Write-Host 'El contexto no supero el preflight. Revise el mensaje anterior.' -ForegroundColor Yellow
+        return $null
+    }
+
+    try {
+        return (Cargar-Configuracion -ConfigPath $script:rutaConfiguracion -ClienteId $clienteSeleccionado.Id -AmbienteId $ambienteSeleccionado.Id)
+    } catch {
+        Write-Host ('ERROR: ' + $_.Exception.Message) -ForegroundColor Red
+        return $null
+    }
+}
+
+function Activar-Contexto {
+    <#
+    .SYNOPSIS
+    Activa un contexto y deriva todas las rutas operativas desde el.
+    .DESCRIPTION
+    Reasigna las rutas de documentos, XPZ, estado y control desde el objeto de
+    contexto y restablece el XPZ activo por defecto. Ninguna operacion posterior
+    conserva rutas del contexto anterior.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]$Contexto
+    )
+
+    $script:Contexto = $Contexto
+    $script:rutaConfiguracion = $Contexto.ConfigPath
+    $script:rutaDirectorioXpz = $Contexto.DirectorioXpz
+    $script:rutaDirectorioServicios = $Contexto.DirectorioServicios
+    $script:rutaControl = $Contexto.RutaControl
+    $script:xpzActivo = ''
+    $script:xpzActivoEstablecido = $false
+    Write-Host ''
+    Write-Host ('Contexto activo: ' + $Contexto.ContextId + ' (' + $Contexto.ClienteNombre + ' / ' + $Contexto.AmbienteNombre + ')') -ForegroundColor Green
+}
+
+function Cambiar-Contexto {
+    [CmdletBinding()]
+    param()
+
+    Write-Host ''
+    Write-Host '==============================================================' -ForegroundColor Cyan
+    Write-Host '  CAMBIAR DE CLIENTE O AMBIENTE' -ForegroundColor Cyan
+    Write-Host '==============================================================' -ForegroundColor Cyan
+    $nuevoContexto = Seleccionar-Contexto -PermitirCancelar
+    if ($null -eq $nuevoContexto) {
+        Write-Host 'Se mantiene el contexto activo.' -ForegroundColor Yellow
+        return
+    }
+    Activar-Contexto -Contexto $nuevoContexto
 }
 
 function Esperar-Retorno {
@@ -178,10 +320,18 @@ function Mostrar-Encabezado {
     Write-Host '  GESTION DE DOCUMENTOS APIGLM' -ForegroundColor Cyan
     Write-Host ('  ' + (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')) -ForegroundColor Cyan
     Write-Host '==============================================================' -ForegroundColor Cyan
-    $nombreXpz = 'ninguno'
-    if (-not [string]::IsNullOrWhiteSpace($xpzActivo)) {
-        $nombreXpz = [System.IO.Path]::GetFileName($xpzActivo)
+    $clienteTexto = 'ninguno'
+    $ambienteTexto = 'ninguno'
+    if ($script:Contexto) {
+        $clienteTexto = $script:Contexto.ClienteNombre + ' (' + $script:Contexto.ClienteId + ')'
+        $ambienteTexto = $script:Contexto.AmbienteNombre + ' (' + $script:Contexto.AmbienteId + ')'
     }
+    $nombreXpz = 'ninguno'
+    if (-not [string]::IsNullOrWhiteSpace($script:xpzActivo)) {
+        $nombreXpz = [System.IO.Path]::GetFileName($script:xpzActivo)
+    }
+    Write-Host ('Cliente: ' + $clienteTexto) -ForegroundColor Green
+    Write-Host ('Ambiente: ' + $ambienteTexto) -ForegroundColor Green
     Write-Host ('XPZ activo: ' + $nombreXpz) -ForegroundColor Green
 }
 
@@ -189,8 +339,8 @@ function Obtener-CantidadPdfVigentes {
     [CmdletBinding()]
     param()
 
-    if (-not (Test-Path -LiteralPath $rutaDirectorioServicios -PathType Container)) { return 0 }
-    return @((Get-ChildItem -LiteralPath $rutaDirectorioServicios -Filter '*.pdf' -File -ErrorAction SilentlyContinue)).Count
+    if (-not (Test-Path -LiteralPath $script:rutaDirectorioServicios -PathType Container)) { return 0 }
+    return @((Get-ChildItem -LiteralPath $script:rutaDirectorioServicios -Filter '*.pdf' -File -ErrorAction SilentlyContinue)).Count
 }
 
 function Confirmar-ReinicioVersionado {
@@ -219,7 +369,7 @@ function Ejecutar-Exportacion {
     Write-Host '==============================================================' -ForegroundColor Cyan
     Write-Host ''
     $rutaExportador = Join-Path $PSScriptRoot 'EjecutarExportacionGLM.ps1'
-    $codigoSalida = Invocar-ScriptPowerShell -RutaScript $rutaExportador -Argumentos @('-Repositorio', $raizRepositorio)
+    $codigoSalida = Invocar-ScriptPowerShell -RutaScript $rutaExportador -Argumentos @('-Repositorio', $raizRepositorio, '-ClienteId', $script:Contexto.ClienteId, '-AmbienteId', $script:Contexto.AmbienteId)
     if ($codigoSalida -eq $codigoAbortado) {
         Write-Host 'Exportacion abortada por el usuario.' -ForegroundColor Yellow
         return $codigoAbortado
@@ -245,7 +395,7 @@ function Ejecutar-Exportacion {
     $codigoSeleccion = Seleccionar-XpzActivo
     if ($codigoSeleccion -ne $codigoCompleto) { return $codigoErrorFatal }
     Write-Host ''
-    Write-Host 'XPZ existente seleccionado. Use la opcion 3 para generar la documentacion.' -ForegroundColor Green
+    Write-Host 'XPZ existente seleccionado. Se continuara con la busqueda de actualizaciones.' -ForegroundColor Green
     return $codigoCompleto
 }
 
@@ -258,15 +408,36 @@ function Ejecutar-ActualizacionServicios {
     Write-Host '  BUSCAR ACTUALIZACION DE SERVICIOS' -ForegroundColor Cyan
     Write-Host '==============================================================' -ForegroundColor Cyan
     Write-Host ''
-    $rutaActualizador = Join-Path $PSScriptRoot 'ActualizarServicios.ps1'
-    return (Invocar-ScriptPowerShell -RutaScript $rutaActualizador -Argumentos @('-ConfigPath', $rutaConfiguracion))
+    Write-Host 'Actualizacion: exportando y completando el XPZ segun configuracion...' -ForegroundColor Cyan
+    $codigoExportacion = Ejecutar-Exportacion
+    if ($codigoExportacion -eq $codigoAbortado) {
+        return $codigoAbortado
+    }
+    if ($codigoExportacion -eq $codigoParcial) {
+        return $codigoParcial
+    }
+    if ($codigoExportacion -ne $codigoCompleto) {
+        return $codigoErrorFatal
+    }
+    if ([string]::IsNullOrWhiteSpace($script:xpzActivo)) {
+        Write-Host 'ERROR: La exportacion no establecio un XPZ activo.' -ForegroundColor Red
+        return $codigoErrorFatal
+    }
+    $manifiestoActualizacion = Crear-ManifiestoEjecucion -Xpz $script:xpzActivo -FullyQualifiedNames @() -Contexto $script:Contexto
+    $rutaManifiestoActualizacion = $manifiestoActualizacion.Ruta
+    try {
+        $rutaActualizador = Join-Path $PSScriptRoot 'ActualizarServicios.ps1'
+        return (Invocar-ScriptPowerShell -RutaScript $rutaActualizador -Argumentos @('-ConfigPath', $script:rutaConfiguracion, '-ManifiestoPath', $rutaManifiestoActualizacion))
+    } finally {
+        Eliminar-ManifiestoEjecucion -RutaManifiesto $rutaManifiestoActualizacion
+    }
 }
 
 function Ejecutar-RegeneracionPdf {
     [CmdletBinding()]
     param()
 
-    if ([string]::IsNullOrWhiteSpace($xpzActivo)) {
+    if ([string]::IsNullOrWhiteSpace($script:xpzActivo)) {
         Write-Host 'ERROR: No hay un XPZ activo para la generacion de PDF.' -ForegroundColor Red
         return $codigoErrorFatal
     }
@@ -275,7 +446,7 @@ function Ejecutar-RegeneracionPdf {
         return $codigoAbortado
     }
 
-    $manifiestoOperacion = Crear-ManifiestoEjecucion -Xpz $xpzActivo -FullyQualifiedNames @()
+    $manifiestoOperacion = Crear-ManifiestoEjecucion -Xpz $script:xpzActivo -FullyQualifiedNames @() -Contexto $script:Contexto
     $rutaManifiestoOperacion = $manifiestoOperacion.Ruta
     try {
 
@@ -284,24 +455,12 @@ function Ejecutar-RegeneracionPdf {
     Write-Host '  GENERAR PDF DESDE EL XPZ ACTIVO' -ForegroundColor Cyan
     Write-Host '==============================================================' -ForegroundColor Cyan
     Write-Host ''
-    Write-Host ('XPZ activo: ' + $xpzActivo)
-
-    $rutaInventario = Join-Path $raizRepositorio 'documentacion\Endpoints\binary\GenerarListaEndpoints.ps1'
-    $codigoInventario = Invocar-ScriptPowerShell -RutaScript $rutaInventario -Argumentos @('-ConfigPath', $rutaConfiguracion, '-XpzPath', $xpzActivo, '-ManifiestoPath', $rutaManifiestoOperacion)
-    if ($codigoInventario -eq $codigoAbortado) {
-        return $codigoAbortado
-    }
-    if ($codigoInventario -eq $codigoParcial) {
-        return $codigoParcial
-    }
-    if ($codigoInventario -ne $codigoCompleto) {
-        return $codigoErrorFatal
-    }
+    Write-Host ('XPZ activo: ' + $script:xpzActivo)
 
     Write-Host ''
     Write-Host 'Validando la completitud del XPZ y completando los elementos necesarios...' -ForegroundColor Cyan
     $rutaCompletador = Join-Path $PSScriptRoot 'CompletarXPZActivoGLM.ps1'
-    $codigoCompletado = Invocar-ScriptPowerShell -RutaScript $rutaCompletador -Argumentos @('-Repositorio', $raizRepositorio, '-XpzActivo', $xpzActivo, '-ManifiestoPath', $rutaManifiestoOperacion)
+    $codigoCompletado = Invocar-ScriptPowerShell -RutaScript $rutaCompletador -Argumentos @('-Repositorio', $raizRepositorio, '-XpzActivo', $script:xpzActivo, '-ManifiestoPath', $rutaManifiestoOperacion)
     if ($codigoCompletado -eq $codigoAbortado) {
         return $codigoAbortado
     }
@@ -318,7 +477,7 @@ function Ejecutar-RegeneracionPdf {
     Write-Host '==============================================================' -ForegroundColor Cyan
     Write-Host ''
     $rutaActualizador = Join-Path $PSScriptRoot 'ActualizarServicios.ps1'
-    $codigoActualizacion = Invocar-ScriptPowerShell -RutaScript $rutaActualizador -Argumentos @('-ConfigPath', $rutaConfiguracion, '-XpzPath', $xpzActivo, '-ForzarRegeneracionCompleta', '-Inicializar', '-ManifiestoPath', $rutaManifiestoOperacion)
+    $codigoActualizacion = Invocar-ScriptPowerShell -RutaScript $rutaActualizador -Argumentos @('-ConfigPath', $script:rutaConfiguracion, '-XpzPath', $script:xpzActivo, '-ForzarRegeneracionCompleta', '-Inicializar', '-ManifiestoPath', $rutaManifiestoOperacion)
     if ($codigoActualizacion -eq $codigoAbortado) {
         return $codigoAbortado
     }
@@ -330,7 +489,7 @@ function Ejecutar-RegeneracionPdf {
     }
 
     $rutaResumen = Join-Path $PSScriptRoot 'ResumirOperacionPdf.ps1'
-    $codigoResumen = Invocar-ScriptPowerShell -RutaScript $rutaResumen -Argumentos @('-Repositorio', $raizRepositorio)
+    $codigoResumen = Invocar-ScriptPowerShell -RutaScript $rutaResumen -Argumentos @('-Repositorio', $raizRepositorio, '-ManifiestoPath', $rutaManifiestoOperacion)
     return $codigoResumen
     } finally {
         Eliminar-ManifiestoEjecucion -RutaManifiesto $rutaManifiestoOperacion
@@ -347,31 +506,29 @@ function Ejecutar-PruebasLocales {
     Write-Host '==============================================================' -ForegroundColor Cyan
     Write-Host ''
     $rutaPruebas = Join-Path $raizRepositorio 'test\Run-Tests.ps1'
-    return (Invocar-ScriptPowerShell -RutaScript $rutaPruebas)
+    $argumentosPruebas = @()
+    if ($script:Contexto) {
+        $argumentosPruebas += @('-ClienteId', $script:Contexto.ClienteId, '-AmbienteId', $script:Contexto.AmbienteId, '-ConfigPath', $script:rutaConfiguracion)
+    }
+    return (Invocar-ScriptPowerShell -RutaScript $rutaPruebas -Argumentos $argumentosPruebas)
 }
 
 function Leer-OpcionMenu {
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory = $true)][bool]$HayXpz,
-        [Parameter(Mandatory = $true)][bool]$ConfiguracionValida
+        [Parameter(Mandatory = $true)][bool]$HayXpz
     )
-
-    if (-not $ConfiguracionValida) {
-        Write-Host '  1. Salir' -ForegroundColor White
-        Write-Host ''
-        return (Read-Host 'Presione 1 para salir')
-    }
 
     if (-not $HayXpz) {
         Write-Host '[AVISO] No hay archivos XPZ disponibles en:' -ForegroundColor Yellow
-        Write-Host ('  ' + $rutaDirectorioXpz)
+        Write-Host ('  ' + $script:rutaDirectorioXpz)
         Write-Host 'Puede exportar APIGLMMain para generar el XPZ o salir.'
         Write-Host ''
         Write-Host '  1. Exportar APIGLMMain' -ForegroundColor White
-        Write-Host '  2. Salir' -ForegroundColor White
+        Write-Host '  2. Cambiar de cliente o ambiente' -ForegroundColor White
+        Write-Host '  3. Salir' -ForegroundColor White
         Write-Host ''
-        return (Read-Host 'Seleccione una opcion [1-2]')
+        return (Read-Host 'Seleccione una opcion [1-3]')
     }
 
     $textoOpcionUno = 'Exportar segun configuracion (APIGLM/KB) y completar el XPZ'
@@ -383,10 +540,11 @@ function Leer-OpcionMenu {
     Write-Host ('  1. ' + $textoOpcionUno) -ForegroundColor White
     Write-Host '  2. Seleccionar XPZ principal' -ForegroundColor White
     Write-Host ('  3. ' + $textoOpcionTres) -ForegroundColor White
-    Write-Host '  4. Ejecutar pruebas locales (test\Run-Tests.ps1)' -ForegroundColor White
-    Write-Host '  5. Salir' -ForegroundColor White
+    Write-Host '  4. Cambiar de cliente o ambiente' -ForegroundColor White
+    Write-Host '  5. Ejecutar pruebas locales (test\Run-Tests.ps1)' -ForegroundColor White
+    Write-Host '  6. Salir' -ForegroundColor White
     Write-Host ''
-    return (Read-Host 'Seleccione una opcion [1-5]')
+    return (Read-Host 'Seleccione una opcion [1-6]')
 }
 
 try {
@@ -397,33 +555,40 @@ try {
         throw ('No se encontro Windows PowerShell en: ' + $rutaPowerShell)
     }
 
-    while ($true) {
-        try {
-            $codigoPreflight = Ejecutar-Preflight
-        } catch {
-            Write-Host ('ERROR DE ARRANQUE: ' + $_.Exception.Message) -ForegroundColor Red
-            $codigoPreflight = 1
-        }
-        $configuracionValida = $codigoPreflight -ne $codigoErrorFatal
+    $codigoPreflight = $null
+    try {
+        $codigoPreflight = Ejecutar-Preflight
+    } catch {
+        Write-Host ('ERROR DE ARRANQUE: ' + $_.Exception.Message) -ForegroundColor Red
+        $codigoPreflight = 1
+    }
+    if ($codigoPreflight -ne $codigoCompleto) {
+        Write-Host 'No se pudo validar la configuracion global. Revise configuracion.json.' -ForegroundColor Yellow
+        exit $codigoPreflight
+    }
 
+    $contextoSeleccionado = Seleccionar-Contexto
+    if ($null -eq $contextoSeleccionado) {
+        Write-Host 'No se pudo activar un contexto valido.' -ForegroundColor Yellow
+        exit $codigoErrorFatal
+    }
+    Activar-Contexto -Contexto $contextoSeleccionado
+
+    while ($true) {
         $principalesDisponibles = @()
-        if ($configuracionValida) {
-            try { $principalesDisponibles = @(Obtener-XpzPrincipales) } catch { $principalesDisponibles = @() }
-            if (-not $xpzActivoEstablecido) {
-                try { Establecer-XpzActivoConfigurado } catch { }
-            }
-        }
+        try { $principalesDisponibles = @(Obtener-XpzPrincipales) } catch { $principalesDisponibles = @() }
 
         Write-Host ''
         Mostrar-Encabezado
         Write-Host ''
-        $opcion = Leer-OpcionMenu -HayXpz ($principalesDisponibles.Count -gt 0) -ConfiguracionValida $configuracionValida
+        $opcion = Leer-OpcionMenu -HayXpz ($principalesDisponibles.Count -gt 0)
 
-        if (-not $configuracionValida) {
-            break
-        }
         if ($principalesDisponibles.Count -eq 0) {
-            if ($opcion -eq '2') { break }
+            if ($opcion -eq '3') { break }
+            if ($opcion -eq '2') {
+                Cambiar-Contexto
+                Esperar-Retorno
+            }
             if ($opcion -eq '1') {
                 $ultimoCodigo = Ejecutar-Exportacion
                 Esperar-Retorno
@@ -449,13 +614,17 @@ try {
                 Esperar-Retorno
             }
             '4' {
+                Cambiar-Contexto
+                Esperar-Retorno
+            }
+            '5' {
                 $ultimoCodigo = Ejecutar-PruebasLocales
                 Esperar-Retorno
             }
-            '5' { break }
+            '6' { break }
             default { Write-Host 'Opcion invalida.' -ForegroundColor Yellow }
         }
-        if ($opcion -eq '5') { break }
+        if ($opcion -eq '6') { break }
     }
 
     Write-Host ''

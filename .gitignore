@@ -3,13 +3,7 @@ xpz
 !test/fixtures/xpz/*.xpz
 GeneXus-XPZ-Skills-main
 
-
-APIServicios.html
-
-endpoints.json
-endpoints.md
-APIServicios.html
-logErrores.txt
+clientes/
 
 servicios/
 logs/

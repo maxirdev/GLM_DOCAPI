@@ -143,8 +143,9 @@ try {
 
     . (Join-Path $PSScriptRoot 'RenderizarMarkdownTypstPdf.ps1')
     . (Join-Path $PSScriptRoot 'ManifiestoEjecucion.ps1')
+    . (Join-Path $PSScriptRoot 'AnalizarServicio.ps1')
     . (Join-Path $PSScriptRoot 'CargarMultiXPZ.ps1')
-    $directorioServicios = Join-Path $RaizRepositorio 'documentacion\servicios'
+    $directorioServicios = Join-Path $RaizRepositorio 'documentacionServicios'
     $directorioMarkdown = $directorioServicios
     $directorioPdf = $directorioServicios
     if ($ManifiestoPath) {
@@ -157,11 +158,8 @@ try {
         if (-not (Test-Path -LiteralPath $directorioPdf -PathType Container)) {
             New-Item -ItemType Directory -Path $directorioPdf -Force | Out-Null
         }
-        $fqnsInventario = @()
-        $rutaInventarioPdf = Join-Path $RaizRepositorio 'documentacion\Endpoints\assets\endpoints.json'
-        if (Test-Path -LiteralPath $rutaInventarioPdf -PathType Leaf) {
-            $fqnsInventario = @((Leer-InventarioEndpoints -RutaInventario $rutaInventarioPdf) | ForEach-Object { [string]$_.proceso })
-        }
+        $indicePdf = Cargar-IndiceMultiXPZ -RutaXpzPrincipal ([string]$manifiestoEjecucion.xpz)
+        $fqnsInventario = @(Obtener-ServiciosHttpDesdeIndice -Indice $indicePdf | ForEach-Object { [string]$_.proceso })
         $RutasMarkdown = @($manifiestoEjecucion.fullyQualifiedNames | ForEach-Object {
             $fullyQualifiedName = [string]$_
             $nombreArchivo = Obtener-NombreArchivoServicio -FullyQualifiedName $fullyQualifiedName -FqnsInventario $fqnsInventario

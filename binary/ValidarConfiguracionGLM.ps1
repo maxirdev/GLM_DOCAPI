@@ -1,8 +1,11 @@
-# Validación inicial del lanzador unificado APIGLM.
+# Validación inicial del lanzador unificado APIGLM (esquema multicliente).
 
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory = $false)][AllowEmptyString()][string]$Repositorio
+    [Parameter(Mandatory = $false)][AllowEmptyString()][string]$Repositorio,
+    [Parameter(Mandatory = $false)][AllowEmptyString()][string]$ConfigPath,
+    [Parameter(Mandatory = $false)][AllowEmptyString()][string]$ClienteId,
+    [Parameter(Mandatory = $false)][AllowEmptyString()][string]$AmbienteId
 )
 
 $ErrorActionPreference = 'Stop'
@@ -15,10 +18,14 @@ if ([string]::IsNullOrWhiteSpace($Repositorio)) {
 }
 
 $raizRepositorio = [System.IO.Path]::GetFullPath($Repositorio)
-$rutaConfiguracion = Join-Path $raizRepositorio 'configuracion.json'
-$rutaDirectorioXpz = Join-Path $raizRepositorio 'xpz'
+if ([string]::IsNullOrWhiteSpace($ConfigPath)) {
+    $rutaConfiguracion = Join-Path $raizRepositorio 'configuracion.json'
+} else {
+    $rutaConfiguracion = [System.IO.Path]::GetFullPath($ConfigPath)
+}
 
 . (Join-Path $PSScriptRoot 'GLMUtilidades.ps1')
+. (Join-Path $PSScriptRoot 'CargarConfiguracion.ps1')
 
 function Escribir-Estado {
     param(
@@ -30,27 +37,56 @@ function Escribir-Estado {
     if ($Estado -eq 'OK') { $color = 'Green' }
     if ($Estado -eq 'ERROR') { $color = 'Red' }
     if ($Estado -eq 'ADVERTENCIA') { $color = 'Yellow' }
-    if ($Estado -eq 'PENDIENTE') { $color = 'DarkYellow' }
+    if ($Estado -eq 'PENDIENTE') { $color = 'Yellow' }
     Write-Host ("  [{0}] {1}" -f $Estado, $Mensaje) -ForegroundColor $color
 }
 
 function Crear-ModeloConfiguracion {
     $modelo = @'
 {
-  "xpz": "",
-  "packagename": "",
-  "cliente": "",
-  "serviciosIgnorados": [],
+  "rutas": {
+    "clientesRoot": "clientes"
+  },
+  "exportacion": {
+    "onlyModuleAPIGLM": true
+  },
   "herramientas": {
     "geneXusProgramDir": "",
-    "kbPath": "",
     "msbuildPath": "",
     "pandocPath": "binary/tools/pandoc.exe",
     "typstPath": "binary/tools/typst.exe"
-  }
+  },
+  "clientes": []
 }
 '@
     Escribir-TextoUtf8SinBom -Ruta $rutaConfiguracion -Contenido (Normalizar-SaltosLineaLf -Texto $modelo)
+}
+
+function Crear-ArbolContextual {
+    <#
+    .SYNOPSIS
+    Crea el arbol contextual de un ambiente valido bajo clientes/<clienteId>/<ambienteId>/.
+    .DESCRIPTION
+    Solo se ejecuta despues de que el esquema global, las herramientas, el cliente,
+    el ambiente y la KB hayan pasado la validacion. Crea exactamente los seis
+    directorios del contrato de la SPEC 19.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$DirectorioContexto
+    )
+    $directorios = @(
+        [System.IO.Path]::GetFullPath((Join-Path $DirectorioContexto 'documentacionServicios'))
+        [System.IO.Path]::GetFullPath((Join-Path $DirectorioContexto 'estado'))
+        [System.IO.Path]::GetFullPath((Join-Path $DirectorioContexto 'xpz'))
+        [System.IO.Path]::GetFullPath((Join-Path $DirectorioContexto 'Logs'))
+        [System.IO.Path]::GetFullPath((Join-Path $DirectorioContexto 'test\fixtures'))
+        [System.IO.Path]::GetFullPath((Join-Path $DirectorioContexto 'test\resultados'))
+    )
+    foreach ($directorio in $directorios) {
+        Asegurar-Directorio -Ruta $directorio
+    }
+    Escribir-Estado -Estado OK -Mensaje ("Arbol contextual creado en " + $DirectorioContexto + " (" + $directorios.Count + " directorios).")
 }
 
 Write-Host 'Validacion inicial de la aplicacion APIGLM' -ForegroundColor Cyan
@@ -61,78 +97,38 @@ if (-not (Test-Path -LiteralPath $rutaConfiguracion -PathType Leaf)) {
     exit 1
 }
 
+$configuracionRaw = $null
 try {
-    $configuracion = Get-Content -LiteralPath $rutaConfiguracion -Raw | ConvertFrom-Json
+    $configuracionRaw = Get-Content -LiteralPath $rutaConfiguracion -Raw | ConvertFrom-Json
 } catch {
     Escribir-Estado -Estado ERROR -Mensaje ("configuracion.json no contiene JSON valido: " + $_.Exception.Message)
     exit 1
 }
 
-$xpzConfigurado = [string]$configuracion.xpz
-$packageName = [string]$configuracion.packagename
-$herramientas = $configuracion.herramientas
-
-Escribir-Estado -Estado OK -Mensaje 'configuracion.json existe y puede leerse.'
-
-if ([string]::IsNullOrWhiteSpace($packageName)) {
-    Escribir-Estado -Estado ERROR -Mensaje 'La propiedad packagename no esta completada.'
+if ($null -ne $configuracionRaw.xpz -and $null -eq $configuracionRaw.clientes) {
+    Escribir-Estado -Estado ERROR -Mensaje 'La configuracion usa el esquema monocliente anterior, que no es compatible con este lanzador. Reemplace configuracion.json por el esquema multicliente de la SPEC 19.'
     exit 1
 }
-Escribir-Estado -Estado OK -Mensaje ("PackageName: " + $packageName)
 
-if (-not (Test-Path -LiteralPath $rutaDirectorioXpz -PathType Container)) {
-    Escribir-Estado -Estado ADVERTENCIA -Mensaje ("No existe la carpeta de XPZ: " + $rutaDirectorioXpz)
-    exit 2
+$configuracionValidada = $null
+try {
+    $configuracionValidada = Validar-ConfiguracionMulticliente -ConfiguracionRaw $configuracionRaw -RaizRepositorio $raizRepositorio -ConfigPath $rutaConfiguracion
+} catch {
+    Escribir-Estado -Estado ERROR -Mensaje ($_.Exception.Message)
+    exit 1
 }
-
-$archivosXpz = @(Get-ChildItem -LiteralPath $rutaDirectorioXpz -Filter '*.xpz' -File -ErrorAction SilentlyContinue)
-if ($archivosXpz.Count -eq 0) {
-    Escribir-Estado -Estado ADVERTENCIA -Mensaje ("No hay archivos .xpz en " + $rutaDirectorioXpz)
-    exit 2
-}
-Escribir-Estado -Estado OK -Mensaje ("Archivos XPZ disponibles: " + $archivosXpz.Count)
-
-$rutaXpzAbsoluta = $xpzConfigurado
-if ([string]::IsNullOrWhiteSpace($rutaXpzAbsoluta)) {
-    Escribir-Estado -Estado ADVERTENCIA -Mensaje 'No hay un XPZ asociado en la configuracion.'
-    $xpzActivo = $false
-} else {
-    if (-not [System.IO.Path]::IsPathRooted($rutaXpzAbsoluta)) {
-        $rutaXpzAbsoluta = Join-Path $raizRepositorio $rutaXpzAbsoluta
-    }
-
-    if (-not (Test-Path -LiteralPath $rutaXpzAbsoluta -PathType Leaf)) {
-        Escribir-Estado -Estado ADVERTENCIA -Mensaje ("El XPZ configurado no existe: " + $xpzConfigurado + ". No se seleccionara otro automaticamente.")
-        $xpzActivo = $false
-    } else {
-        Escribir-Estado -Estado OK -Mensaje ("XPZ activo: " + ([System.IO.Path]::GetFullPath($rutaXpzAbsoluta)))
-        $xpzActivo = $true
-    }
-}
+Escribir-Estado -Estado OK -Mensaje 'configuracion.json usa el esquema multicliente y es valida.'
 
 $rutasHerramientas = @(
     [pscustomobject]@{ Nombre = 'GeneXus'; Propiedad = 'geneXusProgramDir'; Tipo = 'Container' },
-    [pscustomobject]@{ Nombre = 'Knowledge Base'; Propiedad = 'kbPath'; Tipo = 'Container' },
     [pscustomobject]@{ Nombre = 'MSBuild'; Propiedad = 'msbuildPath'; Tipo = 'Leaf' },
     [pscustomobject]@{ Nombre = 'Pandoc'; Propiedad = 'pandocPath'; Tipo = 'Leaf' },
     [pscustomobject]@{ Nombre = 'Typst'; Propiedad = 'typstPath'; Tipo = 'Leaf' }
 )
 
 foreach ($rutaHerramienta in $rutasHerramientas) {
-    $valor = ''
-    if ($null -ne $herramientas) {
-        $valor = [string]$herramientas.($rutaHerramienta.Propiedad)
-    }
-
-    if ([string]::IsNullOrWhiteSpace($valor)) {
-        Escribir-Estado -Estado PENDIENTE -Mensaje ("Falta la ruta de " + $rutaHerramienta.Nombre + " en herramientas." + $rutaHerramienta.Propiedad)
-        continue
-    }
-
-    $rutaResuelta = $valor
-    if (-not [System.IO.Path]::IsPathRooted($rutaResuelta)) {
-        $rutaResuelta = Join-Path $raizRepositorio $rutaResuelta
-    }
+    $valor = [string]$configuracionValidada.herramientas.($rutaHerramienta.Propiedad)
+    $rutaResuelta = Resolver-RutaRepositorio -Ruta $valor -Raiz $raizRepositorio
     if (Test-Path -LiteralPath $rutaResuelta -PathType $rutaHerramienta.Tipo) {
         Escribir-Estado -Estado OK -Mensaje ($rutaHerramienta.Nombre + ': ' + $rutaResuelta)
     } else {
@@ -140,8 +136,27 @@ foreach ($rutaHerramienta in $rutasHerramientas) {
     }
 }
 
-if ($xpzActivo) {
+if ([string]::IsNullOrWhiteSpace($ClienteId) -or [string]::IsNullOrWhiteSpace($AmbienteId)) {
+    Escribir-Estado -Estado PENDIENTE -Mensaje 'No se selecciono cliente y ambiente; se valido solo el esquema global. Seleccione un contexto para el preflight completo.'
     exit 0
 }
 
-exit 2
+$contexto = $null
+try {
+    $contexto = Resolver-ContextoConfiguracion -ConfiguracionRaw $configuracionValidada -ConfigPath $rutaConfiguracion -RaizRepositorio $raizRepositorio -ClienteId $ClienteId -AmbienteId $AmbienteId
+} catch {
+    Escribir-Estado -Estado ERROR -Mensaje ($_.Exception.Message)
+    exit 1
+}
+Escribir-Estado -Estado OK -Mensaje ("Contexto: " + $contexto.ContextId + " (" + $contexto.ClienteNombre + " / " + $contexto.AmbienteNombre + ")")
+Escribir-Estado -Estado OK -Mensaje ("Knowledge Base: " + $contexto.KbPath)
+
+if (-not (Test-Path -LiteralPath $contexto.KbPath -PathType Container)) {
+    Escribir-Estado -Estado ERROR -Mensaje ("No existe la Knowledge Base del ambiente " + $contexto.AmbienteId + ": " + $contexto.KbPath)
+    exit 1
+}
+
+Escribir-Estado -Estado OK -Mensaje 'Contexto del cliente seteado correctamente.'
+Crear-ArbolContextual -DirectorioContexto $contexto.DirectorioContexto
+
+exit 0

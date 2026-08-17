@@ -421,7 +421,8 @@ function Write-ReporteValidacion {
         [Parameter(Mandatory = $true)][datetime]$FinEjecucion,
         [Parameter(Mandatory = $true)]$IndiceUnificado,
         [Parameter(Mandatory = $true)][string]$EjecucionId,
-        [Parameter(Mandatory = $false)][string]$RutaManifiesto = ''
+        [Parameter(Mandatory = $false)][string]$RutaManifiesto = '',
+        [Parameter(Mandatory = $false)][AllowEmptyString()][string]$ContextId = ''
     )
 
     $pendientes = @($Resultados | Where-Object { $_.esPendiente })
@@ -436,6 +437,7 @@ function Write-ReporteValidacion {
         schemaVersion = 2
         ejecucion = [pscustomobject]@{
             id = $EjecucionId
+            contextId = $ContextId
             xpz = $xpzPrincipal
             manifiesto = $RutaManifiesto
             inicio = $StartTime.ToString('s')
@@ -461,24 +463,33 @@ function Write-ReporteValidacion {
 }
 
 try {
+    $clienteId = ''
+    $ambienteId = ''
+    $contextId = ''
     if ($ManifiestoPath) {
         $manifiestoEjecucion = Leer-ManifiestoEjecucion -RutaManifiesto $ManifiestoPath
         $XpzPath = [string]$manifiestoEjecucion.xpz
         $ejecucionId = [string]$manifiestoEjecucion.ejecucionId
+        $clienteId = [string]$manifiestoEjecucion.clienteId
+        $ambienteId = [string]$manifiestoEjecucion.ambienteId
+        $contextId = [string]$manifiestoEjecucion.contextId
+        $DirectorioLogs = [System.IO.Path]::GetFullPath([string]$manifiestoEjecucion.logsDirectory)
+        Asegurar-Directorio -Ruta $DirectorioLogs
     } else {
         $ejecucionId = Obtener-NuevoIdentificadorEjecucion
     }
     $cargarConfiguracionParametros = @{ ConfigPath = $ConfigPath }
     if ($XpzPath) { $cargarConfiguracionParametros.XpzPath = $XpzPath }
-    $configuracion = Cargar-Configuracion @cargarConfiguracionParametros
-
-    $RutaInventario = Join-Path $RaizRepositorio 'documentacion\Endpoints\assets\endpoints.json'
-    if (-not (Test-Path -LiteralPath $RutaInventario)) {
-        throw ("No se encontro el inventario en: " + $RutaInventario)
+    if ($clienteId) {
+        $cargarConfiguracionParametros.ClienteId = $clienteId
+        $cargarConfiguracionParametros.AmbienteId = $ambienteId
     }
-    $endpointsInventario = @(Leer-InventarioEndpoints -RutaInventario $RutaInventario)
+    $configuracion = Cargar-Configuracion @cargarConfiguracionParametros
+    if (-not $XpzPath) { $XpzPath = $configuracion.XpzPath }
 
     $ignoradosConfig = @($configuracion.ServiciosIgnorados)
+    $indiceUnificado = Cargar-IndiceMultiXPZ -RutaXpzPrincipal $XpzPath
+    $endpointsInventario = @(Obtener-ServiciosHttpDesdeIndice -Indice $indiceUnificado)
     $endpointsEfectivos = @($endpointsInventario | Where-Object { $ignoradosConfig -notcontains $_.proceso })
     $endpointsIgnorados = @($endpointsInventario | Where-Object { $ignoradosConfig -contains $_.proceso })
 
@@ -486,10 +497,9 @@ try {
         Write-Host ("  Servicios ignorados (serviciosIgnorados en configuracion.json): " + $endpointsIgnorados.Count) -ForegroundColor DarkGray
     }
 
-    $indiceUnificado = Cargar-IndiceMultiXPZ -RutaXpzPrincipal $configuracion.XpzPath
     $xpzComplementarios = @($indiceUnificado.RutasXpz | Select-Object -Skip 1)
 
-    $rutaRelativaXpzPrincipal = $configuracion.XpzPath
+    $rutaRelativaXpzPrincipal = $XpzPath
     if ($rutaRelativaXpzPrincipal.StartsWith($RaizRepositorio, [System.StringComparison]::OrdinalIgnoreCase)) {
         $rutaRelativaXpzPrincipal = $rutaRelativaXpzPrincipal.Substring($RaizRepositorio.Length).TrimStart('\', '/')
     }
@@ -515,7 +525,7 @@ try {
     $marcaTemporal = $finEjecucion.ToString('yyyyMMdd-HHmmss')
     $rutaReporte = Join-Path $DirectorioLogs ($ejecucionId + '-validacion-xpz.json')
 
-    Write-ReporteValidacion -Resultados $resultados -RutaReporte $rutaReporte -StartTime $StartTime -FinEjecucion $finEjecucion -IndiceUnificado $indiceUnificado -EjecucionId $ejecucionId -RutaManifiesto $ManifiestoPath
+    Write-ReporteValidacion -Resultados $resultados -RutaReporte $rutaReporte -StartTime $StartTime -FinEjecucion $finEjecucion -IndiceUnificado $indiceUnificado -EjecucionId $ejecucionId -RutaManifiesto $ManifiestoPath -ContextId $contextId
 
     $ok = @($resultados | Where-Object { -not $_.esPendiente }).Count
     $pendientes = @($resultados | Where-Object { $_.esPendiente }).Count

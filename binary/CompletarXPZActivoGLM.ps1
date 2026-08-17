@@ -11,26 +11,23 @@
 param(
     [Parameter(Mandatory = $true)][string]$Repositorio,
     [Parameter(Mandatory = $true)][string]$XpzActivo,
-    [string]$ManifiestoPath
+    [Parameter(Mandatory = $true)][string]$ManifiestoPath
 )
 
 $ErrorActionPreference = 'Stop'
 
 $raizRepositorio = [System.IO.Path]::GetFullPath($Repositorio)
-$rutaConfiguracion = Join-Path $raizRepositorio 'configuracion.json'
-$rutaDirectorioLogs = Join-Path $raizRepositorio 'Logs'
 $rutaScriptValidacion = Join-Path $raizRepositorio 'binary\ValidarXPZ.ps1'
 $rutaScriptSelectivo = Join-Path $raizRepositorio 'binary\ExportarXPZSelectivo.ps1'
 $rutaProyectoSelectivo = Join-Path $raizRepositorio 'binary\ExportarXPZSelectivo.msbuild'
 $maximoCiclos = 5
-$rutaManifiestoEjecucion = $ManifiestoPath
-$manifiestoEjecucion = $null
 
 $script:ultimaSalida = @()
 $script:objetosPendientes = @()
 
 . (Join-Path $PSScriptRoot 'GLMUtilidades.ps1')
 . (Join-Path $PSScriptRoot 'ManifiestoEjecucion.ps1')
+. (Join-Path $PSScriptRoot 'CargarConfiguracion.ps1')
 
 function Invocar-Script {
     <#
@@ -87,24 +84,23 @@ function Preguntar-Continuar {
 }
 
 try {
+    $manifiestoEjecucion = Leer-ManifiestoEjecucion -RutaManifiesto $ManifiestoPath
+    $rutaManifiestoEjecucion = [System.IO.Path]::GetFullPath($ManifiestoPath)
+    $rutaConfiguracion = [System.IO.Path]::GetFullPath([string]$manifiestoEjecucion.configPath)
+    $rutaDirectorioLogs = [System.IO.Path]::GetFullPath([string]$manifiestoEjecucion.logsDirectory)
+    Asegurar-Directorio -Ruta $rutaDirectorioLogs
     if (-not (Test-Path -LiteralPath $rutaConfiguracion -PathType Leaf)) {
-        throw 'No existe configuracion.json.'
+        throw ('No existe la configuracion del manifiesto: ' + $rutaConfiguracion)
     }
     if (-not (Test-Path -LiteralPath $XpzActivo -PathType Leaf)) {
         throw ('No se encontro el XPZ activo: ' + $XpzActivo)
     }
-    if ($ManifiestoPath) {
-        $manifiestoEjecucion = Leer-ManifiestoEjecucion -RutaManifiesto $ManifiestoPath
-        $rutaXpzManifiesto = Resolver-RutaRepositorio -Ruta ([string]$manifiestoEjecucion.xpz) -Raiz $raizRepositorio
-        $rutaXpzActiva = [System.IO.Path]::GetFullPath($XpzActivo)
-        if (-not [System.StringComparer]::OrdinalIgnoreCase.Equals($rutaXpzManifiesto, $rutaXpzActiva)) {
-            throw ('El manifiesto corresponde a otro XPZ. Manifiesto: ' + $rutaXpzManifiesto + '. Activo: ' + $rutaXpzActiva + '.')
-        }
-        $rutaManifiestoEjecucion = [System.IO.Path]::GetFullPath($ManifiestoPath)
-    } else {
-        $manifiestoEjecucion = Crear-ManifiestoEjecucion -Xpz $XpzActivo -FullyQualifiedNames @()
-        $rutaManifiestoEjecucion = $manifiestoEjecucion.Ruta
+    $rutaXpzManifiesto = [System.IO.Path]::GetFullPath([string]$manifiestoEjecucion.xpz)
+    $rutaXpzActiva = [System.IO.Path]::GetFullPath($XpzActivo)
+    if (-not [System.StringComparer]::OrdinalIgnoreCase.Equals($rutaXpzManifiesto, $rutaXpzActiva)) {
+        throw ('El manifiesto corresponde a otro XPZ. Manifiesto: ' + $rutaXpzManifiesto + '. Activo: ' + $rutaXpzActiva + '.')
     }
+    $contexto = Cargar-Configuracion -ConfigPath $rutaConfiguracion -ClienteId ([string]$manifiestoEjecucion.clienteId) -AmbienteId ([string]$manifiestoEjecucion.ambienteId)
     foreach ($requerido in @(
         [pscustomobject]@{ Nombre = 'validador de completitud'; Ruta = $rutaScriptValidacion; Tipo = 'Leaf' },
         [pscustomobject]@{ Nombre = 'exportador selectivo'; Ruta = $rutaScriptSelectivo; Tipo = 'Leaf' },
@@ -146,10 +142,9 @@ try {
         Write-Host ('  ' + $objeto) -ForegroundColor DarkGray
     }
 
-    $configuracion = Leer-ConfiguracionCruda -ConfigPath $rutaConfiguracion
-    $rutaMsbuild = [string]$configuracion.herramientas.msbuildPath
-    $rutaGeneXus = [string]$configuracion.herramientas.geneXusProgramDir
-    $rutaKb = [string]$configuracion.herramientas.kbPath
+    $rutaMsbuild = [string]$contexto.Herramientas.MsbuildPath
+    $rutaGeneXus = [string]$contexto.Herramientas.GeneXusProgramDir
+    $rutaKb = [string]$contexto.KbPath
 
     $signaturaAnterior = ''
     for ($ciclo = 1; $ciclo -le $maximoCiclos; $ciclo++) {
@@ -198,8 +193,4 @@ try {
     Write-Host ''
     Write-Host ('ERROR: ' + $_.Exception.Message) -ForegroundColor Red
     exit 1
-} finally {
-    if ($rutaManifiestoEjecucion -and -not $ManifiestoPath) {
-        try { Eliminar-ManifiestoEjecucion -RutaManifiesto $rutaManifiestoEjecucion } catch { }
-    }
 }

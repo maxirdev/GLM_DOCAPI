@@ -1,4 +1,4 @@
-# Contrato compartido del manifiesto de ejecucion no interactiva.
+# Contrato compartido del manifiesto de ejecucion no interactiva (esquema 2).
 
 $ErrorActionPreference = 'Stop'
 
@@ -14,26 +14,78 @@ function Obtener-NuevoIdentificadorEjecucion {
 }
 
 function Validar-ManifiestoEjecucion {
+    <#
+    .SYNOPSIS
+    Valida el manifiesto de esquema 2 y la pertenencia de sus rutas al contexto.
+    .DESCRIPTION
+    Comprueba los campos de identidad y rutas contextuales, que contextId sea
+    clienteId/ambienteId y que las rutas de servicios, estado, logs y XPZ deriven
+    del mismo directorio de contexto. Rechaza combinaciones hibridas, como el XPZ
+    de un ambiente con documentos o control de otro.
+    #>
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)]$Manifiesto
     )
 
     $versionEsquema = [int]$Manifiesto.schemaVersion
-    if ($versionEsquema -ne 1) {
+    if ($versionEsquema -ne 2) {
         throw 'El manifiesto de ejecucion tiene un schemaVersion no soportado.'
     }
     if ([string]::IsNullOrWhiteSpace([string]$Manifiesto.ejecucionId)) {
         throw 'El manifiesto de ejecucion no contiene ejecucionId.'
     }
+    if ([string]::IsNullOrWhiteSpace([string]$Manifiesto.contextId)) {
+        throw 'El manifiesto de ejecucion no contiene contextId.'
+    }
+    if ([string]::IsNullOrWhiteSpace([string]$Manifiesto.clienteId)) {
+        throw 'El manifiesto de ejecucion no contiene clienteId.'
+    }
+    if ([string]::IsNullOrWhiteSpace([string]$Manifiesto.ambienteId)) {
+        throw 'El manifiesto de ejecucion no contiene ambienteId.'
+    }
+    if ([string]::IsNullOrWhiteSpace([string]$Manifiesto.configPath)) {
+        throw 'El manifiesto de ejecucion no contiene configPath.'
+    }
     if ([string]::IsNullOrWhiteSpace([string]$Manifiesto.xpz)) {
         throw 'El manifiesto de ejecucion no contiene xpz.'
+    }
+    if ([string]::IsNullOrWhiteSpace([string]$Manifiesto.servicesDirectory)) {
+        throw 'El manifiesto de ejecucion no contiene servicesDirectory.'
+    }
+    if ([string]::IsNullOrWhiteSpace([string]$Manifiesto.stateDirectory)) {
+        throw 'El manifiesto de ejecucion no contiene stateDirectory.'
+    }
+    if ([string]::IsNullOrWhiteSpace([string]$Manifiesto.logsDirectory)) {
+        throw 'El manifiesto de ejecucion no contiene logsDirectory.'
     }
     if ([string]::IsNullOrWhiteSpace([string]$Manifiesto.staging)) {
         throw 'El manifiesto de ejecucion no contiene staging.'
     }
     if ($null -eq $Manifiesto.fullyQualifiedNames) {
         throw 'El manifiesto de ejecucion no contiene fullyQualifiedNames.'
+    }
+
+    $comparador = [System.StringComparer]::OrdinalIgnoreCase
+    $contextoEsperado = [string]$Manifiesto.clienteId + '/' + [string]$Manifiesto.ambienteId
+    if (-not $comparador.Equals([string]$Manifiesto.contextId, $contextoEsperado)) {
+        throw ("El contextId del manifiesto no coincide con clienteId/ambienteId: " + [string]$Manifiesto.contextId)
+    }
+
+    $directorioServiciosCompleto = [System.IO.Path]::GetFullPath([string]$Manifiesto.servicesDirectory)
+    $directorioEstadoCompleto = [System.IO.Path]::GetFullPath([string]$Manifiesto.stateDirectory)
+    $directorioLogsCompleto = [System.IO.Path]::GetFullPath([string]$Manifiesto.logsDirectory)
+    $directorioXpzCompleto = [System.IO.Path]::GetFullPath((Split-Path -Parent ([System.IO.Path]::GetFullPath([string]$Manifiesto.xpz))))
+
+    $contextoDesdeServicios = [System.IO.Path]::GetFullPath((Join-Path $directorioServiciosCompleto '..'))
+    $contextoDesdeEstado = [System.IO.Path]::GetFullPath((Join-Path $directorioEstadoCompleto '..'))
+    $contextoDesdeLogs = [System.IO.Path]::GetFullPath((Join-Path $directorioLogsCompleto '..'))
+    $directorioXpzEsperado = [System.IO.Path]::GetFullPath((Join-Path $contextoDesdeServicios 'xpz'))
+
+    if (-not $comparador.Equals($contextoDesdeServicios, $contextoDesdeEstado) -or
+        -not $comparador.Equals($contextoDesdeServicios, $contextoDesdeLogs) -or
+        -not $comparador.Equals($directorioXpzCompleto, $directorioXpzEsperado)) {
+        throw 'Las rutas del manifiesto no pertenecen al mismo contexto (documentos, estado, logs o XPZ de otro ambiente).'
     }
 
     return $true
@@ -72,11 +124,19 @@ function Escribir-ManifiestoEjecucion {
 }
 
 function Crear-ManifiestoEjecucion {
+    <#
+    .SYNOPSIS
+    Crea un manifiesto de ejecucion de esquema 2 con identidad y rutas contextuales.
+    .DESCRIPTION
+     Recibe el contexto canonico (Cargar-Configuracion) y construye el manifiesto
+     con cliente, ambiente, config, XPZ, directorios de servicios, estado y logs.
+    #>
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)][string]$Xpz,
         [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$FullyQualifiedNames,
-        [Parameter(Mandatory = $false)][string]$DirectorioBase
+        [Parameter(Mandatory = $false)][string]$DirectorioBase,
+        [Parameter(Mandatory = $true)]$Contexto
     )
 
     if ([string]::IsNullOrWhiteSpace($DirectorioBase)) {
@@ -88,9 +148,16 @@ function Crear-ManifiestoEjecucion {
     New-Item -ItemType Directory -Path $directorioStaging -Force | Out-Null
 
     $manifiesto = [ordered]@{
-        schemaVersion = 1
+        schemaVersion = 2
         ejecucionId = $ejecucionId
+        contextId = $Contexto.ContextId
+        clienteId = $Contexto.ClienteId
+        ambienteId = $Contexto.AmbienteId
+        configPath = [System.IO.Path]::GetFullPath($Contexto.ConfigPath)
         xpz = [System.IO.Path]::GetFullPath($Xpz)
+        servicesDirectory = [System.IO.Path]::GetFullPath($Contexto.DirectorioServicios)
+        stateDirectory = [System.IO.Path]::GetFullPath($Contexto.DirectorioEstado)
+        logsDirectory = [System.IO.Path]::GetFullPath($Contexto.DirectorioLogs)
         fullyQualifiedNames = @($FullyQualifiedNames | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique)
         versions = @{}
         staging = [System.IO.Path]::GetFullPath($directorioStaging)

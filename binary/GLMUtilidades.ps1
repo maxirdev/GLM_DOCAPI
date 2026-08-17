@@ -362,7 +362,9 @@ function Add-Line {
 function Leer-InventarioEndpoints {
     <#
     .SYNOPSIS
-    Lee el inventario de endpoints desde endpoints.json y devuelve sus entradas.
+    Lee un inventario legado desde endpoints.json y devuelve sus entradas.
+    No es utilizado por el pipeline contextual; el descubrimiento operativo se
+    realiza en memoria desde el XPZ.
     #>
     [CmdletBinding()]
     param(

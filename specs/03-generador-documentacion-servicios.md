@@ -23,7 +23,7 @@
 - Documentación en lote de los 135 endpoints.
 - Interfaz web o visor (análogo a `Endpoints/web/`).
 - Commit en git.
-- Modificación de `documentacion/analisisXPZ.md`, `reglasEditoriales.md`, `templateDoc.md` ni de los scripts de `documentacion/Endpoints/`.
+- Modificación de `normativas/analisisXPZ.md`, `reglasEditoriales.md`, `templateDoc.md` ni de los scripts de inventario (`binary/GenerarListaEndpoints.ps1`).
 - Corrección de referencias a `LPS_COM_v01.xpz` ni de la convención `Endpoint/` del README.
 
 ## Modelo de datos
