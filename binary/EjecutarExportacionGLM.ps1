@@ -1,47 +1,26 @@
-# Orquestador de exportacion completa, inventario, validacion y complementos XPZ.
+# Orquestador de exportacion completa, validacion y complementos XPZ (contextual).
 
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory = $true)][string]$Repositorio
+    [Parameter(Mandatory = $true)][string]$Repositorio,
+    [Parameter(Mandatory = $true)][string]$ClienteId,
+    [Parameter(Mandatory = $true)][string]$AmbienteId
 )
 
 $ErrorActionPreference = 'Stop'
 $raizRepositorio = [System.IO.Path]::GetFullPath($Repositorio)
 $rutaConfiguracion = Join-Path $raizRepositorio 'configuracion.json'
-$rutaDirectorioXpz = Join-Path $raizRepositorio 'xpz'
-$rutaDirectorioLogs = Join-Path $raizRepositorio 'Logs'
 $rutaProyectoCompleto = Join-Path $raizRepositorio 'binary\ExportarXPZ.msbuild'
 $rutaProyectoSelectivo = Join-Path $raizRepositorio 'binary\ExportarXPZSelectivo.msbuild'
 $rutaScriptProgreso = Join-Path $raizRepositorio 'binary\ExportarXPZProgreso.ps1'
-$rutaScriptInventario = Join-Path $raizRepositorio 'documentacion\Endpoints\binary\GenerarListaEndpoints.ps1'
 $rutaScriptValidacion = Join-Path $raizRepositorio 'binary\ValidarXPZ.ps1'
 $rutaScriptSelectivo = Join-Path $raizRepositorio 'binary\ExportarXPZSelectivo.ps1'
 $rutaPowerShell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
 $maximoCiclos = 5
 
 . (Join-Path $PSScriptRoot 'GLMUtilidades.ps1')
-
-function Convertir-RutaRelativa {
-    param([Parameter(Mandatory = $true)][string]$Ruta)
-
-    $rutaAbsoluta = [System.IO.Path]::GetFullPath($Ruta)
-    $raizAbsoluta = [System.IO.Path]::GetFullPath($raizRepositorio).TrimEnd('\', '/') + [System.IO.Path]::DirectorySeparatorChar
-    if ($rutaAbsoluta.StartsWith($raizAbsoluta, [System.StringComparison]::OrdinalIgnoreCase)) {
-        return ($rutaAbsoluta.Substring($raizAbsoluta.Length) -replace '\\', '/')
-    }
-    return $rutaAbsoluta -replace '\\', '/'
-}
-
-function Guardar-XpzActivo {
-    param(
-        [Parameter(Mandatory = $true)]$Configuracion,
-        [Parameter(Mandatory = $true)][string]$RutaXpz
-    )
-
-    $Configuracion.xpz = Convertir-RutaRelativa -Ruta $RutaXpz
-    $json = Normalizar-SaltosLineaLf -Texto ($Configuracion | ConvertTo-Json -Depth 10)
-    Escribir-TextoUtf8SinBom -Ruta $rutaConfiguracion -Contenido $json
-}
+. (Join-Path $PSScriptRoot 'CargarConfiguracion.ps1')
+. (Join-Path $PSScriptRoot 'ManifiestoEjecucion.ps1')
 
 function Obtener-OnlyModuleAPIGLM {
     param([Parameter(Mandatory = $true)]$Configuracion)
@@ -59,17 +38,17 @@ function Obtener-OnlyModuleAPIGLM {
     return [bool]$propiedad.Value
 }
 
+$manifiestoExportacion = $null
 try {
     if (-not (Test-Path -LiteralPath $rutaConfiguracion -PathType Leaf)) {
         throw 'No existe configuracion.json. Ejecute primero el lanzador para crear el modelo.'
     }
 
-    if (-not (Test-Path -LiteralPath $rutaDirectorioLogs -PathType Container)) {
-        New-Item -ItemType Directory -Path $rutaDirectorioLogs -Force | Out-Null
-    }
-    if (-not (Test-Path -LiteralPath $rutaDirectorioXpz -PathType Container)) {
-        New-Item -ItemType Directory -Path $rutaDirectorioXpz -Force | Out-Null
-    }
+    $contexto = Cargar-Configuracion -ConfigPath $rutaConfiguracion -ClienteId $ClienteId -AmbienteId $AmbienteId
+    $rutaDirectorioXpz = $contexto.DirectorioXpz
+    $rutaDirectorioLogs = $contexto.DirectorioLogs
+    Asegurar-Directorio -Ruta $rutaDirectorioLogs
+    Asegurar-Directorio -Ruta $rutaDirectorioXpz
 
     $configuracion = Leer-ConfiguracionCruda -ConfigPath $rutaConfiguracion
     $onlyModuleAPIGLM = Obtener-OnlyModuleAPIGLM -Configuracion $configuracion
@@ -86,10 +65,9 @@ try {
         }
     }
 
-    $herramientas = $configuracion.herramientas
-    $rutaGeneXus = [string]$herramientas.geneXusProgramDir
-    $rutaKb = [string]$herramientas.kbPath
-    $rutaMsbuild = [string]$herramientas.msbuildPath
+    $rutaGeneXus = [string]$contexto.Herramientas.GeneXusProgramDir
+    $rutaKb = [string]$contexto.KbPath
+    $rutaMsbuild = [string]$contexto.Herramientas.MsbuildPath
 
     foreach ($requerido in @(
         [pscustomobject]@{ Nombre = 'GeneXus'; Ruta = $rutaGeneXus; Tipo = 'Container' },
@@ -129,26 +107,22 @@ try {
         throw ('La exportacion completa fallo. Revise el log: ' + $rutaLogExportacion)
     }
 
-    Guardar-XpzActivo -Configuracion $configuracion -RutaXpz $rutaXpzNuevo
-    Write-Host ('XPZ activo: ' + $rutaXpzNuevo) -ForegroundColor Green
+    Write-Host ('XPZ exportado: ' + $rutaXpzNuevo) -ForegroundColor Green
+    Write-Host ('El XPZ recien exportado pasa a ser el principal mas reciente del ambiente ' + $contexto.ContextId + '.') -ForegroundColor DarkGray
+
+    $manifiestoExportacion = Crear-ManifiestoEjecucion -Xpz $rutaXpzNuevo -FullyQualifiedNames @() -Contexto $contexto
+    $rutaManifiestoExportacion = $manifiestoExportacion.Ruta
 
     $signaturaAnterior = ''
     for ($ciclo = 1; $ciclo -le $maximoCiclos; $ciclo++) {
         Write-Host ''
-        Write-Host ("[2/4] Regenerando inventario (ciclo $ciclo de $maximoCiclos)...") -ForegroundColor Cyan
-        & $rutaPowerShell -NoProfile -ExecutionPolicy Bypass -File $rutaScriptInventario `
-            -ConfigPath $rutaConfiguracion 2>&1 | Out-Host
-        $codigoInventario = $LASTEXITCODE
-        if ($codigoInventario -ne 0) {
-            throw 'No se pudo regenerar el inventario de endpoints.'
-        }
-
         Write-Host ''
-        Write-Host ("[3/4] Validando completitud del XPZ (ciclo $ciclo de $maximoCiclos)...") -ForegroundColor Cyan
+        Write-Host ("[2/3] Validando completitud del XPZ (ciclo $ciclo de $maximoCiclos)...") -ForegroundColor Cyan
         & $rutaPowerShell -NoProfile -ExecutionPolicy Bypass -File $rutaScriptValidacion `
-            -ConfigPath $rutaConfiguracion 2>&1 | Out-Host
+            -ConfigPath $rutaConfiguracion `
+            -ManifiestoPath $rutaManifiestoExportacion 2>&1 | Out-Host
         $codigoValidacion = $LASTEXITCODE
-        $seleccionReporte = Obtener-ReporteValidacionMasReciente -DirectorioLogs $rutaDirectorioLogs -RutaXpz $rutaXpzNuevo -RaizRepositorio $raizRepositorio
+        $seleccionReporte = Obtener-ReporteValidacionMasReciente -DirectorioLogs $rutaDirectorioLogs -RutaXpz $rutaXpzNuevo -RaizRepositorio $raizRepositorio -EjecucionId ([string]$manifiestoExportacion.Datos.ejecucionId)
         if ($codigoValidacion -eq 0) {
             Write-Host 'XPZ completo y sin exportaciones adicionales.' -ForegroundColor Green
             exit 0
@@ -174,14 +148,15 @@ try {
 
         $signaturaAnterior = $signaturaActual
         Write-Host ''
-        Write-Host ("[4/4] Exportando complemento selectivo (ciclo $ciclo de $maximoCiclos)...") -ForegroundColor Cyan
+        Write-Host ("[3/3] Exportando complemento selectivo (ciclo $ciclo de $maximoCiclos)...") -ForegroundColor Cyan
         & $rutaPowerShell -NoProfile -ExecutionPolicy Bypass -File $rutaScriptSelectivo `
             -ConfigPath $rutaConfiguracion `
             -ReportePath $seleccionReporte.Ruta `
             -MsbuildPath $rutaMsbuild `
             -ProjectFile $rutaProyectoSelectivo `
             -GxProgramDir $rutaGeneXus `
-            -KbPath $rutaKb 2>&1 | Out-Host
+            -KbPath $rutaKb `
+            -ManifiestoPath $rutaManifiestoExportacion 2>&1 | Out-Host
         $codigoSelectivo = $LASTEXITCODE
         if ($codigoSelectivo -ne 0) {
             throw 'La exportacion selectiva fallo. Revise el log generado por el script.'
@@ -192,4 +167,8 @@ try {
 } catch {
     Write-Host ('ERROR: ' + $_.Exception.Message) -ForegroundColor Red
     exit 1
+} finally {
+    if ($manifiestoExportacion) {
+        try { Eliminar-ManifiestoEjecucion -RutaManifiesto $manifiestoExportacion.Ruta } catch { }
+    }
 }

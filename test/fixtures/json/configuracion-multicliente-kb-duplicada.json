@@ -1,0 +1,31 @@
+{
+  "rutas": {
+    "clientesRoot": "clientes"
+  },
+  "herramientas": {
+    "geneXusProgramDir": "C:/Program Files (x86)/GeneXus/GeneXus18",
+    "msbuildPath": "C:/Windows/Microsoft.NET/Framework/v4.0.30319/MSBuild.exe",
+    "pandocPath": "binary/tools/pandoc.exe",
+    "typstPath": "binary/tools/typst.exe"
+  },
+  "clientes": [
+    {
+      "id": "trunk",
+      "nombre": "Trunk",
+      "packagename": "glmsuit.comercial.",
+      "serviciosIgnorados": [],
+      "ambientes": [
+        {
+          "id": "testing",
+          "nombre": "Testing",
+          "kbPath": "C:/KBs/SEGUROS_COMERCIAL_TRUNK"
+        },
+        {
+          "id": "produccion",
+          "nombre": "Produccion",
+          "kbPath": "C:\\KBs\\SEGUROS_COMERCIAL_TRUNK"
+        }
+      ]
+    }
+  ]
+}

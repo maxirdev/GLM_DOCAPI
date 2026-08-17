@@ -8,16 +8,15 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-if (-not $CatalogPath) { $CatalogPath = Join-Path $PSScriptRoot '..\..\..\GeneXus-XPZ-Skills-main\scripts\gx-object-type-catalog.json' }
-if (-not $OutputDirectory) { $OutputDirectory = Join-Path $PSScriptRoot '..\assets' }
-if (-not $ConfigPath) { $ConfigPath = Join-Path $PSScriptRoot '..\..\..\configuracion.json' }
+if (-not $CatalogPath) { $CatalogPath = Join-Path $PSScriptRoot '..\GeneXus-XPZ-Skills-main\scripts\gx-object-type-catalog.json' }
+if (-not $ConfigPath) { $ConfigPath = Join-Path $PSScriptRoot '..\configuracion.json' }
 $StartTime = Get-Date
-$RaizRepositorio = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..\..'))
-$DirectorioLogs = Join-Path $PSScriptRoot '..\..\..\Logs'
+$RaizRepositorio = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
+$DirectorioLogs = Join-Path $RaizRepositorio 'Logs'
 $faseActual = 'inicio'
-. (Join-Path $PSScriptRoot '..\..\..\binary\GLMUtilidades.ps1')
-. (Join-Path $PSScriptRoot '..\..\..\binary\DiagnosticoIA.ps1')
-. (Join-Path $PSScriptRoot '..\..\..\binary\ManifiestoEjecucion.ps1')
+. (Join-Path $PSScriptRoot 'GLMUtilidades.ps1')
+. (Join-Path $PSScriptRoot 'DiagnosticoIA.ps1')
+. (Join-Path $PSScriptRoot 'ManifiestoEjecucion.ps1')
 $ProcedureTypeGuid = '84a12160-f59b-4ad7-a683-ea4481ac23e9'
 $PackageName = ''
 $ejecucionId = ''
@@ -40,9 +39,9 @@ try {
     Write-Host '==============================================================' -ForegroundColor Cyan
 
     $faseActual = 'carga-modulos'
-    . (Join-Path $PSScriptRoot '..\..\..\binary\CargarConfiguracion.ps1')
-    . (Join-Path $PSScriptRoot '..\..\..\binary\AnalizarServicio.ps1')
-    . (Join-Path $PSScriptRoot '..\..\..\binary\CargarMultiXPZ.ps1')
+    . (Join-Path $PSScriptRoot 'CargarConfiguracion.ps1')
+    . (Join-Path $PSScriptRoot 'AnalizarServicio.ps1')
+    . (Join-Path $PSScriptRoot 'CargarMultiXPZ.ps1')
 
     $faseActual = 'catalogo-tipos'
     if (Test-Path -LiteralPath $CatalogPath) {
@@ -59,22 +58,32 @@ try {
 
     $faseActual = 'configuracion'
     Write-Step 1 'Cargando configuracion y abriendo el XPZ...'
+    $clienteId = ''
+    $ambienteId = ''
     if ($ManifiestoPath) {
-        $manifiestoEjecucion = Leer-ManifiestoEjecucion -RutaManifiesto $ManifiestoPath
-        $XpzPath = [string]$manifiestoEjecucion.xpz
-        $ejecucionId = [string]$manifiestoEjecucion.ejecucionId
+        throw 'GenerarListaEndpoints.ps1 ya no forma parte del pipeline contextual y no acepta manifiestos. Use -XpzPath y -OutputDirectory solo para una exportacion independiente.'
     } else {
         $ejecucionId = Obtener-NuevoIdentificadorEjecucion
+        if (-not $OutputDirectory) {
+            throw 'La invocacion directa requiere -OutputDirectory o -ManifiestoPath; el inventario ya no se publica como artefacto global (SPEC 19).'
+        }
     }
     $cargarConfiguracionParametros = @{ ConfigPath = $ConfigPath }
     if ($XpzPath) { $cargarConfiguracionParametros.XpzPath = $XpzPath }
+    if ($clienteId) {
+        $cargarConfiguracionParametros.ClienteId = $clienteId
+        $cargarConfiguracionParametros.AmbienteId = $ambienteId
+    }
     $configuracion = Cargar-Configuracion @cargarConfiguracionParametros
-    $XpzPath = $configuracion.XpzPath
+    if (-not $XpzPath) { $XpzPath = $configuracion.XpzPath }
     $PackageName = $configuracion.PackageName
-    Write-Host ("  XPZ: " + $configuracion.XpzPath) -ForegroundColor DarkGray
+    Write-Host ("  XPZ: " + $XpzPath) -ForegroundColor DarkGray
     Write-Host ("  PackageName: " + $PackageName) -ForegroundColor DarkGray
     if ($configuracion.Cliente) {
         Write-Host ("  Cliente: " + $configuracion.Cliente) -ForegroundColor DarkGray
+    }
+    if ($clienteId) {
+        Write-Host ("  Contexto: " + $configuracion.ContextId) -ForegroundColor DarkGray
     }
 
     $faseActual = 'apertura-xpz'
@@ -204,6 +213,7 @@ try {
         meta = [pscustomobject]@{
             generatedAt = $StartTime.ToString('s')
             ejecucionId = $ejecucionId
+            contextId = if ($ManifiestoPath) { [string]$manifiestoEjecucion.contextId } else { '' }
             manifiesto = $ManifiestoPath
             source = $XpzName
             xpzFiles = @($indiceMultiXpz.NombresXpz)

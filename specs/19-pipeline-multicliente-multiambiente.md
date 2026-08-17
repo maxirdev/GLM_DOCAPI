@@ -1,6 +1,6 @@
 # SPEC 19 — Pipeline multicliente y multiambiente
 
-> **Estado:** Borrador
+> **Estado:** Aprobado
 > **Depende de:** SPEC 04, SPEC 13, SPEC 14, SPEC 16, SPEC 18
 > **Fecha:** 2026-08-16
 > **Objetivo:** Adaptar la consola y el pipeline compartido para generar y versionar documentación aislada por cliente y ambiente mediante una configuración central parametrizable.
@@ -26,7 +26,7 @@ La lógica normativa de análisis y redacción ya es común a todas las KB. Esta
 - Validar primero el esquema y las herramientas globales; después de la selección, ejecutar para el contexto elegido las mismas validaciones de arranque que existen hoy, incluida la disponibilidad de la KB.
 - Terminar con código `1`, mensaje preciso y sin crear carpetas ni archivos cuando el cliente, el ambiente o su KB sean inválidos.
 - Agregar al menú una opción para cambiar de cliente o ambiente sin cerrar la consola; el cambio repite el preflight completo antes de activar el nuevo contexto.
-- Crear para cada ambiente válido el árbol contextual `documentacion/servicios/`, `estado/`, `xpz/`, `Logs/`, `test/fixtures/` y `test/resultados/` bajo `rutas.clientesRoot/<clienteId>/<ambienteId>/`.
+- Crear para cada ambiente válido el árbol contextual `documentacionServicios/`, `estado/`, `xpz/`, `Logs/`, `test/fixtures/` y `test/resultados/` bajo `rutas.clientesRoot/<clienteId>/<ambienteId>/`.
 - Mantener en `test/` de la raíz el harness y las pruebas compartidas; las carpetas `test/` contextuales contienen solo fixtures y resultados del ambiente.
 - Seleccionar por defecto el XPZ principal más reciente de la carpeta `xpz/` del ambiente con la lógica vigente de `ListarXPZPrincipales.ps1`.
 - Conservar la selección manual de otro XPZ como override de la sesión, sin persistirla ni modificar `configuracion.json`.
@@ -45,7 +45,7 @@ La lógica normativa de análisis y redacción ya es común a todas las KB. Esta
 **Fuera de alcance (para futuras SPEC):**
 
 - Proyecto web de endpoints, incluidos sus JSON, Markdown, HTML, CSS, JavaScript y contratos de publicación.
-- Migración de `xpz/`, `estado/`, `documentacion/servicios/` o `Logs/` globales a un contexto nuevo.
+- Migración de `xpz/`, `estado/`, `documentacionServicios/` o `Logs/` globales a un contexto nuevo.
 - Compatibilidad final con el esquema anterior de `configuracion.json`.
 - Promoción o sincronización de documentos y versiones entre TESTING y PRODUCCIÓN.
 - Línea de versiones compartida entre ambientes de un cliente.
@@ -166,8 +166,7 @@ Las carpetas y archivos ignorados se crean solo después de que el esquema globa
   "ambienteId": "testing",
   "configPath": "C:/DOCUMENTACIONAPI/configuracion.json",
   "xpz": "C:/DOCUMENTACIONAPI/clientes/trunk/testing/xpz/APIGLM_20260816.xpz",
-  "inventoryPath": "C:/Temp/APIGLM-ejecuciones/.../staging/inventario/endpoints.json",
-  "servicesDirectory": "C:/DOCUMENTACIONAPI/clientes/trunk/testing/documentacion/servicios",
+  "servicesDirectory": "C:/DOCUMENTACIONAPI/clientes/trunk/testing/documentacionServicios",
   "stateDirectory": "C:/DOCUMENTACIONAPI/clientes/trunk/testing/estado",
   "logsDirectory": "C:/DOCUMENTACIONAPI/clientes/trunk/testing/Logs",
   "fullyQualifiedNames": [],
@@ -183,11 +182,11 @@ Todo proceso que recibe `-ManifiestoPath` valida que las rutas usadas pertenecen
 1. Extender `binary/CargarConfiguracion.ps1` con la lectura y validación del nuevo esquema, resolución de cliente/ambiente y construcción del objeto de contexto; agregar fixtures multicliente a `test/fixtures/` y pruebas unitarias sin cambiar todavía los puntos de entrada.
 2. Reemplazar `configuracion.json` por el modelo inicial de `trunk/testing` y adaptar `binary/ValidarConfiguracionGLM.ps1` para validar primero la configuración global y después un contexto seleccionado; comprobar configuraciones válidas, IDs inválidos, duplicados, KB inexistente y ausencia de escrituras ante error.
 3. Adaptar `binary/GestionDocumentosGLM.ps1` y `GenerarDocumentosGLM.cmd` para seleccionar cliente y ambiente antes del menú, mostrar el contexto activo, repetir el preflight al cambiarlo y derivar desde ese contexto todas las rutas que hoy son globales.
-4. Elevar `binary/ManifiestoEjecucion.ps1` a `schemaVersion = 2`, incorporar la identidad y rutas contextuales, validar pertenencia y crear dentro del staging el directorio del inventario técnico; mantener funcionales la creación, actualización y eliminación atómica de cada ejecución.
-5. Adaptar `documentacion/Endpoints/binary/GenerarListaEndpoints.ps1`, `binary/ValidarXPZ.ps1`, `binary/CompletarXPZActivoGLM.ps1`, `binary/GenerarDocumento.ps1` y `binary/GenerarPdfServicios.ps1` para recibir y consumir las rutas del manifiesto, sin leer inventarios, documentos, estado ni logs globales.
+4. Elevar `binary/ManifiestoEjecucion.ps1` a `schemaVersion = 2`, incorporar la identidad y rutas contextuales, validar pertenencia y mantener funcionales la creación, actualización y eliminación atómica de cada ejecución. El manifiesto no contiene `inventoryPath`.
+5. Adaptar `binary/ValidarXPZ.ps1`, `binary/CompletarXPZActivoGLM.ps1`, `binary/GenerarDocumento.ps1` y `binary/GenerarPdfServicios.ps1` para descubrir servicios HTTP en memoria desde el XPZ, sin leer inventarios, documentos, estado ni logs globales.
 6. Adaptar `binary/ActualizarServicios.ps1` para derivar del contexto el directorio publicado, control, historial, review, logs y lock; verificar que el fast-path, la promoción Markdown/PDF, los pendientes, el reinicio y la reactivación solo afectan al ambiente activo.
 7. Adaptar `binary/EjecutarExportacionGLM.ps1`, `binary/ExportarXPZSelectivo.ps1` y sus llamadores para escribir principales, complementos, reportes y logs en el ambiente activo, seleccionar por defecto el XPZ principal más reciente y no modificar la configuración central.
-8. Adaptar `binary/ResumirOperacionPdf.ps1` y los llamadores de `binary/DiagnosticoIA.ps1` para usar el manifiesto, review, inventario interno, servicios y logs del contexto solicitado, sin búsquedas globales por el archivo más reciente.
+8. Adaptar `binary/ResumirOperacionPdf.ps1` y los llamadores de `binary/DiagnosticoIA.ps1` para usar el manifiesto, review, servicios y logs del contexto solicitado, sin búsquedas globales por el archivo más reciente.
 9. Ampliar `test/Run-Tests.ps1` con dos clientes temporales, al menos dos ambientes, FQN coincidentes y ejecuciones separadas; verificar selección, preflight, publicación, hashes, versionado, logs, locks y ausencia de contaminación cruzada, y ejecutar la suite completa después de cada integración.
 10. Actualizar `.gitignore` para ignorar el árbol mutable bajo `clientes/` sin afectar fixtures versionados, y actualizar `README.md` y `AGENTS.md` con el esquema, árbol, selección de XPZ, aislamiento y procedimiento para agregar clientes o ambientes.
 
@@ -204,14 +203,14 @@ Todo proceso que recibe `-ManifiestoPath` valida que las rutas usadas pertenecen
 - [ ] El menú muestra cliente, ambiente y XPZ activo sin confundir el nombre visible con el ID de carpeta.
 - [ ] La opción de cambiar contexto repite el preflight y ninguna operación posterior conserva rutas del contexto anterior.
 - [ ] Un cliente, ambiente o KB inválido termina con código `1`, informa el dato exacto y no crea carpetas ni archivos.
-- [ ] Un contexto válido crea exactamente `documentacion/servicios`, `estado`, `xpz`, `Logs`, `test/fixtures` y `test/resultados` bajo su directorio.
+- [ ] Un contexto válido crea exactamente `documentacionServicios`, `estado`, `xpz`, `Logs`, `test/fixtures` y `test/resultados` bajo su directorio.
 - [ ] El XPZ predeterminado es el principal más reciente de la carpeta del ambiente según la lógica vigente.
 - [ ] Seleccionar manualmente otro XPZ solo afecta la sesión y no modifica `configuracion.json` ni crea estado persistido adicional.
 - [ ] Una exportación nueva escribe el XPZ principal y sus complementos únicamente dentro del ambiente activo.
 - [ ] El manifiesto de esquema 2 contiene y valida `contextId`, cliente, ambiente, configuración, XPZ, inventario, servicios, estado, logs y staging.
 - [ ] Mezclar en una ejecución el XPZ de un ambiente con rutas de otro se rechaza antes del análisis o la publicación.
 - [ ] El inventario técnico se genera dentro del staging contextual, se consume por ruta explícita y se elimina al cerrar la ejecución.
-- [ ] Ninguna ejecución contextual lee o escribe `xpz/`, `estado/`, `documentacion/servicios/` o `Logs/` globales.
+- [ ] Ninguna ejecución contextual lee o escribe `xpz/`, `estado`, `documentacionServicios/` o `Logs/` globales.
 - [ ] Los artefactos globales anteriores permanecen byte a byte sin cambios después de las pruebas del nuevo pipeline.
 - [ ] Dos ambientes con el mismo FQN publican Markdown y PDF independientes sin reemplazarse.
 - [ ] TESTING y PRODUCCIÓN mantienen controles, lineages, historiales, revisiones, pendientes y hashes independientes.

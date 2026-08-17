@@ -9,9 +9,9 @@
 
 **Incluido:**
 
-- Análisis del wrapper `APIGLM.Emision.WSObtenerTotalesSolicitud` (confirmado `IsMain=True`, `CALL_PROTOCOL=HTTP`) y del programa principal `APIGLM.Emision.ObtenerTotalesSolicitud` en `xpz/LPS_COM.xpz`, conforme a `documentacion/analisisXPZ.md`.
-- Aplicación de `documentacion/reglasEditoriales.md`.
-- Generación del documento final `documentacion/servicios/wsobtenertotalessolicitud.md` conforme a `documentacion/templateDoc.md`.
+- Análisis del wrapper `APIGLM.Emision.WSObtenerTotalesSolicitud` (confirmado `IsMain=True`, `CALL_PROTOCOL=HTTP`) y del programa principal `APIGLM.Emision.ObtenerTotalesSolicitud` en `xpz/LPS_COM.xpz`, conforme a `normativas/analisisXPZ.md`.
+- Aplicación de `normativas/reglasEditoriales.md`.
+- Generación del documento final `documentacion/servicios/wsobtenertotalessolicitud.md` conforme a `normativas/templateDoc.md`.
 - Registro de `PENDIENTE DE CONFIRMACIÓN: <dato>. Evidencia requerida: <fuente>.` cuando una evidencia no pueda confirmarse en el XPZ.
 - Verificación contra las tres listas de control normativas.
 
@@ -25,7 +25,7 @@
 
 ## Modelo de datos
 
-Esta spec no introduce estructuras de datos de código. El entregable es un documento Markdown cuya estructura es la plantilla obligatoria de `documentacion/templateDoc.md`, guardado en `documentacion/servicios/wsobtenertotalessolicitud.md` (nombre GeneXus del wrapper en minúsculas).
+Esta spec no introduce estructuras de datos de código. El entregable es un documento Markdown cuya estructura es la plantilla obligatoria de `normativas/templateDoc.md`, guardado en `documentacion/servicios/wsobtenertotalessolicitud.md` (nombre GeneXus del wrapper en minúsculas).
 
 ## Plan de implementación
 

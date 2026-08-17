@@ -174,7 +174,7 @@ El archivo final conserva el nombre local del wrapper y cambia únicamente la ex
 documentacion/servicios/wsobtenerpolizasasegurado.pdf
 ```
 
-Si Pandoc o Typst no están disponibles en `binary/tools/`, la operación PDF se bloquea antes de producir PDFs y se informa la herramienta faltante. La generación Markdown no depende de estas herramientas. Los archivos normativos `documentacion/analisisXPZ.md`, `documentacion/reglasEditoriales.md` y `documentacion/templateDoc.md` no se eliminan.
+Si Pandoc o Typst no están disponibles en `binary/tools/`, la operación PDF se bloquea antes de producir PDFs y se informa la herramienta faltante. La generación Markdown no depende de estas herramientas. Los archivos normativos `normativas/analisisXPZ.md`, `normativas/reglasEditoriales.md` y `normativas/templateDoc.md` no se eliminan.
 
 ## Plan de implementación
 

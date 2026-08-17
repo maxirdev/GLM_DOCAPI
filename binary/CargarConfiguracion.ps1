@@ -4,22 +4,261 @@
 # Resuelve las rutas relativas contra el directorio raiz del repositorio.
 $ErrorActionPreference = 'Stop'
 
+. (Join-Path $PSScriptRoot 'GLMUtilidades.ps1')
+
+function Test-NombreSlugValido {
+    <#
+    .SYNOPSIS
+    Comprueba que un id sigue la convencion de slug en minusculas.
+    .DESCRIPTION
+    Acepta solo minusculas, digitos y guiones, comenzando con una letra
+    minuscula o un digito: ^[a-z0-9][a-z0-9-]*$. Los ids seguros forman
+    nombres de carpeta, por eso no admiten mayusculas ni caracteres especiales.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)][AllowEmptyString()][string]$Valor
+    )
+    return ($Valor -cmatch '^[a-z0-9][a-z0-9-]*$')
+}
+
+function Validar-ConfiguracionMulticliente {
+    <#
+    .SYNOPSIS
+    Valida el esquema multicliente de configuracion.json.
+    .DESCRIPTION
+    Comprueba rutas.clientesRoot, herramientas globales y la coleccion clientes
+    con sus ambientes. Exige ids en formato slug, unicos sin distinguir
+    mayusculas en cada nivel, y rechaza dos ambientes que resuelvan a la misma
+    ruta de Knowledge Base una vez normalizada. Lanza con el primer error y
+    devuelve la configuracion cruda si es valida.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]$ConfiguracionRaw,
+        [Parameter(Mandatory = $true)][string]$RaizRepositorio,
+        [Parameter(Mandatory = $false)][string]$ConfigPath
+    )
+
+    if ($null -eq $ConfiguracionRaw.rutas -or [string]::IsNullOrWhiteSpace([string]$ConfiguracionRaw.rutas.clientesRoot)) {
+        throw 'La configuracion no define rutas.clientesRoot.'
+    }
+    if ($null -eq $ConfiguracionRaw.herramientas) {
+        throw 'La configuracion no define la seccion herramientas.'
+    }
+    foreach ($propiedadHerramienta in @('geneXusProgramDir', 'msbuildPath', 'pandocPath', 'typstPath')) {
+        if ([string]::IsNullOrWhiteSpace([string]$ConfiguracionRaw.herramientas.($propiedadHerramienta))) {
+            throw ("La configuracion no define herramientas." + $propiedadHerramienta + ".")
+        }
+    }
+    if ($null -eq $ConfiguracionRaw.clientes -or @($ConfiguracionRaw.clientes).Count -eq 0) {
+        throw 'La configuracion no define la coleccion clientes.'
+    }
+
+    $clientesVistos = @{}
+    $kbPathsVistos = @{}
+    foreach ($cliente in @($ConfiguracionRaw.clientes)) {
+        $clienteId = [string]$cliente.id
+        if (-not (Test-NombreSlugValido -Valor $clienteId)) {
+            throw ("El id de cliente '" + $clienteId + "' no es valido. Use minusculas, digitos y guiones con el formato ^[a-z0-9][a-z0-9-]*$.")
+        }
+        if ([string]::IsNullOrWhiteSpace([string]$cliente.nombre)) {
+            throw ("El cliente '" + $clienteId + "' no define su nombre visible.")
+        }
+        if ([string]::IsNullOrWhiteSpace([string]$cliente.packagename)) {
+            throw ("El cliente '" + $clienteId + "' no define packagename.")
+        }
+        $claveCliente = $clienteId.ToLowerInvariant()
+        if ($clientesVistos.ContainsKey($claveCliente)) {
+            throw ("El id de cliente '" + $clienteId + "' esta duplicado (sin distinguir mayusculas de minusculas).")
+        }
+        $clientesVistos[$claveCliente] = $true
+
+        if ($null -eq $cliente.ambientes -or @($cliente.ambientes).Count -eq 0) {
+            throw ("El cliente '" + $clienteId + "' no define ambientes.")
+        }
+        $ambientesVistos = @{}
+        foreach ($ambiente in @($cliente.ambientes)) {
+            $ambienteId = [string]$ambiente.id
+            if (-not (Test-NombreSlugValido -Valor $ambienteId)) {
+                throw ("El id de ambiente '" + $ambienteId + "' del cliente '" + $clienteId + "' no es valido. Use minusculas, digitos y guiones con el formato ^[a-z0-9][a-z0-9-]*$.")
+            }
+            if ([string]::IsNullOrWhiteSpace([string]$ambiente.nombre)) {
+                throw ("El ambiente '" + $ambienteId + "' del cliente '" + $clienteId + "' no define su nombre visible.")
+            }
+            if ([string]::IsNullOrWhiteSpace([string]$ambiente.kbPath)) {
+                throw ("El ambiente '" + $ambienteId + "' del cliente '" + $clienteId + "' no define kbPath.")
+            }
+            $claveAmbiente = $ambienteId.ToLowerInvariant()
+            if ($ambientesVistos.ContainsKey($claveAmbiente)) {
+                throw ("El id de ambiente '" + $ambienteId + "' del cliente '" + $clienteId + "' esta duplicado (sin distinguir mayusculas de minusculas).")
+            }
+            $ambientesVistos[$claveAmbiente] = $true
+
+            $kbPathResuelto = Resolver-RutaRepositorio -Ruta ([string]$ambiente.kbPath) -Raiz $RaizRepositorio
+            $claveKb = $kbPathResuelto.ToLowerInvariant()
+            if ($kbPathsVistos.ContainsKey($claveKb)) {
+                throw ("Dos ambientes apuntan a la misma ruta de Knowledge Base: " + $kbPathResuelto)
+            }
+            $kbPathsVistos[$claveKb] = $true
+        }
+    }
+    return $ConfiguracionRaw
+}
+
+function Obtener-ClientesConfigurados {
+    <#
+    .SYNOPSIS
+    Devuelve los clientes configurados para el selector interactivo.
+    .DESCRIPTION
+    Devuelve un array de objetos con Id y Nombre visible, en el orden declarado
+    en configuracion.json.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]$ConfiguracionRaw
+    )
+    $resultado = New-Object System.Collections.Generic.List[object]
+    foreach ($cliente in @($ConfiguracionRaw.clientes)) {
+        $resultado.Add([pscustomobject]@{
+            Id = [string]$cliente.id
+            Nombre = [string]$cliente.nombre
+        })
+    }
+    return $resultado.ToArray()
+}
+
+function Obtener-AmbientesConfigurados {
+    <#
+    .SYNOPSIS
+    Devuelve los ambientes de un cliente para el selector interactivo.
+    .DESCRIPTION
+    Devuelve un array de objetos con Id y Nombre visible para el cliente indicado.
+    Si el cliente no existe, devuelve una coleccion vacia.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]$ConfiguracionRaw,
+        [Parameter(Mandatory = $true)][string]$ClienteId
+    )
+    $cliente = @($ConfiguracionRaw.clientes | Where-Object { [string]$_.id -ieq $ClienteId }) | Select-Object -First 1
+    if ($null -eq $cliente) {
+        return @()
+    }
+    $resultado = New-Object System.Collections.Generic.List[object]
+    foreach ($ambiente in @($cliente.ambientes)) {
+        $resultado.Add([pscustomobject]@{
+            Id = [string]$ambiente.id
+            Nombre = [string]$ambiente.nombre
+        })
+    }
+    return $resultado.ToArray()
+}
+
+function Resolver-ContextoConfiguracion {
+    <#
+    .SYNOPSIS
+    Construye el contexto canonico de cliente y ambiente.
+    .DESCRIPTION
+    Valida el esquema, localiza el cliente y el ambiente, resuelve clientesRoot
+    contra la raiz del repositorio y deriva las rutas contextuales de documentos,
+    estado, XPZ, logs y datos de prueba. Devuelve el objeto unico con las
+    propiedades canonicas de la SPEC 19. Todas las rutas son absolutas.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]$ConfiguracionRaw,
+        [Parameter(Mandatory = $true)][string]$ConfigPath,
+        [Parameter(Mandatory = $true)][string]$RaizRepositorio,
+        [Parameter(Mandatory = $true)][string]$ClienteId,
+        [Parameter(Mandatory = $true)][string]$AmbienteId
+    )
+
+    Validar-ConfiguracionMulticliente -ConfiguracionRaw $ConfiguracionRaw -RaizRepositorio $RaizRepositorio -ConfigPath $ConfigPath | Out-Null
+
+    $cliente = @($ConfiguracionRaw.clientes | Where-Object { [string]$_.id -ieq $ClienteId }) | Select-Object -First 1
+    if ($null -eq $cliente) {
+        $clientesDisponibles = ((@($ConfiguracionRaw.clientes) | ForEach-Object { [string]$_.id }) -join ', ')
+        throw ("El cliente '" + $ClienteId + "' no existe en la configuracion. Clientes configurados: " + $clientesDisponibles + ".")
+    }
+    $ambiente = @($cliente.ambientes | Where-Object { [string]$_.id -ieq $AmbienteId }) | Select-Object -First 1
+    if ($null -eq $ambiente) {
+        $ambientesDisponibles = ((@($cliente.ambientes) | ForEach-Object { [string]$_.id }) -join ', ')
+        throw ("El ambiente '" + $AmbienteId + "' no existe para el cliente '" + $ClienteId + "'. Ambientes configurados: " + $ambientesDisponibles + ".")
+    }
+
+    $clientesRoot = Resolver-RutaRepositorio -Ruta ([string]$ConfiguracionRaw.rutas.clientesRoot) -Raiz $RaizRepositorio
+    $directorioContexto = [System.IO.Path]::GetFullPath((Join-Path (Join-Path $clientesRoot $ClienteId) $AmbienteId))
+    $directorioServicios = [System.IO.Path]::GetFullPath((Join-Path $directorioContexto 'documentacionServicios'))
+    $directorioEstado = [System.IO.Path]::GetFullPath((Join-Path $directorioContexto 'estado'))
+    $directorioXpz = [System.IO.Path]::GetFullPath((Join-Path $directorioContexto 'xpz'))
+    $directorioLogs = [System.IO.Path]::GetFullPath((Join-Path $directorioContexto 'Logs'))
+    $directorioTestFixtures = [System.IO.Path]::GetFullPath((Join-Path $directorioContexto 'test\fixtures'))
+    $directorioTestResultados = [System.IO.Path]::GetFullPath((Join-Path $directorioContexto 'test\resultados'))
+
+    $serviciosIgnorados = @()
+    if ($cliente.serviciosIgnorados -and @($cliente.serviciosIgnorados).Count -gt 0) {
+        $serviciosIgnorados = @($cliente.serviciosIgnorados | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } | ForEach-Object { [string]$_ })
+    }
+
+    $herramientas = [pscustomobject]@{
+        GeneXusProgramDir = [string]$ConfiguracionRaw.herramientas.geneXusProgramDir
+        MsbuildPath = [string]$ConfiguracionRaw.herramientas.msbuildPath
+        PandocPath = [string]$ConfiguracionRaw.herramientas.pandocPath
+        TypstPath = [string]$ConfiguracionRaw.herramientas.typstPath
+    }
+
+    return [pscustomobject]@{
+        ConfigPath = $ConfigPath
+        RaizRepositorio = $RaizRepositorio
+        ClientesRoot = $clientesRoot
+        ClienteId = $ClienteId
+        ClienteNombre = [string]$cliente.nombre
+        AmbienteId = $AmbienteId
+        AmbienteNombre = [string]$ambiente.nombre
+        ContextId = $ClienteId + '/' + $AmbienteId
+        DirectorioContexto = $directorioContexto
+        KbPath = Resolver-RutaRepositorio -Ruta ([string]$ambiente.kbPath) -Raiz $RaizRepositorio
+        PackageName = [string]$cliente.packagename
+        ServiciosIgnorados = $serviciosIgnorados
+        DirectorioXpz = $directorioXpz
+        DirectorioServicios = $directorioServicios
+        DirectorioEstado = $directorioEstado
+        RutaControl = [System.IO.Path]::GetFullPath((Join-Path $directorioEstado 'controlVersiones.json'))
+        RutaHistorial = [System.IO.Path]::GetFullPath((Join-Path $directorioEstado 'historialVersiones.md'))
+        RutaLock = [System.IO.Path]::GetFullPath((Join-Path $directorioEstado 'actualizacion.lock'))
+        DirectorioLogs = $directorioLogs
+        DirectorioTestFixtures = $directorioTestFixtures
+        DirectorioTestResultados = $directorioTestResultados
+        Herramientas = $herramientas
+    }
+}
+
 function Cargar-Configuracion {
     <#
     .SYNOPSIS
-    Carga configuracion.json desde la raiz del repositorio y resuelve las rutas.
+    Carga configuracion.json y resuelve el contexto de cliente y ambiente.
     .DESCRIPTION
-    Lee el archivo configuracion.json, resuelve la ruta del XPZ relativa a la
-    raiz del proyecto contra una ruta absoluta, y permite un override explicito
-    de XpzPath. Devuelve el objeto de configuracion con todas las rutas resueltas.
+    Con el esquema multicliente (propiedad clientes), valida el esquema global y
+    construye el contexto canonico del cliente y ambiente seleccionados. Con el
+    esquema anterior (propiedad xpz) conserva temporalmente el comportamiento
+    historico: resuelve el XPZ y devuelve el objeto plano, para no interrumpir
+    los consumidores mientras se migra la seleccion de contexto.
     #>
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $false)][string]$ConfigPath,
-        [Parameter(Mandatory = $false)][string]$XpzPath
+        [Parameter(Mandatory = $false)][string]$ClienteId,
+        [Parameter(Mandatory = $false)][string]$AmbienteId,
+        [Parameter(Mandatory = $false)][string]$XpzPath,
+        [Parameter(Mandatory = $false)][string]$RaizRepositorio
     )
 
-    $raizRepositorio = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+    if ([string]::IsNullOrWhiteSpace($RaizRepositorio)) {
+        $raizRepositorio = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+    } else {
+        $raizRepositorio = [System.IO.Path]::GetFullPath($RaizRepositorio)
+    }
 
     if (-not $ConfigPath) {
         $ConfigPath = Join-Path $raizRepositorio 'configuracion.json'
@@ -32,6 +271,13 @@ function Cargar-Configuracion {
     $ConfigPath = (Resolve-Path -LiteralPath $ConfigPath).Path
 
     $configuracionRaw = Get-Content -LiteralPath $ConfigPath -Raw | ConvertFrom-Json
+
+    if ($null -ne $configuracionRaw.clientes) {
+        if ([string]::IsNullOrWhiteSpace($ClienteId) -or [string]::IsNullOrWhiteSpace($AmbienteId)) {
+            throw 'La configuracion multicliente requiere -ClienteId y -AmbienteId para resolver el contexto.'
+        }
+        return Resolver-ContextoConfiguracion -ConfiguracionRaw $configuracionRaw -ConfigPath $ConfigPath -RaizRepositorio $raizRepositorio -ClienteId $ClienteId -AmbienteId $AmbienteId
+    }
 
     if ($XpzPath) {
         if (-not (Test-Path -LiteralPath $XpzPath)) {

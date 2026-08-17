@@ -50,6 +50,71 @@ function Obtener-NombreArchivoServicio {
     return $nombreLocal
 }
 
+function Obtener-ServiciosHttpDesdeIndice {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]$Indice,
+        [Parameter(Mandatory = $false)][string]$ProcedureTypeGuid = '84a12160-f59b-4ad7-a683-ea4481ac23e9'
+    )
+
+    $mainNodes = @($Indice.XmlUnificado.SelectNodes("//Object[@fullyQualifiedName='APIGLM.APIGLMMain']"))
+    if ($mainNodes.Count -ne 1) {
+        throw ("APIGLM.APIGLMMain no se encontro o aparece " + $mainNodes.Count + " veces.")
+    }
+
+    $sourceNodes = @($mainNodes[0].SelectNodes('Part/Source') | Where-Object { -not [string]::IsNullOrWhiteSpace($_.InnerText) })
+    if ($sourceNodes.Count -ne 1) {
+        throw 'APIGLMMain no contiene exactamente un Part/Source no vacio.'
+    }
+
+    $candidatos = New-Object System.Collections.Generic.List[string]
+    $lineas = [regex]::Split($sourceNodes[0].InnerText, "`r?`n")
+    foreach ($linea in $lineas) {
+        $trimmed = $linea.Trim()
+        if (-not $trimmed -or $trimmed.StartsWith('//')) { continue }
+        $coincidencia = [regex]::Match($trimmed, '(\b(?:\w+\.)*WS[A-Za-z0-9_]+)\s*\(')
+        if ($coincidencia.Success) { [void]$candidatos.Add($coincidencia.Groups[1].Value) }
+    }
+
+    $resultado = New-Object System.Collections.Generic.List[object]
+    $vistos = @{}
+    foreach ($candidato in $candidatos) {
+        $coincidencias = @()
+        if ($candidato.Contains('.')) {
+            if ($Indice.PorFqn.ContainsKey($candidato)) { $coincidencias = @($Indice.PorFqn[$candidato]) }
+        } elseif ($Indice.PorNombre.ContainsKey($candidato)) {
+            $coincidencias = @($Indice.PorNombre[$candidato].ToArray())
+        }
+        if ($coincidencias.Count -gt 1) {
+            $procedures = @($coincidencias | Where-Object { $_.GetAttribute('type') -eq $ProcedureTypeGuid })
+            if ($procedures.Count -eq 1) { $coincidencias = $procedures }
+        }
+        if ($coincidencias.Count -ne 1) { continue }
+
+        $objeto = $coincidencias[0]
+        $fqn = [string]$objeto.GetAttribute('fullyQualifiedName')
+        if (-not $fqn -or $vistos.ContainsKey($fqn)) { continue }
+        if ($objeto.GetAttribute('type') -ne $ProcedureTypeGuid) { continue }
+        if (-not $objeto.SelectSingleNode("Properties/Property[Name='IsMain' and Value='True']")) { continue }
+        if (-not $objeto.SelectSingleNode("Properties/Property[Name='CALL_PROTOCOL' and Value='HTTP']")) { continue }
+
+        $nombre = [string]$objeto.GetAttribute('name')
+        $descripcion = [string]$objeto.GetAttribute('description')
+        $endpoint = 'a' + $nombre.ToLowerInvariant()
+        $ultimoPunto = $fqn.LastIndexOf('.')
+        if ($ultimoPunto -gt 0) { $endpoint = $fqn.Substring(0, $ultimoPunto).ToLowerInvariant() + '.' + $endpoint }
+        $vistos[$fqn] = $true
+        [void]$resultado.Add([pscustomobject]@{
+            nombre = if ($nombre.StartsWith('WS')) { 'WS - ' + $nombre.Substring(2) } else { $nombre }
+            descripcion = $descripcion
+            proceso = $fqn
+            endpoint = $endpoint
+        })
+    }
+
+    return @($resultado.ToArray())
+}
+
 function Construir-ManifiestoMultiXPZ {
     [CmdletBinding()]
     param(

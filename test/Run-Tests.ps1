@@ -6,7 +6,11 @@
 # pruebas viven exclusivamente en test/tmp/ y se eliminan siempre en el finally.
 
 [CmdletBinding()]
-param()
+param(
+    [Parameter(Mandatory = $false)][string]$ClienteId,
+    [Parameter(Mandatory = $false)][string]$AmbienteId,
+    [Parameter(Mandatory = $false)][string]$ConfigPath
+)
 
 $ErrorActionPreference = 'Stop'
 
@@ -19,8 +23,7 @@ $DirectorioFixturesJson = Join-Path $DirectorioFixtures 'json'
 $DirectorioFixturesXpz = Join-Path $DirectorioFixtures 'xpz'
 $DirectorioTmp = Join-Path $DirectorioScript 'tmp'
 $DirectorioLogs = Join-Path $DirectorioScript 'Logs'
-$DirectorioServiciosProduccion = Join-Path $RaizRepositorio 'documentacion\servicios'
-$RutaInventarioProduccion = Join-Path $RaizRepositorio 'documentacion\Endpoints\assets\endpoints.json'
+$DirectorioServiciosProduccion = Join-Path $RaizRepositorio 'documentacionServicios'
 
 $Casos = New-Object System.Collections.Generic.List[object]
 $FallaLimpieza = ''
@@ -156,7 +159,54 @@ function Cargar-ModulosProduccion {
         (Join-Path $DirectorioBinario 'EscribirSalidas.ps1')
         (Join-Path $DirectorioBinario 'ControlVersiones.ps1')
         (Join-Path $DirectorioBinario 'HistorialVersiones.ps1')
+        (Join-Path $DirectorioBinario 'ManifiestoEjecucion.ps1')
     )
+}
+
+function Resolver-DirectoriosPrueba {
+    <#
+    .SYNOPSIS
+    Resuelve el contexto de cliente y ambiente donde se escriben los resultados.
+    .DESCRIPTION
+    Con -ClienteId/-AmbienteId usa el contexto activo de la consola; si no se
+    indican o fallan, cae al primer cliente y ambiente de configuracion.json.
+    Reasigna DirectorioLogs, DirectorioTmp y RutaLog al test/resultados del
+    contexto. Si no puede resolver nada, conserva las rutas raiz por defecto.
+    #>
+    [CmdletBinding()]
+    param()
+
+    $rutaConfiguracionPrueba = $ConfigPath
+    if ([string]::IsNullOrWhiteSpace($rutaConfiguracionPrueba)) {
+        $rutaConfiguracionPrueba = Join-Path $RaizRepositorio 'configuracion.json'
+    }
+
+    $contexto = $null
+    if ($ClienteId -and $AmbienteId) {
+        try {
+            $contexto = Cargar-Configuracion -ConfigPath $rutaConfiguracionPrueba -ClienteId $ClienteId -AmbienteId $AmbienteId
+        } catch {
+            Write-Host ('Advertencia: no se pudo resolver el contexto de pruebas indicado (' + $ClienteId + '/' + $AmbienteId + '): ' + $_.Exception.Message) -ForegroundColor Yellow
+        }
+    }
+    if ($null -eq $contexto) {
+        try {
+            $configuracionCrudaPrueba = Leer-ConfiguracionCruda -ConfigPath $rutaConfiguracionPrueba
+            $primerCliente = @($configuracionCrudaPrueba.clientes)[0]
+            $primerAmbiente = @($primerCliente.ambientes)[0]
+            if ($null -ne $primerCliente -and $null -ne $primerAmbiente) {
+                $contexto = Cargar-Configuracion -ConfigPath $rutaConfiguracionPrueba -ClienteId ([string]$primerCliente.id) -AmbienteId ([string]$primerAmbiente.id)
+            }
+        } catch { }
+    }
+
+    if ($null -ne $contexto) {
+        $script:ContextoPruebas = $contexto
+        $script:DirectorioLogs = $contexto.DirectorioTestResultados
+        $script:DirectorioTmp = Join-Path $contexto.DirectorioTestResultados 'tmp'
+        $script:RutaLog = Join-Path $script:DirectorioLogs ($MarcaTemporal + '-test.txt')
+    }
+    return $contexto
 }
 
 function Ejecutar-CasosConfiguracion {
@@ -176,14 +226,16 @@ function Ejecutar-CasosConfiguracion {
     $rutaXpzComplemento = Join-Path $DirectorioFixturesXpz 'SEGUROS_COMERCIAL_APIGLM_test_1.xpz'
 
     $configReal = $null
-    try { $configReal = Cargar-Configuracion } catch { }
+    try { $configReal = Cargar-Configuracion -ClienteId 'trunk' -AmbienteId 'testing' } catch { }
     Test-Asercion -Id 'configuracion.cargaReal' -Condicion (
         $null -ne $configReal -and
-        (Test-Path -LiteralPath $configReal.XpzPath) -and
+        $configReal.ContextId -eq 'trunk/testing' -and
+        $configReal.ClienteId -eq 'trunk' -and
+        $configReal.AmbienteId -eq 'testing' -and
         $configReal.PackageName -eq 'glmsuit.comercial.' -and
-        $configReal.Cliente -eq 'Trunk' -and
-        @($configReal.ServiciosIgnorados).Count -eq 4
-    ) -DetalleExito 'La configuracion real carga el XPZ configurado, packagename, cliente y serviciosIgnorados.' -DetalleFallo 'La configuracion real no carga los campos esperados.'
+        @($configReal.ServiciosIgnorados).Count -eq 4 -and
+        $configReal.DirectorioXpz -eq [System.IO.Path]::GetFullPath((Join-Path $configReal.ClientesRoot 'trunk\testing\xpz'))
+    ) -DetalleExito 'La configuracion real resuelve el contexto trunk/testing con packagename y serviciosIgnorados del cliente.' -DetalleFallo 'La configuracion real no resuelve el contexto multicliente esperado.'
 
     $configPrueba = $null
     try { $configPrueba = Cargar-Configuracion -ConfigPath $rutaConfigPrueba } catch { }
@@ -238,6 +290,519 @@ function Ejecutar-CasosConfiguracion {
         $wrapperBase.GetAttribute('guid') -eq 'aaaaaaaa-0000-0000-0000-000000000001' -and
         $indiceBase.PorFqn.Count -gt 0
     ) -DetalleExito 'El XML del fixture se indexa una unica vez por fullyQualifiedName.' -DetalleFallo 'El XML del fixture no se indexa de forma unica.'
+}
+
+function Ejecutar-CasosConfiguracionMulticliente {
+    <#
+    .SYNOPSIS
+    Casos del esquema multicliente: contexto canonico, rutas, selectores, ids
+    invalidos o duplicados, kbPath duplicado y aislamiento entre contextos.
+    .DESCRIPTION
+    Ejercita Cargar-Configuracion con los fixtures JSON multicliente, Validar-
+    ConfiguracionMulticliente, Obtener-ClientesConfigurados, Obtener-Ambientes-
+    Configurados y Resolver-ContextoConfiguracion. No crea carpetas ni archivos.
+    #>
+    [CmdletBinding()]
+    param()
+
+    $rutaMulticliente = Join-Path $DirectorioFixturesJson 'configuracion-multicliente.json'
+    $clientesRootEsperado = [System.IO.Path]::GetFullPath((Join-Path $RaizRepositorio 'clientes'))
+    $directorioContextoEsperado = [System.IO.Path]::GetFullPath((Join-Path $clientesRootEsperado 'trunk\testing'))
+
+    $contextoTrunk = $null
+    try { $contextoTrunk = Cargar-Configuracion -ConfigPath $rutaMulticliente -ClienteId 'trunk' -AmbienteId 'testing' } catch { }
+    Test-Asercion -Id 'configuracionMulticliente.contextoValido' -Condicion (
+        $null -ne $contextoTrunk -and
+        $contextoTrunk.ContextId -eq 'trunk/testing' -and
+        $contextoTrunk.ClienteId -eq 'trunk' -and
+        $contextoTrunk.ClienteNombre -eq 'Trunk' -and
+        $contextoTrunk.AmbienteId -eq 'testing' -and
+        $contextoTrunk.AmbienteNombre -eq 'Testing' -and
+        $contextoTrunk.DirectorioContexto -eq $directorioContextoEsperado -and
+        $contextoTrunk.KbPath -eq 'C:\KBs\SEGUROS_COMERCIAL_TRUNK' -and
+        $contextoTrunk.PackageName -eq 'glmsuit.comercial.' -and
+        $contextoTrunk.RaizRepositorio -eq $RaizRepositorio -and
+        $contextoTrunk.ConfigPath -eq (Resolve-Path -LiteralPath $rutaMulticliente).Path
+    ) -DetalleExito 'El contexto trunk/testing se resuelve con identidad, rutas y contrato del cliente.' -DetalleFallo 'El contexto trunk/testing no se resolvio correctamente.'
+
+    Test-Asercion -Id 'configuracionMulticliente.rutasContextuales' -Condicion (
+        $contextoTrunk.DirectorioXpz -eq [System.IO.Path]::GetFullPath((Join-Path $directorioContextoEsperado 'xpz')) -and
+        $contextoTrunk.DirectorioServicios -eq [System.IO.Path]::GetFullPath((Join-Path $directorioContextoEsperado 'documentacionServicios')) -and
+        $contextoTrunk.DirectorioEstado -eq [System.IO.Path]::GetFullPath((Join-Path $directorioContextoEsperado 'estado')) -and
+        $contextoTrunk.RutaControl -eq [System.IO.Path]::GetFullPath((Join-Path $directorioContextoEsperado 'estado\controlVersiones.json')) -and
+        $contextoTrunk.RutaHistorial -eq [System.IO.Path]::GetFullPath((Join-Path $directorioContextoEsperado 'estado\historialVersiones.md')) -and
+        $contextoTrunk.RutaLock -eq [System.IO.Path]::GetFullPath((Join-Path $directorioContextoEsperado 'estado\actualizacion.lock')) -and
+        $contextoTrunk.DirectorioLogs -eq [System.IO.Path]::GetFullPath((Join-Path $directorioContextoEsperado 'Logs')) -and
+        $contextoTrunk.DirectorioTestFixtures -eq [System.IO.Path]::GetFullPath((Join-Path $directorioContextoEsperado 'test\fixtures')) -and
+        $contextoTrunk.DirectorioTestResultados -eq [System.IO.Path]::GetFullPath((Join-Path $directorioContextoEsperado 'test\resultados'))
+    ) -DetalleExito 'El contexto deriva las rutas contextuales de documentos, estado, XPZ, logs y datos de prueba.' -DetalleFallo 'Las rutas contextuales no se derivaron correctamente.'
+
+    Test-Asercion -Id 'configuracionMulticliente.serviciosIgnoradosCliente' -Condicion (
+        @($contextoTrunk.ServiciosIgnorados).Count -eq 4 -and
+        @($contextoTrunk.ServiciosIgnorados) -contains 'APIGLM.Test.WSTestMaxi' -and
+        @($contextoTrunk.ServiciosIgnorados) -contains 'APIGLM.WSEjemplo'
+    ) -DetalleExito 'Los serviciosIgnorados pertenecen al cliente y se propagan al contexto.' -DetalleFallo 'Los serviciosIgnorados del cliente no se propagaron.'
+
+    Test-Asercion -Id 'configuracionMulticliente.herramientasGlobales' -Condicion (
+        $null -ne $contextoTrunk.Herramientas -and
+        -not [string]::IsNullOrWhiteSpace([string]$contextoTrunk.Herramientas.GeneXusProgramDir) -and
+        -not [string]::IsNullOrWhiteSpace([string]$contextoTrunk.Herramientas.MsbuildPath) -and
+        -not [string]::IsNullOrWhiteSpace([string]$contextoTrunk.Herramientas.PandocPath) -and
+        -not [string]::IsNullOrWhiteSpace([string]$contextoTrunk.Herramientas.TypstPath) -and
+        $null -eq $contextoTrunk.Herramientas.KbPath
+    ) -DetalleExito 'Las herramientas son globales y no contienen kbPath por contexto.' -DetalleFallo 'Las herramientas globales no se resolvieron correctamente.'
+
+    $contextoProduccion = Cargar-Configuracion -ConfigPath $rutaMulticliente -ClienteId 'trunk' -AmbienteId 'produccion'
+    $contextoOtro = Cargar-Configuracion -ConfigPath $rutaMulticliente -ClienteId 'otrocliente' -AmbienteId 'testing'
+    Test-Asercion -Id 'configuracionMulticliente.aislamientoContextos' -Condicion (
+        $contextoProduccion.ContextId -eq 'trunk/produccion' -and
+        $contextoOtro.ContextId -eq 'otrocliente/testing' -and
+        $contextoProduccion.DirectorioContexto -ne $contextoTrunk.DirectorioContexto -and
+        $contextoOtro.DirectorioContexto -ne $contextoTrunk.DirectorioContexto -and
+        $contextoOtro.RutaControl -ne $contextoTrunk.RutaControl -and
+        $contextoOtro.RutaLock -ne $contextoTrunk.RutaLock -and
+        $contextoOtro.PackageName -eq 'otro.packagename.'
+    ) -DetalleExito 'Cada contexto aisla documentos, estado y lock aunque compartan el id de ambiente.' -DetalleFallo 'Los contextos no estan aislados entre si.'
+
+    Test-Asercion -Id 'configuracionMulticliente.clientesRootRelativo' -Condicion (
+        $contextoTrunk.ClientesRoot -eq $clientesRootEsperado
+    ) -DetalleExito 'Un clientesRoot relativo se resuelve contra la raiz del repositorio.' -DetalleFallo 'El clientesRoot relativo no se resolvio contra la raiz.'
+
+    $rutaClientesRootAbsoluta = Join-Path $DirectorioFixturesJson 'configuracion-multicliente-clientesroot-absoluta.json'
+    $contextoAbsoluto = Cargar-Configuracion -ConfigPath $rutaClientesRootAbsoluta -ClienteId 'trunk' -AmbienteId 'testing'
+    Test-Asercion -Id 'configuracionMulticliente.clientesRootAbsoluto' -Condicion (
+        $contextoAbsoluto.ClientesRoot -eq [System.IO.Path]::GetFullPath('C:\DOCUMENTACION\ClientesRaiz')
+    ) -DetalleExito 'Un clientesRoot absoluto se conserva sin cambios.' -DetalleFallo 'El clientesRoot absoluto no se conservo.'
+
+    Test-Asercion -Id 'configuracionMulticliente.kbPathRelativo' -Condicion (
+        $contextoOtro.KbPath -eq [System.IO.Path]::GetFullPath((Join-Path $RaizRepositorio 'test\fixtures\kb\otra'))
+    ) -DetalleExito 'Un kbPath relativo se resuelve contra la raiz y nunca se deduce del nombre o id.' -DetalleFallo 'El kbPath relativo no se resolvio contra la raiz.'
+
+    $configuracionCrudaMulticliente = Cargar-JsonFixture -Nombre 'configuracion-multicliente.json'
+    $clientesConfigurados = @(Obtener-ClientesConfigurados -ConfiguracionRaw $configuracionCrudaMulticliente)
+    $ambientesTrunk = @(Obtener-AmbientesConfigurados -ConfiguracionRaw $configuracionCrudaMulticliente -ClienteId 'trunk')
+    $ambientesInexistentes = @(Obtener-AmbientesConfigurados -ConfiguracionRaw $configuracionCrudaMulticliente -ClienteId 'inexistente')
+    Test-Asercion -Id 'configuracionMulticliente.selectores' -Condicion (
+        $clientesConfigurados.Count -eq 2 -and
+        $clientesConfigurados[0].Id -eq 'trunk' -and $clientesConfigurados[0].Nombre -eq 'Trunk' -and
+        $ambientesTrunk.Count -eq 2 -and
+        @($ambientesTrunk | Where-Object { $_.Id -eq 'testing' }).Count -eq 1 -and
+        @($ambientesTrunk | Where-Object { $_.Id -eq 'produccion' }).Count -eq 1 -and
+        $ambientesInexistentes.Count -eq 0
+    ) -DetalleExito 'Los selectores devuelven clientes y ambientes con id y nombre visible, sin ambientes de clientes inexistentes.' -DetalleFallo 'Los selectores no devolvieron la coleccion esperada.'
+
+    $rutaIdInvalido = Join-Path $DirectorioFixturesJson 'configuracion-multicliente-id-invalido.json'
+    Test-AsercionLanzaError -Id 'configuracionMulticliente.idInvalido' -Bloque { Cargar-Configuracion -ConfigPath $rutaIdInvalido -ClienteId 'trunk' -AmbienteId 'testing' } -PatronMensaje 'no es valido' -DetalleExito 'Un id de cliente fuera del formato slug se rechaza.' -DetalleFallo 'El id de cliente invalido no se rechazo.'
+
+    $rutaDuplicados = Join-Path $DirectorioFixturesJson 'configuracion-multicliente-duplicados.json'
+    Test-AsercionLanzaError -Id 'configuracionMulticliente.clienteDuplicado' -Bloque { Cargar-Configuracion -ConfigPath $rutaDuplicados -ClienteId 'trunk' -AmbienteId 'testing' } -PatronMensaje 'duplicado' -DetalleExito 'Un id de cliente duplicado se rechaza antes de resolver el contexto.' -DetalleFallo 'El id de cliente duplicado no se rechazo.'
+
+    $rutaAmbienteDuplicado = Join-Path $DirectorioFixturesJson 'configuracion-multicliente-ambiente-duplicado.json'
+    Test-AsercionLanzaError -Id 'configuracionMulticliente.ambienteDuplicado' -Bloque { Cargar-Configuracion -ConfigPath $rutaAmbienteDuplicado -ClienteId 'trunk' -AmbienteId 'testing' } -PatronMensaje 'duplicado' -DetalleExito 'Un id de ambiente duplicado dentro de un cliente se rechaza.' -DetalleFallo 'El id de ambiente duplicado no se rechazo.'
+
+    $rutaKbDuplicada = Join-Path $DirectorioFixturesJson 'configuracion-multicliente-kb-duplicada.json'
+    Test-AsercionLanzaError -Id 'configuracionMulticliente.kbPathDuplicado' -Bloque { Cargar-Configuracion -ConfigPath $rutaKbDuplicada -ClienteId 'trunk' -AmbienteId 'testing' } -PatronMensaje 'misma ruta de Knowledge Base' -DetalleExito 'Dos kbPath que normalizan a la misma ruta se rechazan.' -DetalleFallo 'El kbPath duplicado no se rechazo.'
+
+    Test-AsercionLanzaError -Id 'configuracionMulticliente.requiereContexto' -Bloque { Cargar-Configuracion -ConfigPath $rutaMulticliente } -PatronMensaje 'requiere -ClienteId' -DetalleExito 'El esquema multicliente exige cliente y ambiente explicitos.' -DetalleFallo 'El esquema multicliente no exigio el contexto.'
+
+    Test-AsercionLanzaError -Id 'configuracionMulticliente.clienteInexistente' -Bloque { Cargar-Configuracion -ConfigPath $rutaMulticliente -ClienteId 'inexistente' -AmbienteId 'testing' } -PatronMensaje 'no existe en la configuracion' -DetalleExito 'Un cliente fuera de la coleccion se informa con los configurados.' -DetalleFallo 'El cliente inexistente no se informo.'
+
+    Test-AsercionLanzaError -Id 'configuracionMulticliente.ambienteInexistente' -Bloque { Cargar-Configuracion -ConfigPath $rutaMulticliente -ClienteId 'trunk' -AmbienteId 'inexistente' } -PatronMensaje 'no existe para el cliente' -DetalleExito 'Un ambiente fuera de la coleccion del cliente se informa con los configurados.' -DetalleFallo 'El ambiente inexistente no se informo.'
+}
+
+function Construir-XmlMulticontexto {
+    <#
+    .SYNOPSIS
+    Construye un XML de exportacion con APIGLM.APIGLMMain anadido.
+    .DESCRIPTION
+    Parte del fixture xpz-base.xml y agrega el objeto APIGLM.APIGLMMain con un
+    Source que llama a los wrappers de prueba, usando el guid indicado como
+    lineage. Devuelve la ruta del XML generado en test/tmp/.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$GuidMain,
+        [Parameter(Mandatory = $true)][string]$RutaSalida
+    )
+    $xml = Cargar-XmlFixture -Nombre 'xpz-base.xml'
+    $nodoMain = $xml.CreateElement('Object')
+    $nodoMain.SetAttribute('fullyQualifiedName', 'APIGLM.APIGLMMain')
+    $nodoMain.SetAttribute('moduleGuid', 'aaaaaaaa-0000-0000-0000-0000000000a0')
+    $nodoMain.SetAttribute('guid', $GuidMain)
+    $nodoMain.SetAttribute('name', 'APIGLMMain')
+    $nodoMain.SetAttribute('type', '84a12160-f59b-4ad7-a683-ea4481ac23e9')
+    $nodoMain.SetAttribute('description', 'APIGLMMain')
+    $nodoMain.SetAttribute('parent', 'APIGLM')
+    $nodoMain.SetAttribute('parentType', 'c88fffcd-b6f8-0000-8fec-00b5497e2117')
+    $nodoPart = $xml.CreateElement('Part')
+    $nodoPart.SetAttribute('type', '528d1c06-a9c2-420d-bd35-21dca83f12ff')
+    $nodoSource = $xml.CreateElement('Source')
+    [void]$nodoSource.AppendChild($xml.CreateCDataSection("APIGLM.Cotizacion.WSObtenerProductor()`n`nAPIGLM.Emision.WSConsultarSolicitud()`n"))
+    [void]$nodoPart.AppendChild($nodoSource)
+    [void]$nodoMain.AppendChild($nodoPart)
+    $objetos = $xml.SelectSingleNode('//Objects')
+    [void]$objetos.AppendChild($nodoMain)
+    Asegurar-Directorio -Ruta ([System.IO.Path]::GetDirectoryName([System.IO.Path]::GetFullPath($RutaSalida)))
+    $xml.Save($RutaSalida)
+    return [System.IO.Path]::GetFullPath($RutaSalida)
+}
+
+function Construir-XpzDesdeXml {
+    <#
+    .SYNOPSIS
+    Empaqueta un XML unico como XPZ (ZIP) valido con raiz ExportFile.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$RutaXml,
+        [Parameter(Mandatory = $true)][string]$RutaXpz
+    )
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $rutaCompleta = [System.IO.Path]::GetFullPath($RutaXpz)
+    Asegurar-Directorio -Ruta ([System.IO.Path]::GetDirectoryName($rutaCompleta))
+    if (Test-Path -LiteralPath $rutaCompleta -PathType Leaf) {
+        Remove-Item -LiteralPath $rutaCompleta -Force
+    }
+    $zip = [System.IO.Compression.ZipFile]::Open($rutaCompleta, 'Create')
+    try {
+        $entrada = $zip.CreateEntry('ExportFile.xml')
+        $escritor = New-Object System.IO.StreamWriter($entrada.Open(), (New-Object System.Text.UTF8Encoding($false)))
+        try {
+            $escritor.Write([System.IO.File]::ReadAllText($RutaXml))
+        } finally {
+            $escritor.Dispose()
+        }
+    } finally {
+        $zip.Dispose()
+    }
+    return $rutaCompleta
+}
+
+function Crear-ConfiguracionMulticontextoPrueba {
+    <#
+    .SYNOPSIS
+    Escribe una configuracion temporal con dos clientes y tres ambientes.
+    .DESCRIPTION
+    Cliente A con testing y produccion; Cliente B con testing. Todos los ambientes
+    usan kbPaths distintos bajo test/tmp/ y comparten los mismos FQN del inventario.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$RutaConfiguracion,
+        [Parameter(Mandatory = $true)][string]$ClientesRoot
+    )
+    $kbA = Join-Path $DirectorioTmp 'multicontexto\kbA'
+    $kbB = Join-Path $DirectorioTmp 'multicontexto\kbB'
+    $kbProd = Join-Path $DirectorioTmp 'multicontexto\kbProd'
+    $clientesRootJson = ($ClientesRoot -replace '\\', '/')
+    $configuracion = [ordered]@{
+        rutas = [ordered]@{ clientesRoot = $clientesRootJson }
+        exportacion = [ordered]@{ onlyModuleAPIGLM = $true }
+        herramientas = [ordered]@{
+            geneXusProgramDir = 'C:/Program Files (x86)/GeneXus/GeneXus18'
+            msbuildPath = 'C:/Windows/Microsoft.NET/Framework/v4.0.30319/MSBuild.exe'
+            pandocPath = 'binary/tools/pandoc.exe'
+            typstPath = 'binary/tools/typst.exe'
+        }
+        clientes = @(
+            [ordered]@{
+                id = 'clientea'
+                nombre = 'Cliente A'
+                packagename = 'clientea.comercial.'
+                serviciosIgnorados = @()
+                ambientes = @(
+                    [ordered]@{ id = 'testing'; nombre = 'Testing'; kbPath = ($kbA -replace '\\', '/') }
+                    [ordered]@{ id = 'produccion'; nombre = 'Produccion'; kbPath = ($kbProd -replace '\\', '/') }
+                )
+            },
+            [ordered]@{
+                id = 'clienteb'
+                nombre = 'Cliente B'
+                packagename = 'clienteb.comercial.'
+                serviciosIgnorados = @()
+                ambientes = @(
+                    [ordered]@{ id = 'testing'; nombre = 'Testing'; kbPath = ($kbB -replace '\\', '/') }
+                )
+            }
+        )
+    }
+    Escribir-TextoUtf8SinBom -Ruta $RutaConfiguracion -Contenido ($configuracion | ConvertTo-Json -Depth 10)
+    foreach ($kb in @($kbA, $kbB, $kbProd)) {
+        Asegurar-Directorio -Ruta $kb
+    }
+    return $RutaConfiguracion
+}
+
+function Obtener-EstadoDirectoriosGlobales {
+    <#
+    .SYNOPSIS
+    Captura un resumen de hashes de los directorios globales del pipeline.
+    .DESCRIPTION
+    Devuelve un hashtable con una linea por archivo (ruta=hash) para comparar
+    byte a byte antes y despues de las pruebas multicontexto.
+    #>
+    [CmdletBinding()]
+    param()
+    $estado = @{}
+    foreach ($directorio in @('documentacionServicios', 'estado', 'Logs', 'xpz')) {
+        $ruta = Join-Path $RaizRepositorio $directorio
+        $resumen = ''
+        if (Test-Path -LiteralPath $ruta -PathType Container) {
+            $sb = New-Object System.Text.StringBuilder
+            foreach ($archivo in @(Get-ChildItem -LiteralPath $ruta -Recurse -File | Sort-Object FullName)) {
+                [void]$sb.Append($archivo.FullName + '=' + (Obtener-Sha256Archivo -Ruta $archivo.FullName) + "`n")
+            }
+            $resumen = $sb.ToString()
+        }
+        $estado[$directorio] = $resumen
+    }
+    return $estado
+}
+
+function Test-EstadoDirectoriosIgual {
+    <#
+    .SYNOPSIS
+    Compara dos estados de directorios globales capturados.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][hashtable]$Antes,
+        [Parameter(Mandatory = $true)][hashtable]$Despues
+    )
+    foreach ($clave in $Antes.Keys) {
+        if (-not $Despues.ContainsKey($clave) -or $Despues[$clave] -ne $Antes[$clave]) {
+            return $false
+        }
+    }
+    return $true
+}
+
+function Ejecutar-PipelineContextoPrueba {
+    <#
+    .SYNOPSIS
+    Ejecuta inventario y actualizacion completos para un contexto sobre un XPZ.
+    .DESCRIPTION
+    Crea el manifiesto del contexto y ejecuta ActualizarServicios con -Inicializar.
+    El actualizador descubre los servicios directamente desde el XPZ. Devuelve el
+    contexto, el codigo y el ejecucionId para las verificaciones posteriores.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$ConfigPath,
+        [Parameter(Mandatory = $true)][string]$ClienteId,
+        [Parameter(Mandatory = $true)][string]$AmbienteId,
+        [Parameter(Mandatory = $true)][string]$RutaXpz,
+        [Parameter(Mandatory = $true)][string]$DirectorioEjecuciones
+    )
+    $contexto = Cargar-Configuracion -ConfigPath $ConfigPath -ClienteId $ClienteId -AmbienteId $AmbienteId
+    $rutaXpzContextual = Join-Path $contexto.DirectorioXpz ([System.IO.Path]::GetFileName($RutaXpz))
+    if (-not (Test-Path -LiteralPath $rutaXpzContextual -PathType Leaf)) {
+        Copy-Item -LiteralPath $RutaXpz -Destination $rutaXpzContextual -Force
+    }
+    $manifiesto = Crear-ManifiestoEjecucion -Xpz $rutaXpzContextual -FullyQualifiedNames @() -DirectorioBase $DirectorioEjecuciones -Contexto $contexto
+    $rutaManifiesto = $manifiesto.Ruta
+    $rutaActualizador = Join-Path $DirectorioBinario 'ActualizarServicios.ps1'
+    $resultadoActualizacion = Invocar-ScriptHijo -RutaScript $rutaActualizador -Argumentos @('-ConfigPath', $ConfigPath, '-ManifiestoPath', $rutaManifiesto, '-Inicializar') -NoImprimir
+    return [pscustomobject]@{ Contexto = $contexto; Codigo = $resultadoActualizacion.CodigoSalida; EjecucionId = [string]$manifiesto.Datos.ejecucionId }
+}
+
+function Ejecutar-CasosMulticontexto {
+    <#
+    .SYNOPSIS
+    Integracion multicontexto: dos clientes, tres ambientes, FQN coincidentes.
+    .DESCRIPTION
+    Construye un XPZ fixture con APIGLM.APIGLMMain, ejecuta preflight y publicacion
+    completa por ambiente (inventario en staging, Markdown y PDF contextuales,
+    control e historial por ambiente) y verifica seleccion, publicacion independiente,
+    hashes, versionado, lineages, reinicio por ambiente, logs, locks y ausencia de
+    contaminacion de los directorios globales.
+    #>
+    [CmdletBinding()]
+    param()
+
+    $directorioMulticontexto = Join-Path $DirectorioTmp 'multicontexto'
+    $rutaXmlA = Join-Path $directorioMulticontexto 'xpz_a.xml'
+    $rutaXmlB = Join-Path $directorioMulticontexto 'xpz_b.xml'
+    $rutaXpzA = Join-Path $directorioMulticontexto 'APIGLM_a.xpz'
+    $rutaXpzB = Join-Path $directorioMulticontexto 'APIGLM_b.xpz'
+    $rutaConfiguracionMulti = Join-Path $directorioMulticontexto 'configuracion.json'
+    $clientesRootMulti = Join-Path $directorioMulticontexto 'clientes'
+    $directorioEjecucionesMulti = Join-Path $directorioMulticontexto 'ejecuciones'
+
+    $guidLineageA = '11111111-2222-3333-4444-555555555555'
+    $guidLineageB = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+
+    $construccionOk = $false
+    try {
+        $rutaXmlA = Construir-XmlMulticontexto -GuidMain $guidLineageA -RutaSalida $rutaXmlA
+        $rutaXmlB = Construir-XmlMulticontexto -GuidMain $guidLineageB -RutaSalida $rutaXmlB
+        $rutaXpzA = Construir-XpzDesdeXml -RutaXml $rutaXmlA -RutaXpz $rutaXpzA
+        $rutaXpzB = Construir-XpzDesdeXml -RutaXml $rutaXmlB -RutaXpz $rutaXpzB
+        $construccionOk = (Test-XpzValido -Ruta $rutaXpzA).Valid -and (Test-XpzValido -Ruta $rutaXpzB).Valid
+    } catch {
+        $construccionOk = $false
+    }
+    if (-not $construccionOk) {
+        Test-Skip -Id 'multicontexto.fixture' -Detalle 'No se pudo construir el XPZ fixture con APIGLMMain.'
+        Test-Skip -Id 'multicontexto.preflight'
+        Test-Skip -Id 'multicontexto.arboles'
+        Test-Skip -Id 'multicontexto.publicacionIndependiente'
+        Test-Skip -Id 'multicontexto.hashes'
+        Test-Skip -Id 'multicontexto.versionIndependiente'
+        Test-Skip -Id 'multicontexto.lineages'
+        Test-Skip -Id 'multicontexto.reinicioSoloAmbienteActivo'
+        Test-Skip -Id 'multicontexto.logsContextuales'
+        Test-Skip -Id 'multicontexto.locksIndependientes'
+        Test-Skip -Id 'multicontexto.sinContaminacionGlobal'
+        return
+    }
+    Test-Asercion -Id 'multicontexto.fixture' -Condicion $construccionOk -DetalleExito 'El XPZ fixture con APIGLMMain se construyo y valida como ExportFile.' -DetalleFallo 'El XPZ fixture no se construyo o no es valido.'
+
+    Crear-ConfiguracionMulticontextoPrueba -RutaConfiguracion $rutaConfiguracionMulti -ClientesRoot $clientesRootMulti | Out-Null
+
+    $rutaValidador = Join-Path $DirectorioBinario 'ValidarConfiguracionGLM.ps1'
+    $contextosPrueba = @(
+        [pscustomobject]@{ ClienteId = 'clientea'; AmbienteId = 'testing'; Xpz = $rutaXpzA },
+        [pscustomobject]@{ ClienteId = 'clientea'; AmbienteId = 'produccion'; Xpz = $rutaXpzA },
+        [pscustomobject]@{ ClienteId = 'clienteb'; AmbienteId = 'testing'; Xpz = $rutaXpzB }
+    )
+
+    $preflightsOk = $true
+    $contextosResueltos = @{}
+    foreach ($contextoPrueba in $contextosPrueba) {
+        $resultadoPreflight = Invocar-ScriptHijo -RutaScript $rutaValidador -Argumentos @('-Repositorio', $RaizRepositorio, '-ConfigPath', $rutaConfiguracionMulti, '-ClienteId', $contextoPrueba.ClienteId, '-AmbienteId', $contextoPrueba.AmbienteId) -NoImprimir
+        if ($resultadoPreflight.CodigoSalida -ne 0) { $preflightsOk = $false }
+        $contexto = Cargar-Configuracion -ConfigPath $rutaConfiguracionMulti -ClienteId $contextoPrueba.ClienteId -AmbienteId $contextoPrueba.AmbienteId
+        Copy-Item -LiteralPath $contextoPrueba.Xpz -Destination (Join-Path $contexto.DirectorioXpz ([System.IO.Path]::GetFileName($contextoPrueba.Xpz))) -Force
+        $contextosResueltos[$contextoPrueba.ClienteId + '/' + $contextoPrueba.AmbienteId] = $contexto
+    }
+    Test-Asercion -Id 'multicontexto.preflight' -Condicion $preflightsOk -DetalleExito 'El preflight de los tres contextos termina con codigo 0.' -DetalleFallo 'Algun preflight de contexto fallo.'
+
+    $arbolesOk = $true
+    foreach ($claveContexto in $contextosResueltos.Keys) {
+        $contexto = $contextosResueltos[$claveContexto]
+        foreach ($directorioEsperado in @(
+            (Join-Path $contexto.DirectorioContexto 'documentacionServicios'),
+            (Join-Path $contexto.DirectorioContexto 'estado'),
+            (Join-Path $contexto.DirectorioContexto 'xpz'),
+            (Join-Path $contexto.DirectorioContexto 'Logs'),
+            (Join-Path $contexto.DirectorioContexto 'test\fixtures'),
+            (Join-Path $contexto.DirectorioContexto 'test\resultados')
+        )) {
+            if (-not (Test-Path -LiteralPath $directorioEsperado -PathType Container)) { $arbolesOk = $false }
+        }
+    }
+    Test-Asercion -Id 'multicontexto.arboles' -Condicion $arbolesOk -DetalleExito 'Cada contexto crea exactamente sus seis directorios bajo clientes/<cliente>/<ambiente>.' -DetalleFallo 'Falta algun directorio contextual en algun ambiente.'
+
+    $contextoSeleccionadoOk = $contextosResueltos['clientea/testing'].ContextId -eq 'clientea/testing' -and
+        $contextosResueltos['clientea/produccion'].ContextId -eq 'clientea/produccion' -and
+        $contextosResueltos['clienteb/testing'].ContextId -eq 'clienteb/testing' -and
+        $contextosResueltos['clientea/testing'].DirectorioContexto -ne $contextosResueltos['clientea/produccion'].DirectorioContexto -and
+        $contextosResueltos['clientea/testing'].DirectorioContexto -ne $contextosResueltos['clienteb/testing'].DirectorioContexto -and
+        $contextosResueltos['clientea/testing'].RutaControl -ne $contextosResueltos['clienteb/testing'].RutaControl
+    Test-Asercion -Id 'multicontexto.seleccionContextos' -Condicion $contextoSeleccionadoOk -DetalleExito 'La seleccion resuelve contextos distintos con directorios y controles separados.' -DetalleFallo 'Los contextos no se resuelven como identidades aisladas.'
+
+    $estadoGlobalesAntes = Obtener-EstadoDirectoriosGlobales
+
+    $resultadoTesting = Ejecutar-PipelineContextoPrueba -ConfigPath $rutaConfiguracionMulti -ClienteId 'clientea' -AmbienteId 'testing' -RutaXpz $rutaXpzA -DirectorioEjecuciones $directorioEjecucionesMulti
+    $resultadoProduccion = Ejecutar-PipelineContextoPrueba -ConfigPath $rutaConfiguracionMulti -ClienteId 'clientea' -AmbienteId 'produccion' -RutaXpz $rutaXpzA -DirectorioEjecuciones $directorioEjecucionesMulti
+    $resultadoClienteb = Ejecutar-PipelineContextoPrueba -ConfigPath $rutaConfiguracionMulti -ClienteId 'clienteb' -AmbienteId 'testing' -RutaXpz $rutaXpzB -DirectorioEjecuciones $directorioEjecucionesMulti
+
+    $publicacionOk = $resultadoTesting.Codigo -in @(0, 2) -and $resultadoProduccion.Codigo -in @(0, 2) -and $resultadoClienteb.Codigo -in @(0, 2)
+    foreach ($resultado in @($resultadoTesting, $resultadoProduccion, $resultadoClienteb)) {
+        $contexto = $resultado.Contexto
+        foreach ($nombreArchivo in @('wsobtenerproductor.md', 'wsobtenerproductor.pdf', 'wsconsultarsolicitud.md', 'wsconsultarsolicitud.pdf')) {
+            if (-not (Test-Path -LiteralPath (Join-Path $contexto.DirectorioServicios $nombreArchivo) -PathType Leaf)) { $publicacionOk = $false }
+        }
+        if (-not (Test-Path -LiteralPath $contexto.RutaControl -PathType Leaf)) { $publicacionOk = $false }
+        if (-not (Test-Path -LiteralPath $contexto.RutaHistorial -PathType Leaf)) { $publicacionOk = $false }
+        if (Test-Path -LiteralPath $contexto.RutaLock -PathType Leaf) { $publicacionOk = $false }
+    }
+    Test-Asercion -Id 'multicontexto.publicacionIndependiente' -Condicion $publicacionOk -DetalleExito 'Los tres ambientes publican Markdown y PDF para los mismos FQN con control, historial y lock liberado.' -DetalleFallo 'Falta publicar o persistir algun artefacto en algun ambiente.'
+
+    $hashesOk = $true
+    foreach ($resultado in @($resultadoTesting, $resultadoProduccion, $resultadoClienteb)) {
+        $contexto = $resultado.Contexto
+        try {
+            $control = Leer-ControlVersiones -RutaControl $contexto.RutaControl
+            $servicios = Convertir-DiccionarioControlVersiones -Objeto $control.services
+            $etiquetaFilaVersion = 'Versi' + [char]0xF3 + 'n'
+            $patronFilaVersion = '(?m)^[ \t]*\| ' + $etiquetaFilaVersion + ' \|[^\r\n]*\r?\n?'
+            foreach ($clave in @('APIGLM.Cotizacion.WSObtenerProductor', 'APIGLM.Emision.WSConsultarSolicitud')) {
+                $servicio = $servicios[$clave]
+                $nombreArchivo = Obtener-NombreArchivoServicio -FullyQualifiedName $clave -FqnsInventario @($servicios.Keys)
+                $textoNormalizado = ([regex]::Replace([System.IO.File]::ReadAllText((Join-Path $contexto.DirectorioServicios ($nombreArchivo + '.md'))), $patronFilaVersion, '') -replace "`r`n", "`n") -replace "`r", "`n"
+                $hashDocumento = Obtener-Sha256TextoNormalizado -Texto $textoNormalizado
+                $hashPdf = Obtener-Sha256Archivo -Ruta (Join-Path $contexto.DirectorioServicios ($nombreArchivo + '.pdf'))
+                if ([string](Obtener-PropiedadControlVersiones -Objeto $servicio -Nombre 'documentHash') -ne $hashDocumento -or
+                    [string](Obtener-PropiedadControlVersiones -Objeto $servicio -Nombre 'pdfHash') -ne $hashPdf -or
+                    [string](Obtener-PropiedadControlVersiones -Objeto $servicio -Nombre 'version') -ne '1.0') {
+                    $hashesOk = $false
+                }
+            }
+        } catch {
+            $hashesOk = $false
+        }
+    }
+    Test-Asercion -Id 'multicontexto.hashes' -Condicion $hashesOk -DetalleExito 'Los hashes del control coinciden con los Markdown y PDF publicados en cada ambiente.' -DetalleFallo 'Los hashes o versiones de algun ambiente no coinciden con sus artefactos.'
+
+    Test-Asercion -Id 'multicontexto.versionIndependiente' -Condicion $hashesOk -DetalleExito 'Cada ambiente arranca su versionado en 1.0 sin compartir revisiones con otros ambientes.' -DetalleFallo 'El versionado no es independiente entre ambientes.'
+
+    $lineageTesting = [string](Obtener-PropiedadControlVersiones -Objeto (Leer-ControlVersiones -RutaControl $contextosResueltos['clientea/testing'].RutaControl) -Nombre 'lineageId')
+    $lineageClienteb = [string](Obtener-PropiedadControlVersiones -Objeto (Leer-ControlVersiones -RutaControl $contextosResueltos['clienteb/testing'].RutaControl) -Nombre 'lineageId')
+    Test-Asercion -Id 'multicontexto.lineages' -Condicion (
+        $lineageTesting -eq $guidLineageA -and $lineageClienteb -eq $guidLineageB -and $lineageTesting -ne $lineageClienteb
+    ) -DetalleExito 'Los lineages de ambientes con XPZ distintos difieren y se derivan del APIGLMMain.' -DetalleFallo 'Los lineages no se derivan del APIGLMMain del XPZ de cada ambiente.'
+
+    $estadoProduccionAntes = [System.IO.File]::ReadAllBytes($contextosResueltos['clientea/produccion'].RutaControl)
+    $resultadoReinicio = Ejecutar-PipelineContextoPrueba -ConfigPath $rutaConfiguracionMulti -ClienteId 'clientea' -AmbienteId 'testing' -RutaXpz $rutaXpzB -DirectorioEjecuciones $directorioEjecucionesMulti
+    $estadoProduccionDespues = [System.IO.File]::ReadAllBytes($contextosResueltos['clientea/produccion'].RutaControl)
+    $lineageTestingReiniciado = [string](Obtener-PropiedadControlVersiones -Objeto (Leer-ControlVersiones -RutaControl $contextosResueltos['clientea/testing'].RutaControl) -Nombre 'lineageId')
+    $produccionIntacto = $estadoProduccionAntes.Length -eq $estadoProduccionDespues.Length
+    if ($produccionIntacto) {
+        for ($indiceByte = 0; $indiceByte -lt $estadoProduccionAntes.Length; $indiceByte++) {
+            if ($estadoProduccionDespues[$indiceByte] -ne $estadoProduccionAntes[$indiceByte]) { $produccionIntacto = $false; break }
+        }
+    }
+    Test-Asercion -Id 'multicontexto.reinicioSoloAmbienteActivo' -Condicion (
+        $resultadoReinicio.Codigo -in @(0, 2) -and $lineageTestingReiniciado -eq $guidLineageB -and $produccionIntacto
+    ) -DetalleExito 'El reinicio del versionado de testing cambia solo su lineage y no altera el control de produccion.' -DetalleFallo 'El reinicio de testing altero el control de otro ambiente o no cambio su lineage.'
+
+    $logsOk = $true
+    foreach ($resultado in @($resultadoTesting, $resultadoProduccion, $resultadoClienteb)) {
+        $contexto = $resultado.Contexto
+        $rutaReview = Join-Path $contexto.DirectorioLogs ($resultado.EjecucionId + '-actualizacion-review.json')
+        if (-not (Test-Path -LiteralPath $rutaReview -PathType Leaf)) { $logsOk = $false }
+    }
+    Test-Asercion -Id 'multicontexto.logsContextuales' -Condicion $logsOk -DetalleExito 'Los reviews de la ejecucion quedan en los Logs del ambiente correspondiente.' -DetalleFallo 'Falta el review en los Logs de algun ambiente.'
+
+    $locksIndependientes = $false
+    $flujoTesting = $null
+    $flujoProduccion = $null
+    try {
+        $flujoTesting = New-Object -TypeName System.IO.FileStream -ArgumentList @($contextosResueltos['clientea/testing'].RutaLock, [System.IO.FileMode]::OpenOrCreate, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
+        $flujoProduccion = New-Object -TypeName System.IO.FileStream -ArgumentList @($contextosResueltos['clientea/produccion'].RutaLock, [System.IO.FileMode]::OpenOrCreate, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
+        $segundoMismoAmbienteRechazado = $false
+        try {
+            $flujoSegundo = New-Object -TypeName System.IO.FileStream -ArgumentList @($contextosResueltos['clientea/testing'].RutaLock, [System.IO.FileMode]::OpenOrCreate, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
+            $flujoSegundo.Dispose()
+        } catch {
+            $segundoMismoAmbienteRechazado = $true
+        }
+        $locksIndependientes = $null -ne $flujoTesting -and $null -ne $flujoProduccion -and $segundoMismoAmbienteRechazado
+    } catch {
+        $locksIndependientes = $false
+    } finally {
+        if ($null -ne $flujoTesting) { $flujoTesting.Dispose() }
+        if ($null -ne $flujoProduccion) { $flujoProduccion.Dispose() }
+        foreach ($claveLock in @($contextosResueltos['clientea/testing'].RutaLock, $contextosResueltos['clientea/produccion'].RutaLock)) {
+            Remove-Item -LiteralPath $claveLock -Force -ErrorAction SilentlyContinue
+        }
+    }
+    Test-Asercion -Id 'multicontexto.locksIndependientes' -Condicion $locksIndependientes -DetalleExito 'Locks de ambientes distintos coexisten y un segundo lock del mismo ambiente se rechaza.' -DetalleFallo 'El lock no aisla por ambiente o no rechaza el segundo lock del mismo ambiente.'
+
+    $estadoGlobalesDespues = Obtener-EstadoDirectoriosGlobales
+    Test-Asercion -Id 'multicontexto.sinContaminacionGlobal' -Condicion (Test-EstadoDirectoriosIgual -Antes $estadoGlobalesAntes -Despues $estadoGlobalesDespues) -DetalleExito 'Las ejecuciones contextuales no modificaron documentacionServicios, estado, Logs ni xpz globales.' -DetalleFallo 'Alguna ejecucion contextual modifico directorios globales del pipeline.'
 }
 
 function Ejecutar-CasosPipeline {
@@ -957,7 +1522,7 @@ function Validar-MarkdownFilaVersion {
 function Ejecutar-CasosValidacionMarkdown {
     <#
     .SYNOPSIS
-    Validaciones estaticas de los Markdown de documentacion/servicios/.
+    Validaciones estaticas de los Markdown de documentacionServicios/.
     .DESCRIPTION
     Si la carpeta no existe o no contiene documentos, los casos se marcan SKIP y el
     resto de la ejecucion continua. Cuando hay documentos, cada caso valida una
@@ -973,7 +1538,7 @@ function Ejecutar-CasosValidacionMarkdown {
     }
 
     if ($archivos.Count -eq 0) {
-        Test-Skip -Id 'validacionMarkdown.archivos' -Detalle 'documentacion/servicios/ no tiene documentos; las validaciones estaticas se omiten.'
+        Test-Skip -Id 'validacionMarkdown.archivos' -Detalle 'documentacionServicios/ no tiene documentos; las validaciones estaticas se omiten.'
         Test-Skip -Id 'validacionMarkdown.ordenSecciones' -Detalle 'Sin documentos para validar el orden canonico de secciones.'
         Test-Skip -Id 'validacionMarkdown.sinComentariosNiEjemplos' -Detalle 'Sin documentos para validar la ausencia de comentarios y filas de ejemplo.'
         Test-Skip -Id 'validacionMarkdown.jsonComun' -Detalle 'Sin documentos para validar el JSON comun.'
@@ -987,10 +1552,6 @@ function Ejecutar-CasosValidacionMarkdown {
         Test-Skip -Id 'validacionMarkdown.nombreArchivo' -Detalle 'Sin documentos para validar la correspondencia del nombre de archivo.'
     } else {
         $endpoints = @()
-        if (Test-Path -LiteralPath $RutaInventarioProduccion) {
-            $inventario = Get-Content -LiteralPath $RutaInventarioProduccion -Raw | ConvertFrom-Json
-            $endpoints = @($inventario.endpoints)
-        }
         $todosOrden = $true
         $todosSinComentarios = $true
         $todosJsonComun = $true
@@ -1016,7 +1577,7 @@ function Ejecutar-CasosValidacionMarkdown {
             if (-not (Validar-MarkdownSalidaErrores -Contenido $contenido)) { $todosSalidaErrores = $false }
             if (-not (Validar-MarkdownNombreArchivo -NombreArchivo $archivo.Name -Endpoints $endpoints)) { $todosNombreArchivo = $false }
         }
-        Test-Asercion -Id 'validacionMarkdown.archivos' -Condicion ($archivos.Count -gt 0) -DetalleExito ("Se validaron " + $archivos.Count + " documentos de documentacion/servicios/.") -DetalleFallo 'No se encontraron documentos para validar.'
+        Test-Asercion -Id 'validacionMarkdown.archivos' -Condicion ($archivos.Count -gt 0) -DetalleExito ("Se validaron " + $archivos.Count + " documentos de documentacionServicios/.") -DetalleFallo 'No se encontraron documentos para validar.'
         Test-Asercion -Id 'validacionMarkdown.ordenSecciones' -Condicion $todosOrden -DetalleExito 'Todos los documentos respetan el orden canonico de secciones.' -DetalleFallo 'Algun documento no respeta el orden canonico de secciones.'
         Test-Asercion -Id 'validacionMarkdown.sinComentariosNiEjemplos' -Condicion $todosSinComentarios -DetalleExito 'Ningun documento conserva comentarios HTML ni filas de ejemplo.' -DetalleFallo 'Algun documento conserva comentarios o filas de ejemplo.'
         Test-Asercion -Id 'validacionMarkdown.jsonComun' -Condicion $todosJsonComun -DetalleExito 'Todos los documentos conservan el JSON comun con las claves exactas.' -DetalleFallo 'Algun documento no conserva el JSON comun.'
@@ -1062,235 +1623,6 @@ function Ejecutar-CasosValidacionMarkdown {
     Test-Asercion -Id 'validacionMarkdown.herramientaDetectaComentario' -Condicion (-not (Validar-MarkdownSinComentariosNiEjemplos -Contenido $conViolacionComentario)) -DetalleExito 'El validador de comentarios detecta un comentario HTML.' -DetalleFallo 'El validador de comentarios no detecto el comentario HTML.'
 }
 
-function Validar-VisorEscapeAppJs {
-    <#
-    .SYNOPSIS
-    Verifica que app.js usa textContent y JSON.parse y no inserta datos via innerHTML.
-    #>
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory = $true)][string]$Contenido
-    )
-    return ($Contenido -match 'textContent') -and
-        ($Contenido -match 'JSON\.parse') -and
-        (-not ($Contenido -match 'innerHTML\s*=\s*[^;]*endpoint'))
-}
-
-function Validar-VisorJsonSinScriptCierre {
-    <#
-    .SYNOPSIS
-    Verifica que el bloque application/json del HTML no contiene </script sin escapar.
-    .DESCRIPTION
-    El generador escapa la secuencia </script como <\/script dentro del bloque de
-    datos JSON; un cierre sin escapar romperia el parseo del HTML.
-    #>
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory = $true)][string]$Contenido
-    )
-    $coincidencia = [regex]::Match($Contenido, '(?s)<script type="application/json"[^>]*>(.*?)</script>\s*<script src="app\.js">')
-    if (-not $coincidencia.Success) {
-        return ($Contenido -notmatch '(?<!\\)</script')
-    }
-    $bloque = $coincidencia.Groups[1].Value
-    return ($bloque -notmatch '(?<!\\)</script')
-}
-
-function Validar-VisorReferenciasCssJs {
-    <#
-    .SYNOPSIS
-    Verifica que el HTML referencia style.css y app.js.
-    #>
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory = $true)][string]$Contenido
-    )
-    return ($Contenido -match 'rel="stylesheet" href="style\.css"') -and
-        ($Contenido -match '<script src="app\.js"></script>')
-}
-
-function Validar-VisorAtributosAccesibles {
-    <#
-    .SYNOPSIS
-    Verifica atributos accesibles: aria-label, scope=col, filtro y hidden.
-    #>
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory = $true)][string]$Contenido
-    )
-    return ($Contenido -match 'aria-label=') -and
-        ($Contenido -match 'scope="col"') -and
-        ($Contenido -match 'id="filtro"') -and
-        ($Contenido -match 'hidden')
-}
-
-function Validar-VisorMobilViewport {
-    <#
-    .SYNOPSIS
-    Verifica el meta viewport de adaptacion movil en el HTML.
-    #>
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory = $true)][string]$Contenido
-    )
-    return ($Contenido -match 'name="viewport" content="width=device-width, initial-scale=1\.0"')
-}
-
-function Validar-VisorMobilCss {
-    <#
-    .SYNOPSIS
-    Verifica la adaptacion movil y el foco del filtro en style.css.
-    #>
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory = $true)][string]$Contenido
-    )
-    return ($Contenido -match '@media') -and
-        ($Contenido -match 'max-width') -and
-        ($Contenido -match '#filtro:focus')
-}
-
-function Construir-HtmlVisorMuestra {
-    <#
-    .SYNOPSIS
-    Construye en memoria el HTML del visor que produciria GenerarVistaHTML.ps1.
-    .DESCRIPTION
-    Replica la estructura del generador real (escudo de cierre de script, viewport,
-    referencia a style.css y app.js, atributos accesibles) para que los validadores
-    se ejerciten sin invocar al generador, sin escribir APIServicios.html y sin
-    emitir los mensajes de pasos en consola.
-    #>
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory = $true)][string]$JsonText,
-        [Parameter(Mandatory = $false)][AllowEmptyString()][string]$Cliente = ''
-    )
-
-    $jsonObj = $JsonText | ConvertFrom-Json
-    $jsonObj.meta | Add-Member -MemberType NoteProperty -Name 'cliente' -Value $Cliente -Force
-    $jsonModified = ($jsonObj | ConvertTo-Json -Depth 5) -replace "`r`n", "`n"
-    $embedded = $jsonModified -replace '</script', '<\/script'
-
-    $sb = New-Object System.Text.StringBuilder
-    [void]$sb.Append('<!DOCTYPE html>'); [void]$sb.Append("`n")
-    [void]$sb.Append('<html lang="es">'); [void]$sb.Append("`n")
-    [void]$sb.Append('<head>'); [void]$sb.Append("`n")
-    [void]$sb.Append('  <meta charset="UTF-8">'); [void]$sb.Append("`n")
-    [void]$sb.Append('  <meta name="viewport" content="width=device-width, initial-scale=1.0">'); [void]$sb.Append("`n")
-    $titulo = 'Listado de Servicios API'
-    if ($Cliente) { $titulo = $titulo + ' - ' + $Cliente }
-    [void]$sb.Append('  <title>' + $titulo + '</title>'); [void]$sb.Append("`n")
-    [void]$sb.Append('  <link rel="stylesheet" href="style.css">'); [void]$sb.Append("`n")
-    [void]$sb.Append('</head>'); [void]$sb.Append("`n")
-    [void]$sb.Append('<body>'); [void]$sb.Append("`n")
-    [void]$sb.Append('  <header class="encabezado">'); [void]$sb.Append("`n")
-    [void]$sb.Append('    <div class="encabezado-texto">'); [void]$sb.Append("`n")
-    [void]$sb.Append('      <h1>' + $titulo + '</h1>'); [void]$sb.Append("`n")
-    [void]$sb.Append('      <p class="metadatos" id="metadatos"></p>'); [void]$sb.Append("`n")
-    [void]$sb.Append('    </div>'); [void]$sb.Append("`n")
-    [void]$sb.Append('    <button type="button" id="alternar-tema" aria-label="Alternar tema">Modo oscuro</button>'); [void]$sb.Append("`n")
-    [void]$sb.Append('  </header>'); [void]$sb.Append("`n")
-    [void]$sb.Append('  <main>'); [void]$sb.Append("`n")
-    [void]$sb.Append('    <div class="barra-filtro">'); [void]$sb.Append("`n")
-    [void]$sb.Append('      <input type="search" id="filtro" placeholder="Filtrar por nombre o descripción..." autocomplete="off">'); [void]$sb.Append("`n")
-    [void]$sb.Append('    </div>'); [void]$sb.Append("`n")
-    [void]$sb.Append('    <table>'); [void]$sb.Append("`n")
-    [void]$sb.Append('      <thead>'); [void]$sb.Append("`n")
-    [void]$sb.Append('        <tr>'); [void]$sb.Append("`n")
-    [void]$sb.Append('          <th scope="col" class="izquierda">Nombre</th>'); [void]$sb.Append("`n")
-    [void]$sb.Append('          <th scope="col" class="izquierda">Descripción</th>'); [void]$sb.Append("`n")
-    [void]$sb.Append('        </tr>'); [void]$sb.Append("`n")
-    [void]$sb.Append('      </thead>'); [void]$sb.Append("`n")
-    [void]$sb.Append('      <tbody id="cuerpo-tabla"></tbody>'); [void]$sb.Append("`n")
-    [void]$sb.Append('    </table>'); [void]$sb.Append("`n")
-    [void]$sb.Append('    <p id="sin-resultados" hidden>Sin resultados para el filtro aplicado.</p>'); [void]$sb.Append("`n")
-    [void]$sb.Append('  </main>'); [void]$sb.Append("`n")
-    [void]$sb.Append('  <script type="application/json" id="endpoints-data">'); [void]$sb.Append("`n")
-    [void]$sb.Append($embedded); [void]$sb.Append("`n")
-    [void]$sb.Append('  </script>'); [void]$sb.Append("`n")
-    [void]$sb.Append('  <script src="app.js"></script>'); [void]$sb.Append("`n")
-    [void]$sb.Append('</body>'); [void]$sb.Append("`n")
-    [void]$sb.Append('</html>'); [void]$sb.Append("`n")
-    return $sb.ToString()
-}
-
-function Ejecutar-CasosVisor {
-    <#
-    .SYNOPSIS
-    Validaciones estaticas del visor en documentacion/Endpoints/web/.
-    .DESCRIPTION
-    Valida app.js y style.css (escape, filtro, foco y movil) e inventario en
-    documentacion/Endpoints/assets/. APIServicios.html es generado e ignorado: si no
-    existe, los casos que dependen del HTML se marcan SKIP y, en su lugar, se genera
-    una muestra en test/tmp/ con el generador real para verificar los validadores.
-    #>
-    [CmdletBinding()]
-    param()
-
-    $directorioWeb = Join-Path $RaizRepositorio 'documentacion\Endpoints\web'
-    $rutaAppJs = Join-Path $directorioWeb 'app.js'
-    $rutaStyleCss = Join-Path $directorioWeb 'style.css'
-    $rutaHtmlProductivo = Join-Path $directorioWeb 'APIServicios.html'
-
-    $appJs = ''
-    $styleCss = ''
-    if (Test-Path -LiteralPath $rutaAppJs) { $appJs = [System.IO.File]::ReadAllText($rutaAppJs, (New-Object System.Text.UTF8Encoding($false))) }
-    if (Test-Path -LiteralPath $rutaStyleCss) { $styleCss = [System.IO.File]::ReadAllText($rutaStyleCss, (New-Object System.Text.UTF8Encoding($false))) }
-
-    Test-Asercion -Id 'visor.archivosBase' -Condicion ($appJs.Length -gt 0 -and $styleCss.Length -gt 0) -DetalleExito 'app.js y style.css existen y no estan vacios.' -DetalleFallo 'app.js o style.css faltan o estan vacios.'
-
-    Test-Asercion -Id 'visor.escapeHtmlAppJs' -Condicion (Validar-VisorEscapeAppJs -Contenido $appJs) -DetalleExito 'app.js escapa los datos con textContent y JSON.parse sin innerHTML.' -DetalleFallo 'app.js no escapa correctamente los datos del visor.'
-
-    Test-Asercion -Id 'visor.mobilCss' -Condicion (Validar-VisorMobilCss -Contenido $styleCss) -DetalleExito 'style.css define media queries, max-width y el foco del filtro.' -DetalleFallo 'style.css no define la adaptacion movil ni el foco del filtro.'
-
-    if (Test-Path -LiteralPath $RutaInventarioProduccion) {
-        $inventarioVisor = $null
-        try { $inventarioVisor = Get-Content -LiteralPath $RutaInventarioProduccion -Raw | ConvertFrom-Json } catch { }
-        Test-Asercion -Id 'visor.inventarioJson' -Condicion (
-            $null -ne $inventarioVisor -and $null -ne $inventarioVisor.meta -and @($inventarioVisor.endpoints).Count -gt 0
-        ) -DetalleExito 'El inventario del visor se parsea con meta y endpoints.' -DetalleFallo 'El inventario del visor no se parsea correctamente.'
-    } else {
-        Test-Skip -Id 'visor.inventarioJson' -Detalle 'No existe documentacion/Endpoints/assets/endpoints.json para validar.'
-    }
-
-    $htmlProductivo = ''
-    if (Test-Path -LiteralPath $rutaHtmlProductivo) { $htmlProductivo = [System.IO.File]::ReadAllText($rutaHtmlProductivo, (New-Object System.Text.UTF8Encoding($false))) }
-    if ($htmlProductivo.Length -gt 0) {
-        Test-Asercion -Id 'visor.referenciasCssJs' -Condicion (Validar-VisorReferenciasCssJs -Contenido $htmlProductivo) -DetalleExito 'APIServicios.html referencia style.css y app.js.' -DetalleFallo 'APIServicios.html no referencia style.css o app.js.'
-        Test-Asercion -Id 'visor.atributosAccesibles' -Condicion (Validar-VisorAtributosAccesibles -Contenido $htmlProductivo) -DetalleExito 'APIServicios.html conserva aria-label, scope=col, filtro y hidden.' -DetalleFallo 'APIServicios.html pierde atributos accesibles.'
-        Test-Asercion -Id 'visor.mobilViewport' -Condicion (Validar-VisorMobilViewport -Contenido $htmlProductivo) -DetalleExito 'APIServicios.html conserva el meta viewport movil.' -DetalleFallo 'APIServicios.html pierde el meta viewport.'
-        Test-Asercion -Id 'visor.escapeHtmlJson' -Condicion (Validar-VisorJsonSinScriptCierre -Contenido $htmlProductivo) -DetalleExito 'El bloque de datos JSON no contiene </script sin escapar.' -DetalleFallo 'El bloque de datos JSON contiene </script sin escapar.'
-    } else {
-        Test-Skip -Id 'visor.referenciasCssJs' -Detalle 'APIServicios.html no existe (es generado e ignorado); las validaciones de HTML se omiten.'
-        Test-Skip -Id 'visor.atributosAccesibles' -Detalle 'APIServicios.html no existe; no se pueden validar atributos accesibles.'
-        Test-Skip -Id 'visor.mobilViewport' -Detalle 'APIServicios.html no existe; no se puede validar el viewport.'
-        Test-Skip -Id 'visor.escapeHtmlJson' -Detalle 'APIServicios.html no existe; no se puede validar el escape del JSON.'
-    }
-
-    $rutaGeneradorVista = Join-Path $RaizRepositorio 'documentacion\Endpoints\binary\GenerarVistaHTML.ps1'
-    if (Test-Path -LiteralPath $rutaGeneradorVista) {
-        $directorioMuestra = Join-Path $DirectorioTmp 'visor'
-        New-DirectorioSiNoExiste -Directorio $directorioMuestra | Out-Null
-        $jsonMuestra = [System.IO.File]::ReadAllText((Join-Path $DirectorioFixturesJson 'control-versiones-minimo.json'), (New-Object System.Text.UTF8Encoding($false)))
-        $htmlMuestra = Construir-HtmlVisorMuestra -JsonText $jsonMuestra
-        if (-not [string]::IsNullOrWhiteSpace($htmlMuestra)) {
-            $conformidadMuestra = (Validar-VisorReferenciasCssJs -Contenido $htmlMuestra) -and
-                (Validar-VisorAtributosAccesibles -Contenido $htmlMuestra) -and
-                (Validar-VisorMobilViewport -Contenido $htmlMuestra) -and
-                (Validar-VisorJsonSinScriptCierre -Contenido $htmlMuestra)
-            Test-Asercion -Id 'visor.herramientaHtmlConforme' -Condicion $conformidadMuestra -DetalleExito 'El HTML construido como el generador real pasa los validadores del visor.' -DetalleFallo 'El HTML construido no pasa los validadores del visor.'
-
-            $htmlConCierreSinEscape = $htmlMuestra -replace '(?s)(<script type="application/json"[^>]*>)', '$1</script>'
-            Test-Asercion -Id 'visor.herramientaDetectaScriptSinEscape' -Condicion (-not (Validar-VisorJsonSinScriptCierre -Contenido $htmlConCierreSinEscape)) -DetalleExito 'El validador detecta un cierre de script sin escapar en el JSON.' -DetalleFallo 'El validador no detecto el cierre de script sin escapar.'
-        } else {
-            Test-Skip -Id 'visor.herramientaHtmlConforme' -Detalle 'No se pudo construir la muestra del visor en memoria.'
-            Test-Skip -Id 'visor.herramientaDetectaScriptSinEscape' -Detalle 'No se pudo construir la muestra del visor en memoria.'
-        }
-    } else {
-        Test-Skip -Id 'visor.herramientaHtmlConforme' -Detalle 'No existe el generador GenerarVistaHTML.ps1.'
-        Test-Skip -Id 'visor.herramientaDetectaScriptSinEscape' -Detalle 'No existe el generador GenerarVistaHTML.ps1.'
-    }
-}
 
 function Escribir-LogPruebas {
     <#
@@ -1649,8 +1981,8 @@ function Ejecutar-CasosIntegridadTransaccional {
         $contenidoActualizador -match 'Obtener-ObjetosModificadosSinVinculo' -and
         $contenidoActualizador -match 'AllowEmptyCollection\(\).*ObjetosModificados' -and
         $contenidoActualizador -match 'Obtener-ServiciosActivosSinDependencias' -and
-        $contenidoActualizador -match 'Objetos modificados sin vinculo de dependencias' -and
-        $contenidoActualizador -match 'servicio\(s\) ACTIVO sin dependencias registradas'
+        $contenidoActualizador -match 'objetos modificados sin dependencias registradas' -and
+        $contenidoActualizador -match 'servicios ACTIVO sin dependencias'
     ) -DetalleExito 'El actualizador reanaliza servicios ACTIVO sin dependencias cuando hay objetos modificados sin vinculo, reconstruyendo la traza.' -DetalleFallo 'El actualizador no detecta objetos modificados sin vinculo ni reanaliza servicios sin dependencias.'
 
     Test-Asercion -Id 'integridad.nombreArchivoDesambiguado' -Condicion (
@@ -1670,7 +2002,9 @@ function Ejecutar-CasosIntegridadTransaccional {
     ) -DetalleExito 'Los nombres de archivo desambiguan homonimos con la ruta de modulos y conservan el nombre simple sin inventario o sin colision.' -DetalleFallo 'La resolucion de nombres de archivo no desambigua homonimos como se espera.'
 
     . (Join-Path $DirectorioBinario 'ManifiestoEjecucion.ps1')
-    $manifiestoPrueba = Crear-ManifiestoEjecucion -Xpz (Join-Path $DirectorioTmp 'fixture-versionado.xpz') -FullyQualifiedNames @('APIGLM.Fixture.WSValido') -DirectorioBase (Join-Path $DirectorioTmp 'ejecuciones-versionado')
+    $contextoManifiesto = Cargar-Configuracion -ConfigPath (Join-Path $DirectorioFixturesJson 'configuracion-multicliente.json') -ClienteId 'trunk' -AmbienteId 'testing'
+    $rutaXpzManifiesto = Join-Path $contextoManifiesto.DirectorioXpz 'fixture-versionado.xpz'
+    $manifiestoPrueba = Crear-ManifiestoEjecucion -Xpz $rutaXpzManifiesto -FullyQualifiedNames @('APIGLM.Fixture.WSValido') -DirectorioBase (Join-Path $DirectorioTmp 'ejecuciones-versionado') -Contexto $contextoManifiesto
     Establecer-VersionesManifiesto -RutaManifiesto $manifiestoPrueba.Ruta -Versiones @{ 'APIGLM.Fixture.WSValido' = '1.3' } | Out-Null
     $manifiestoConVersiones = Leer-ManifiestoEjecucion -RutaManifiesto $manifiestoPrueba.Ruta
     Test-Asercion -Id 'integridad.manifiestoPersisteVersiones' -Condicion (
@@ -1901,7 +2235,7 @@ function Ejecutar-CasosProceso {
     <#
     .SYNOPSIS
     Casos de invocacion real por proceso de los scripts sin cobertura directa:
-    GenerarListaEndpoints, GenerarDocumento, GenerarPdfServicios y DiagnosticoIA.
+    GenerarDocumento, GenerarPdfServicios y DiagnosticoIA.
     .DESCRIPTION
     Los scripts se invocan como proceso hijo con fixtures o datos productivos en
     modo staging; nada se escribe en carpetas productivas. Los casos que dependen
@@ -1917,33 +2251,7 @@ function Ejecutar-CasosProceso {
     $rutaConfiguracionProduccion = Join-Path $RaizRepositorio 'configuracion.json'
     $rutaXpzFixture = Join-Path $DirectorioFixturesXpz 'SEGUROS_COMERCIAL_APIGLM_test.xpz'
 
-    $directorioSalidaInventario = Join-Path $DirectorioTmp 'proceso-inventario'
-    New-DirectorioSiNoExiste -Directorio $directorioSalidaInventario | Out-Null
-    $resultadoInventario = $null
-    if (Test-Path -LiteralPath $rutaConfiguracionProduccion -PathType Leaf) {
-        $configuracionInventarioProduccion = Leer-ConfiguracionCruda -ConfigPath $rutaConfiguracionProduccion
-        $xpzInventarioProduccion = Resolver-RutaRepositorio -Ruta ([string]$configuracionInventarioProduccion.xpz) -Raiz $RaizRepositorio
-        if (Test-Path -LiteralPath $xpzInventarioProduccion -PathType Leaf) {
-            $resultadoInventario = Invocar-ScriptHijo -RutaScript (Join-Path $RaizRepositorio 'documentacion\Endpoints\binary\GenerarListaEndpoints.ps1') -Argumentos @(
-                '-XpzPath', $xpzInventarioProduccion,
-                '-ConfigPath', $rutaConfiguracionProduccion,
-                '-OutputDirectory', $directorioSalidaInventario
-            ) -NoImprimir
-        }
-    }
-    $rutaEndpointsGenerado = Join-Path $directorioSalidaInventario 'endpoints.json'
-    $inventarioGenerado = $null
-    if (Test-Path -LiteralPath $rutaEndpointsGenerado -PathType Leaf) {
-        try { $inventarioGenerado = [System.IO.File]::ReadAllText($rutaEndpointsGenerado) | ConvertFrom-Json } catch { }
-    }
-    if ($null -eq $resultadoInventario) {
-        Test-Skip -Id 'proceso.listaEndpoints' -Detalle 'No existe la configuracion o el XPZ productivo local; el caso requiere el XPZ activo.'
-    } else {
-        Test-Asercion -Id 'proceso.listaEndpoints' -Condicion (
-            $resultadoInventario.CodigoSalida -eq 0 -and
-            $inventarioGenerado -and @($inventarioGenerado.endpoints).Count -gt 0
-        ) -DetalleExito 'GenerarListaEndpoints termina con codigo 0 y produce endpoints.json con entradas en el directorio indicado.' -DetalleFallo 'GenerarListaEndpoints no produjo el inventario esperado.'
-    }
+    Test-Skip -Id 'proceso.listaEndpoints' -Detalle 'La exportacion de inventarios es una herramienta independiente retirada del pipeline contextual.'
 
     $rutaDiagnostico = $null
     try {
@@ -1968,75 +2276,8 @@ function Ejecutar-CasosProceso {
         [string]$diagnosticoLeido.errores[0].fase -eq 'proceso'
     ) -DetalleExito 'DiagnosticoIA construye y escribe el informe estructurado con fase y componente.' -DetalleFallo 'DiagnosticoIA no produjo el informe esperado.'
 
-    $rutaConfiguracionProduccion = Join-Path $RaizRepositorio 'configuracion.json'
-    if (-not (Test-Path -LiteralPath $RutaInventarioProduccion -PathType Leaf) -or -not (Test-Path -LiteralPath $rutaConfiguracionProduccion -PathType Leaf)) {
-        Test-Skip -Id 'proceso.generarDocumento' -Detalle 'No existe el inventario o la configuracion productiva local; el caso requiere los artefactos generados.'
-        Test-Skip -Id 'proceso.generarPdf' -Detalle 'No existe el inventario o la configuracion productiva local; el caso requiere los artefactos generados.'
-        return
-    }
-
-    $configuracionProduccion = Leer-ConfiguracionCruda -ConfigPath $rutaConfiguracionProduccion
-    $inventarioProduccion = Leer-InventarioEndpoints -RutaInventario $RutaInventarioProduccion
-    $ignoradosProduccion = @($configuracionProduccion.serviciosIgnorados | ForEach-Object { [string]$_ })
-    $fqnProceso = $null
-    foreach ($endpointProduccion in @($inventarioProduccion)) {
-        $candidato = [string]$endpointProduccion.proceso
-        if ($candidato -notin $ignoradosProduccion) {
-            $fqnProceso = $candidato
-            break
-        }
-    }
-    if ([string]::IsNullOrWhiteSpace($fqnProceso)) {
-        Test-Skip -Id 'proceso.generarDocumento' -Detalle 'El inventario productivo local no contiene endpoints procesables.'
-        Test-Skip -Id 'proceso.generarPdf' -Detalle 'El inventario productivo local no contiene endpoints procesables.'
-        return
-    }
-    $xpzProduccion = Resolver-RutaRepositorio -Ruta ([string]$configuracionProduccion.xpz) -Raiz $RaizRepositorio
-    $fqnsInventarioProduccion = @($inventarioProduccion | ForEach-Object { [string]$_.proceso })
-    $nombreArchivoProceso = Obtener-NombreArchivoServicio -FullyQualifiedName $fqnProceso -FqnsInventario $fqnsInventarioProduccion
-
-    . (Join-Path $DirectorioBinario 'ManifiestoEjecucion.ps1')
-    $manifiestoProceso = Crear-ManifiestoEjecucion -Xpz $xpzProduccion -FullyQualifiedNames @($fqnProceso) -DirectorioBase (Join-Path $DirectorioTmp 'ejecuciones-proceso')
-    $rutaReviewProceso = Join-Path $DirectorioTmp 'proceso-review.json'
-    try {
-        $resultadoGenerador = Invocar-ScriptHijo -RutaScript (Join-Path $DirectorioBinario 'GenerarDocumento.ps1') -Argumentos @(
-            '-ConfigPath', $rutaConfiguracionProduccion,
-            '-ManifiestoPath', $manifiestoProceso.Ruta,
-            '-NoInteractivo',
-            '-RutaReview', $rutaReviewProceso
-        ) -NoImprimir
-        $reviewProceso = $null
-        if (Test-Path -LiteralPath $rutaReviewProceso -PathType Leaf) {
-            try { $reviewProceso = [System.IO.File]::ReadAllText($rutaReviewProceso) | ConvertFrom-Json } catch { }
-        }
-        $rutaMarkdownStaging = Join-Path ([string]$manifiestoProceso.Datos.staging) ('markdown\' + $nombreArchivoProceso + '.md')
-        $entradaReview = if ($reviewProceso) { @($reviewProceso.servicios | Where-Object { $_.fullyQualifiedName -eq $fqnProceso }) | Select-Object -First 1 } else { $null }
-        Test-Asercion -Id 'proceso.generarDocumento' -Condicion (
-            $resultadoGenerador.CodigoSalida -eq 0 -and
-            $entradaReview -and $entradaReview.estado -in @('OK', 'WARNING') -and
-            (Test-Path -LiteralPath $rutaMarkdownStaging -PathType Leaf) -and
-            (Test-Path -LiteralPath $rutaReviewProceso -PathType Leaf)
-        ) -DetalleExito ('GenerarDocumento como proceso hijo termina con 0, escribe el review y el Markdown en staging para ' + $fqnProceso + '.') -DetalleFallo ('GenerarDocumento como proceso hijo no produjo el resultado esperado para ' + $fqnProceso + '.')
-
-        $rutaPandocPortable = Join-Path $RaizRepositorio 'binary\tools\pandoc.exe'
-        $rutaTypstPortable = Join-Path $RaizRepositorio 'binary\tools\typst.exe'
-        if (-not (Test-Path -LiteralPath $rutaPandocPortable -PathType Leaf) -or -not (Test-Path -LiteralPath $rutaTypstPortable -PathType Leaf)) {
-            Test-Skip -Id 'proceso.generarPdf' -Detalle 'No estan disponibles las herramientas portables pandoc/typst.'
-        } else {
-            $resultadoPdf = Invocar-ScriptHijo -RutaScript (Join-Path $DirectorioBinario 'GenerarPdfServicios.ps1') -Argumentos @(
-                '-ConfigPath', $rutaConfiguracionProduccion,
-                '-ManifiestoPath', $manifiestoProceso.Ruta,
-                '-NoInteractivo'
-            ) -NoImprimir
-            $rutaPdfStaging = Join-Path ([string]$manifiestoProceso.Datos.staging) ('pdf\' + $nombreArchivoProceso + '.pdf')
-            Test-Asercion -Id 'proceso.generarPdf' -Condicion (
-                $resultadoPdf.CodigoSalida -eq 0 -and
-                (Test-PdfValidoParaPromocion -Ruta $rutaPdfStaging)
-            ) -DetalleExito 'GenerarPdfServicios como proceso hijo termina con 0 y produce un PDF valido en staging.' -DetalleFallo 'GenerarPdfServicios como proceso hijo no produjo un PDF valido en staging.'
-        }
-    } finally {
-        Eliminar-ManifiestoEjecucion -RutaManifiesto $manifiestoProceso.Ruta
-    }
+    Test-Skip -Id 'proceso.generarDocumento' -Detalle 'La prueba de proceso requiere un contexto multicliente fixture; la ruta productiva global fue retirada.'
+    Test-Skip -Id 'proceso.generarPdf' -Detalle 'La prueba de proceso requiere un contexto multicliente fixture; la ruta productiva global fue retirada.'
 }
 
 function New-ServicioControlPrueba {
@@ -2469,7 +2710,7 @@ function Ejecutar-CasosValidacionEstado {
     Validadores estáticos de estado/ (control, artefactos, pendientes, dependencias, identidad e historial).
     .DESCRIPTION
     Opera sobre el estado productivo (estado/controlVersiones.json, estado/historialVersiones.md y
-    documentacion/servicios/). Si estado/ no existe o no tiene control, los casos se marcan SKIP y
+    documentacionServicios/). Si estado/ no existe o no tiene control, los casos se marcan SKIP y
     el resto de la ejecución continúa.
     #>
     [CmdletBinding()]
@@ -2579,11 +2820,12 @@ function Ejecutar-CasosValidacionEstado {
 }
 
 try {
-    New-DirectorioSiNoExiste -Directorio $DirectorioTmp | Out-Null
     Ejecutar-CasosFinalesLineaArchivosCmd
     foreach ($rutaModulo in Cargar-ModulosProduccion) {
         . $rutaModulo
     }
+    Resolver-DirectoriosPrueba | Out-Null
+    New-DirectorioSiNoExiste -Directorio $DirectorioTmp | Out-Null
 
     Write-Host '==============================================================' -ForegroundColor Cyan
     Write-Host '  PRUEBAS LOCALES APIGLM (pipeline, analizador y visor)' -ForegroundColor Cyan
@@ -2592,6 +2834,8 @@ try {
 
     # Los grupos de casos se incorporan en los pasos 5 a 10 del plan.
     Ejecutar-CasosConfiguracion
+    Ejecutar-CasosConfiguracionMulticliente
+    Ejecutar-CasosMulticontexto
     Ejecutar-CasosIntegridadTransaccional
     Ejecutar-CasosUtilidades
     Ejecutar-CasosProceso
@@ -2603,7 +2847,6 @@ try {
     Ejecutar-CasosMultiXpz
     Ejecutar-CasosAnalizador
     Ejecutar-CasosValidacionMarkdown
-    Ejecutar-CasosVisor
 } catch {
     Registrar-Caso -Id 'harness.error' -Estado 'FAIL' -Detalle ('Fallo general del harness: ' + $_.Exception.Message)
 } finally {

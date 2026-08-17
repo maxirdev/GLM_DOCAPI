@@ -387,14 +387,27 @@ function Ejecutar-ExportacionSelectiva {
 
 try {
     $ejecucionId = ''
+    $clienteId = ''
+    $ambienteId = ''
     if ($ManifiestoPath) {
         $manifiestoEjecucion = Leer-ManifiestoEjecucion -RutaManifiesto $ManifiestoPath
         $XpzPath = [string]$manifiestoEjecucion.xpz
         $ejecucionId = [string]$manifiestoEjecucion.ejecucionId
+        $clienteId = [string]$manifiestoEjecucion.clienteId
+        $ambienteId = [string]$manifiestoEjecucion.ambienteId
+        $DirectorioLogs = [System.IO.Path]::GetFullPath([string]$manifiestoEjecucion.logsDirectory)
+        Asegurar-Directorio -Ruta $DirectorioLogs
     }
     $parametrosConfiguracion = @{ ConfigPath = $ConfigPath }
     if ($XpzPath) { $parametrosConfiguracion.XpzPath = $XpzPath }
+    if ($clienteId) {
+        $parametrosConfiguracion.ClienteId = $clienteId
+        $parametrosConfiguracion.AmbienteId = $ambienteId
+    }
     $configuracion = Cargar-Configuracion @parametrosConfiguracion
+    if ($XpzPath) {
+        $configuracion | Add-Member -MemberType NoteProperty -Name 'XpzPath' -Value $XpzPath -Force
+    }
     $seleccion = Seleccionar-ReporteValidacion -Configuracion $configuracion -RutaReporte $ReportePath -EjecucionId $ejecucionId
     Mostrar-RecetaSeleccionada -Seleccion $seleccion
     $complemento = Seleccionar-SiguienteXpzComplementario -RutaXpzPrincipal $seleccion.XpzPrincipal

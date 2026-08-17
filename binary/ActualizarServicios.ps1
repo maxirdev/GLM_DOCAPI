@@ -8,21 +8,36 @@ param(
     [string]$RutaControl,
     [switch]$Inicializar,
     [switch]$ForzarRegeneracionCompleta,
-    [string]$ManifiestoPath
+    [Parameter(Mandatory = $true)][string]$ManifiestoPath
 )
 
 $ErrorActionPreference = 'Stop'
 $inicioEjecucion = Get-Date
 $raizRepositorio = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 if (-not $ConfigPath) { $ConfigPath = Join-Path $raizRepositorio 'configuracion.json' }
-if (-not $RutaControl) { $RutaControl = Join-Path $raizRepositorio 'estado\controlVersiones.json' }
-$rutaManifiestoEjecucion = $ManifiestoPath
-$rutaLockActualizacion = Join-Path $raizRepositorio 'estado\actualizacion.lock'
-$rutaHistorial = Join-Path $raizRepositorio 'estado\historialVersiones.md'
 $fechaHistorial = (Get-Date).ToString('yyyy-MM-dd')
 $lockActualizacion = $null
 
 . (Join-Path $PSScriptRoot 'GLMUtilidades.ps1')
+. (Join-Path $PSScriptRoot 'CargarConfiguracion.ps1')
+. (Join-Path $PSScriptRoot 'AnalizarServicio.ps1')
+. (Join-Path $PSScriptRoot 'CargarMultiXPZ.ps1')
+. (Join-Path $PSScriptRoot 'RedactarDocumento.ps1')
+. (Join-Path $PSScriptRoot 'ControlVersiones.ps1')
+. (Join-Path $PSScriptRoot 'HistorialVersiones.ps1')
+. (Join-Path $PSScriptRoot 'ManifiestoEjecucion.ps1')
+
+$manifiestoEjecucion = Leer-ManifiestoEjecucion -RutaManifiesto $ManifiestoPath
+$rutaManifiestoEjecucion = [System.IO.Path]::GetFullPath($ManifiestoPath)
+$datosManifiestoEjecucion = $manifiestoEjecucion
+$XpzPath = [string]$manifiestoEjecucion.xpz
+$ConfigPath = [System.IO.Path]::GetFullPath([string]$manifiestoEjecucion.configPath)
+$contexto = Cargar-Configuracion -ConfigPath $ConfigPath -ClienteId ([string]$manifiestoEjecucion.clienteId) -AmbienteId ([string]$manifiestoEjecucion.ambienteId)
+if (-not $RutaControl) { $RutaControl = $contexto.RutaControl }
+$rutaLockActualizacion = $contexto.RutaLock
+$rutaHistorial = $contexto.RutaHistorial
+$directorioServiciosProductivo = $contexto.DirectorioServicios
+$directorioLogs = $contexto.DirectorioLogs
 
 function Adquirir-LockActualizacion {
     [CmdletBinding()]
@@ -85,9 +100,9 @@ function Obtener-FingerprintPerfilDocumental {
     )
 
     $rutasPerfil = @(
-        'documentacion/analisisXPZ.md',
-        'documentacion/reglasEditoriales.md',
-        'documentacion/templateDoc.md',
+        'normativas/analisisXPZ.md',
+        'normativas/reglasEditoriales.md',
+        'normativas/templateDoc.md',
         'binary/AnalizarServicio.ps1',
         'binary/RedactarDocumento.ps1',
         'binary/EscribirSalidas.ps1',
@@ -440,21 +455,8 @@ function Marcar-ServicioSinPublicar {
 
 try {
     $lockActualizacion = Adquirir-LockActualizacion -RutaLock $rutaLockActualizacion
-    . (Join-Path $PSScriptRoot 'CargarConfiguracion.ps1')
-    . (Join-Path $PSScriptRoot 'AnalizarServicio.ps1')
-    . (Join-Path $PSScriptRoot 'CargarMultiXPZ.ps1')
-    . (Join-Path $PSScriptRoot 'RedactarDocumento.ps1')
-    . (Join-Path $PSScriptRoot 'ControlVersiones.ps1')
-    . (Join-Path $PSScriptRoot 'HistorialVersiones.ps1')
-    . (Join-Path $PSScriptRoot 'ManifiestoEjecucion.ps1')
 
-    if ($ManifiestoPath) {
-        $manifiestoEjecucion = Leer-ManifiestoEjecucion -RutaManifiesto $ManifiestoPath
-        $XpzPath = [string]$manifiestoEjecucion.xpz
-    }
-
-    $parametrosConfiguracion = @{ ConfigPath = $ConfigPath }
-    if ($XpzPath) { $parametrosConfiguracion.XpzPath = $XpzPath }
+    $parametrosConfiguracion = @{ ConfigPath = $ConfigPath; ClienteId = $contexto.ClienteId; AmbienteId = $contexto.AmbienteId }
     $configuracion = Cargar-Configuracion @parametrosConfiguracion
     try {
         $controlAnterior = Leer-ControlVersiones -RutaControl $RutaControl
@@ -497,30 +499,19 @@ try {
             $XpzPath = $rutaXpzAlternativa
             $parametrosConfiguracion.XpzPath = $XpzPath
             $configuracion = Cargar-Configuracion @parametrosConfiguracion
-            $rutaInventarioAlternativo = Join-Path $raizRepositorio 'documentacion\Endpoints\binary\GenerarListaEndpoints.ps1'
-            $resultadoInventarioAlternativo = Invocar-PowerShellScript -RutaScript $rutaInventarioAlternativo -Argumentos @('-ConfigPath', $ConfigPath, '-XpzPath', $XpzPath)
-            if ($resultadoInventarioAlternativo.CodigoSalida -eq 3) { exit 3 }
-            if ($resultadoInventarioAlternativo.CodigoSalida -eq 2) { exit 2 }
-            if ($resultadoInventarioAlternativo.CodigoSalida -ne 0) {
-                throw 'No se pudo regenerar el inventario para el XPZ seleccionado.'
-            }
         }
         if (-not $rutaXpzAlternativa) {
             $configuracion = Cargar-Configuracion -ConfigPath $ConfigPath
         }
     }
 
-    $rutaInventario = Join-Path $raizRepositorio 'documentacion\Endpoints\assets\endpoints.json'
-    if (-not (Test-Path -LiteralPath $rutaInventario -PathType Leaf)) {
-        throw ('No se encontro el inventario en: ' + $rutaInventario)
-    }
-    $serviciosInventarioTotal = @(Leer-InventarioEndpoints -RutaInventario $rutaInventario)
+    $indice = Cargar-IndiceMultiXPZ -RutaXpzPrincipal $XpzPath
+    $serviciosInventarioTotal = @(Obtener-ServiciosHttpDesdeIndice -Indice $indice)
     $serviciosInventario = @($serviciosInventarioTotal | Where-Object { $_.proceso -notin @($configuracion.ServiciosIgnorados) })
     if ($serviciosInventarioTotal.Count -eq 0) { throw 'El inventario no contiene servicios.' }
     $nombresInventario = @($serviciosInventarioTotal | ForEach-Object { [string]$_.proceso })
 
-    $rutasXpz = @($configuracion.XpzPath) + @(Descubrir-XPZComplementariosCompartido -RutaXpzPrincipal $configuracion.XpzPath)
-    $manifiestoActual = @(Construir-ManifiestoMultiXPZ -RutasXpz $rutasXpz)
+    $manifiestoActual = @($indice.Manifiesto)
     $sourceFingerprint = Obtener-FingerprintFuente -Manifiesto $manifiestoActual
     $profileFingerprint = Obtener-FingerprintPerfilDocumental -PackageName $configuracion.PackageName -RaizRepositorio $raizRepositorio -ServiciosIgnorados $configuracion.ServiciosIgnorados
     $pendientesAnteriores = @{}
@@ -529,7 +520,7 @@ try {
         $sourceFingerprintAnterior = [string](Obtener-PropiedadControlVersiones -Objeto $controlAnterior -Nombre 'sourceFingerprint')
         $profileFingerprintAnterior = [string](Obtener-PropiedadControlVersiones -Objeto $controlAnterior -Nombre 'profileFingerprint')
         $serviciosAnterioresFastPath = Obtener-PropiedadControlVersiones -Objeto $controlAnterior -Nombre 'services'
-        $artefactosVigentes = Test-ServiciosPublicadosVigentes -Servicios $serviciosAnterioresFastPath -DirectorioServicios (Join-Path $raizRepositorio 'documentacion\servicios')
+        $artefactosVigentes = Test-ServiciosPublicadosVigentes -Servicios $serviciosAnterioresFastPath -DirectorioServicios $directorioServiciosProductivo
         if (-not $ForzarRegeneracionCompleta -and $sourceFingerprintAnterior -eq $sourceFingerprint -and $profileFingerprintAnterior -eq $profileFingerprint -and $pendientesAnteriores.Count -eq 0 -and $artefactosVigentes) {
             Write-Host 'No se detectaron cambios en el XPZ, el perfil documental ni los pendientes.' -ForegroundColor Yellow
             Write-Host 'La documentacion publicada esta vigente; no se requiere actualizacion.' -ForegroundColor Yellow
@@ -538,7 +529,6 @@ try {
         }
     }
 
-    $indice = Cargar-IndiceMultiXPZ -RutaXpzPrincipal $configuracion.XpzPath
     Write-Host 'Regeneracion en proceso... aguarde.' -ForegroundColor Cyan
     $lineageId = Obtener-LineageId -Indice $indice
 
@@ -619,7 +609,12 @@ try {
         foreach ($fullyQualifiedName in $serviciosSinDependencias) {
             if (-not $nombresCandidatos.Contains($fullyQualifiedName)) { [void]$nombresCandidatos.Add($fullyQualifiedName) }
         }
-        Write-Host ('Objetos modificados sin vinculo de dependencias (' + $objetosModificadosSinVinculo.Count + '): se reanalizan ' + $serviciosSinDependencias.Count + ' servicio(s) ACTIVO sin dependencias registradas para reconstruir la traza.') -ForegroundColor Yellow
+        Write-Host ('ADVERTENCIA: se detectaron ' + $objetosModificadosSinVinculo.Count + ' objetos modificados sin dependencias registradas.') -ForegroundColor Yellow
+        if ($serviciosSinDependencias.Count -gt 0) {
+            Write-Host ('Se agregaron ' + $serviciosSinDependencias.Count + ' servicio(s) ACTIVO sin dependencias al reanalisis para reconstruir la traza.') -ForegroundColor Yellow
+        } else {
+            Write-Host 'No se encontraron servicios ACTIVO sin dependencias para reanalizar automaticamente; no se agregaron candidatos por este mecanismo.' -ForegroundColor Yellow
+        }
     }
     foreach ($servicioInventario in $serviciosInventario) {
         $fullyQualifiedName = [string]$servicioInventario.proceso
@@ -636,18 +631,14 @@ try {
         Write-Host ('Generando documentacion Markdown (.md): ' + $nombresCandidatos.Count + ' servicio(s). Aguarde...') -ForegroundColor Cyan
     }
 
-    if ($ManifiestoPath) {
-        $nombresManifiesto = @($manifiestoEjecucion.fullyQualifiedNames | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } | Select-Object -Unique)
-        if ($nombresManifiesto.Count -gt 0) {
-            $nombresCandidatos = New-Object System.Collections.Generic.List[string]
-            foreach ($fullyQualifiedName in $nombresManifiesto) {
-                if (-not $nombresCandidatos.Contains([string]$fullyQualifiedName)) {
-                    [void]$nombresCandidatos.Add([string]$fullyQualifiedName)
-                }
+    $nombresManifiesto = @($manifiestoEjecucion.fullyQualifiedNames | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } | Select-Object -Unique)
+    if ($nombresManifiesto.Count -gt 0) {
+        $nombresCandidatos = New-Object System.Collections.Generic.List[string]
+        foreach ($fullyQualifiedName in $nombresManifiesto) {
+            if (-not $nombresCandidatos.Contains([string]$fullyQualifiedName)) {
+                [void]$nombresCandidatos.Add([string]$fullyQualifiedName)
             }
         }
-        $rutaManifiestoEjecucion = [System.IO.Path]::GetFullPath($ManifiestoPath)
-        $datosManifiestoEjecucion = $manifiestoEjecucion
     }
 
     $serviciosActuales = @{}
@@ -711,17 +702,10 @@ try {
         }
     }
 
-    if ($ManifiestoPath) {
-        if ($nombresManifiesto.Count -eq 0) {
-            Establecer-FullyQualifiedNamesManifiesto -RutaManifiesto $rutaManifiestoEjecucion -FullyQualifiedNames @($nombresParaRegenerar.ToArray()) | Out-Null
-            $manifiestoEjecucion = Leer-ManifiestoEjecucion -RutaManifiesto $rutaManifiestoEjecucion
-            $datosManifiestoEjecucion = $manifiestoEjecucion
-        }
-    } else {
-        $xpzParaManifiesto = if ($XpzPath) { $XpzPath } else { [string]$configuracion.XpzPath }
-        $manifiestoEjecucion = Crear-ManifiestoEjecucion -Xpz $xpzParaManifiesto -FullyQualifiedNames @($nombresParaRegenerar.ToArray())
-        $rutaManifiestoEjecucion = $manifiestoEjecucion.Ruta
-        $datosManifiestoEjecucion = $manifiestoEjecucion.Datos
+    if ($nombresManifiesto.Count -eq 0) {
+        Establecer-FullyQualifiedNamesManifiesto -RutaManifiesto $rutaManifiestoEjecucion -FullyQualifiedNames @($nombresParaRegenerar.ToArray()) | Out-Null
+        $manifiestoEjecucion = Leer-ManifiestoEjecucion -RutaManifiesto $rutaManifiestoEjecucion
+        $datosManifiestoEjecucion = $manifiestoEjecucion
     }
 
     $versionesObjetivo = @{}
@@ -735,7 +719,6 @@ try {
     }
     Establecer-VersionesManifiesto -RutaManifiesto $rutaManifiestoEjecucion -Versiones $versionesObjetivo | Out-Null
 
-    $directorioLogs = Join-Path $raizRepositorio 'Logs'
     Asegurar-Directorio -Ruta $directorioLogs
     $marcaTemporal = (Get-Date).ToString('yyyyMMdd-HHmmss')
     $rutaReviewGeneracion = Join-Path $directorioLogs ($datosManifiestoEjecucion.ejecucionId + '-actualizacion-review.json')
@@ -830,7 +813,6 @@ try {
         }
     }
 
-    $directorioServiciosProductivo = Join-Path $raizRepositorio 'documentacion\servicios'
     $entradasHistorial = New-Object System.Collections.Generic.List[object]
     if ($nombresParaPdf.Count -gt 0) {
         Write-Host 'Validando y publicando Markdown y PDF... aguarde.' -ForegroundColor Cyan
@@ -946,7 +928,8 @@ try {
         $reviewFinal = [ordered]@{
             ejecucion = [ordered]@{
                 ejecucionId = [string]$datosManifiestoEjecucion.ejecucionId
-                xpz = [string]$configuracion.XpzPath
+                contextId = $contexto.ContextId
+                xpz = [string]$XpzPath
                 fin = (Get-Date).ToString('s')
                 estado = $estadoReview
                 codigoSalida = $codigoSalidaOperacion
@@ -974,7 +957,12 @@ try {
     } catch {
         Write-Host ('  [WARNING] No se pudo actualizar el historial de versiones: ' + $_.Exception.Message) -ForegroundColor Yellow
     }
-    Write-Host ('Actualizacion completada. Servicios candidatos: ' + $nombresCandidatos.Count) -ForegroundColor Cyan
+    $colorResultado = switch ($codigoSalidaOperacion) {
+        0 { 'Green' }
+        2 { 'Yellow' }
+        default { 'Red' }
+    }
+    Write-Host ('Actualizacion completada. Servicios candidatos: ' + $nombresCandidatos.Count) -ForegroundColor $colorResultado
     Write-Host ('Control: ' + [System.IO.Path]::GetFullPath($RutaControl)) -ForegroundColor DarkGray
     if ($comparacion.EsFastPath) { Write-Host 'Fast-path: sin cambios de fuente, perfil ni pendientes.' -ForegroundColor DarkGray }
     exit $codigoSalidaOperacion
@@ -991,9 +979,6 @@ try {
     if ($lockActualizacion) {
         try { $lockActualizacion.Dispose() } catch { }
         try { Remove-Item -LiteralPath $rutaLockActualizacion -Force -ErrorAction SilentlyContinue } catch { }
-    }
-    if ($rutaManifiestoEjecucion) {
-        try { Eliminar-ManifiestoEjecucion -RutaManifiesto $rutaManifiestoEjecucion } catch { }
     }
     Write-Host ('Fin: ' + ((Get-Date) - $inicioEjecucion).ToString('mm\:ss')) -ForegroundColor DarkGray
 }

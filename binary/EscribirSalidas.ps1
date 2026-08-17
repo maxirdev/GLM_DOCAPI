@@ -1,6 +1,6 @@
 ﻿# EscribirSalidas.ps1
 # Modulo de escritura de las salidas del generador de documentacion APIGLM.
-# Escribe el documento Markdown en documentacion/servicios/<wrapper>.md,
+# Escribe el documento Markdown en documentacionServicios/<wrapper>.md,
 # reemplazando únicamente el servicio procesado. La conversión a PDF se
 # realiza bajo demanda mediante GenerarPdfServicios.ps1.
 # Se importa por dot-source desde GenerarDocumento.ps1, despues de

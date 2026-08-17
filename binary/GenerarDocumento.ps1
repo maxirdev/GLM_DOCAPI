@@ -1,6 +1,6 @@
 ﻿# GenerarDocumento.ps1
 # Orquestador del generador de documentacion de servicios APIGLM.
-# Carga la configuracion, lee el inventario endpoints.json, presenta un menu
+# Carga la configuracion, descubre servicios HTTP desde el XPZ y presenta un menu
 # con 3 modos (particular, multiple, todos) y encadena analisis -> redaccion -> Markdown.
 # Requiere configuracion.json en la raiz del proyecto.
 
@@ -112,8 +112,7 @@ function Obtener-VersionDocumentoServicio {
     return '1.0'
 }
 
-$RutaInventario = Join-Path $PSScriptRoot '..\documentacion\Endpoints\assets\endpoints.json'
-$DirectorioSalida = Join-Path $PSScriptRoot '..\documentacion\servicios'
+$DirectorioSalida = Join-Path $PSScriptRoot '..\documentacionServicios'
 
 try {
     Write-Host '==============================================================' -ForegroundColor Cyan
@@ -129,8 +128,10 @@ try {
     . (Join-Path $PSScriptRoot 'EscribirSalidas.ps1')
     . (Join-Path $PSScriptRoot 'ManifiestoEjecucion.ps1')
 
-    $faseActual = 'configuracion-inventario'
-    Write-Step 1 'Cargando configuracion e inventario...'
+    $faseActual = 'configuracion'
+    Write-Step 1 'Cargando configuracion...'
+    $clienteId = ''
+    $ambienteId = ''
     if ($ManifiestoPath) {
         $manifiestoEjecucion = Leer-ManifiestoEjecucion -RutaManifiesto $ManifiestoPath
         $FullyQualifiedNames = @($manifiestoEjecucion.fullyQualifiedNames)
@@ -138,6 +139,10 @@ try {
         $NoInteractivo = $true
         $DirectorioSalida = Join-Path ([string]$manifiestoEjecucion.staging) 'markdown'
         Asegurar-Directorio -Ruta $DirectorioSalida
+        $DirectorioLogs = [System.IO.Path]::GetFullPath([string]$manifiestoEjecucion.logsDirectory)
+        Asegurar-Directorio -Ruta $DirectorioLogs
+        $clienteId = [string]$manifiestoEjecucion.clienteId
+        $ambienteId = [string]$manifiestoEjecucion.ambienteId
         Write-Host ('  Ejecucion: ' + $manifiestoEjecucion.ejecucionId) -ForegroundColor DarkGray
         Write-Host ('  Staging Markdown: ' + $DirectorioSalida) -ForegroundColor DarkGray
     }
@@ -150,7 +155,11 @@ try {
     $versionesPublicadas = @{}
     try {
         . (Join-Path $PSScriptRoot 'ControlVersiones.ps1')
-        $controlPublicado = Leer-ControlVersiones -RutaControl (Join-Path $RaizRepositorio 'estado\controlVersiones.json')
+        $rutaControlVersiones = Join-Path $RaizRepositorio 'estado\controlVersiones.json'
+        if ($ManifiestoPath -and $manifiestoEjecucion.stateDirectory) {
+            $rutaControlVersiones = Join-Path ([string]$manifiestoEjecucion.stateDirectory) 'controlVersiones.json'
+        }
+        $controlPublicado = Leer-ControlVersiones -RutaControl $rutaControlVersiones
         $serviciosPublicados = Convertir-DiccionarioControlVersiones -Objeto $controlPublicado.services
         foreach ($claveServicio in $serviciosPublicados.Keys) {
             $servicioPublicado = $serviciosPublicados[$claveServicio]
@@ -162,49 +171,50 @@ try {
     }
     $cargarConfiguracionParametros = @{ ConfigPath = $ConfigPath }
     if ($XpzPath) { $cargarConfiguracionParametros.XpzPath = $XpzPath }
+    if ($clienteId) {
+        $cargarConfiguracionParametros.ClienteId = $clienteId
+        $cargarConfiguracionParametros.AmbienteId = $ambienteId
+    }
     $configuracion = Cargar-Configuracion @cargarConfiguracionParametros
-    $xpzComplementariosDetectados = @(Descubrir-XPZComplementariosCompartido -RutaXpzPrincipal $configuracion.XpzPath)
+    if (-not $XpzPath) { $XpzPath = $configuracion.XpzPath }
+    $xpzComplementariosDetectados = @(Descubrir-XPZComplementariosCompartido -RutaXpzPrincipal $XpzPath)
     if ($xpzComplementariosDetectados.Count -gt 0) {
-        Write-Host ("  XPZ principal: " + $configuracion.XpzPath) -ForegroundColor DarkGray
+        Write-Host ("  XPZ principal: " + $XpzPath) -ForegroundColor DarkGray
         Write-Host ("  Fuente: multi-XPZ (" + ($xpzComplementariosDetectados.Count + 1) + " archivos)") -ForegroundColor DarkGray
         Write-Host ("  Complementos detectados: " + (($xpzComplementariosDetectados | ForEach-Object { [System.IO.Path]::GetFileName($_) }) -join ', ')) -ForegroundColor DarkGray
     } else {
-        Write-Host ("  XPZ: " + $configuracion.XpzPath + " (único archivo)") -ForegroundColor DarkGray
+        Write-Host ("  XPZ: " + $XpzPath + " (único archivo)") -ForegroundColor DarkGray
     }
     Write-Host ("  PackageName: " + $configuracion.PackageName) -ForegroundColor DarkGray
+    if ($clienteId) {
+        Write-Host ("  Contexto: " + $configuracion.ContextId) -ForegroundColor DarkGray
+    }
     if ($configuracion.Cliente) {
         Write-Host ("  Cliente: " + $configuracion.Cliente) -ForegroundColor DarkGray
     }
-    if (-not (Test-Path -LiteralPath $RutaInventario)) {
-        throw ("No se encontro el inventario en: " + $RutaInventario + ". Regenerelo desde la opcion 3 de GenerarDocumentosGLM.cmd o invocando GenerarListaEndpoints.ps1.")
+    $faseActual = 'apertura-xpz'
+    Write-Step 2 'Abriendo XPZ y construyendo indices...'
+    $indices = Cargar-IndiceMultiXPZ -RutaXpzPrincipal $XpzPath
+    $xmlAnalisis = $indices.XmlUnificado
+    $endpointsInventarioCompleto = @(Obtener-ServiciosHttpDesdeIndice -Indice $indices)
+    if ($endpointsInventarioCompleto.Count -eq 0) {
+        throw 'APIGLMMain no contiene servicios HTTP confirmados.'
     }
-    $inventario = Leer-InventarioEndpoints -RutaInventario $RutaInventario
-    $endpoints = @($inventario)
-    if ($endpoints.Count -eq 0) {
-        throw 'El inventario endpoints.json no contiene endpoints.'
-    }
-    Write-Host ("  Inventario: " + $endpoints.Count + " endpoints") -ForegroundColor DarkGray
-    $endpointsInventarioCompleto = @($endpoints)
-
     $ignoradosConfig = @($configuracion.ServiciosIgnorados)
-    $ignoradosEnInventario = @($endpoints | Where-Object { $ignoradosConfig -contains $_.proceso })
-    $ignoradosSinInventario = @($ignoradosConfig | Where-Object { $_ -notin @($endpoints | ForEach-Object { $_.proceso }) })
+    $ignoradosEnInventario = @($endpointsInventarioCompleto | Where-Object { $ignoradosConfig -contains $_.proceso })
+    $ignoradosSinInventario = @($ignoradosConfig | Where-Object { $_ -notin @($endpointsInventarioCompleto | ForEach-Object { $_.proceso }) })
+    $endpoints = @($endpointsInventarioCompleto | Where-Object { $ignoradosConfig -notcontains $_.proceso })
+    Write-Host ("  Servicios HTTP confirmados: " + $endpointsInventarioCompleto.Count) -ForegroundColor DarkGray
     if ($ignoradosConfig.Count -gt 0) {
         Write-Host ("  Servicios ignorados: " + $ignoradosConfig.Count) -ForegroundColor DarkGray
         foreach ($ignorado in $ignoradosEnInventario) {
             Write-Host ("    [IGNORADO] " + $ignorado.proceso) -ForegroundColor DarkYellow
         }
         foreach ($ignorado in $ignoradosSinInventario) {
-            Write-Host ("    [IGNORADO] " + $ignorado + " (no esta en el inventario)") -ForegroundColor DarkYellow
+            Write-Host ("    [IGNORADO] " + $ignorado + " (no es un servicio HTTP confirmado)") -ForegroundColor DarkYellow
         }
-        $endpoints = @($endpoints | Where-Object { $ignoradosConfig -notcontains $_.proceso })
-        Write-Host ("  Inventario efectivo: " + $endpoints.Count + " endpoints") -ForegroundColor DarkGray
+        Write-Host ("  Servicios efectivos: " + $endpoints.Count) -ForegroundColor DarkGray
     }
-
-    $faseActual = 'apertura-xpz'
-    Write-Step 2 'Abriendo XPZ y construyendo indices...'
-    $indices = Cargar-IndiceMultiXPZ -RutaXpzPrincipal $configuracion.XpzPath
-    $xmlAnalisis = $indices.XmlUnificado
     Write-Host ("  XPZ abierto y " + $xmlAnalisis.SelectNodes('//Object').Count + " objetos indexados") -ForegroundColor DarkGray
     if (@($indices.NombresXpz).Count -gt 1) {
         Write-Host ("  Complementos incluidos: " + ((@($indices.NombresXpz) | Select-Object -Skip 1) -join ', ')) -ForegroundColor DarkGray
@@ -385,7 +395,8 @@ try {
 
     $revision = [pscustomobject]@{
         ejecucion = [pscustomobject]@{
-            xpz = $configuracion.XpzPath
+            contextId = if ($ManifiestoPath) { [string]$manifiestoEjecucion.contextId } else { '' }
+            xpz = $XpzPath
             inicio = $StartTime.ToString('s')
             fin = $finEjecucion.ToString('s')
             seleccionados = if ($modoSeleccionado -eq 4) { @($fullyQualifiedNamesSolicitados).Count } else { $serviciosSeleccionados.Count }

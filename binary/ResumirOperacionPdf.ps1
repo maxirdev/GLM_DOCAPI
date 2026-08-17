@@ -1,27 +1,30 @@
-# Resume la operacion PDF usando el reporte de revision mas reciente del generador.
+# Resume la operacion PDF de la ejecucion contextual usando el review del manifiesto.
 
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory = $true)][string]$Repositorio
+    [Parameter(Mandatory = $true)][string]$Repositorio,
+    [Parameter(Mandatory = $true)][string]$ManifiestoPath
 )
 
 $ErrorActionPreference = 'Stop'
 
 $raizRepositorio = [System.IO.Path]::GetFullPath($Repositorio)
 . (Join-Path $PSScriptRoot 'GLMUtilidades.ps1')
+. (Join-Path $PSScriptRoot 'AnalizarServicio.ps1')
 . (Join-Path $PSScriptRoot 'CargarMultiXPZ.ps1')
-$rutaDirectorioLogs = Join-Path $raizRepositorio 'Logs'
-$rutaReporte = $null
+. (Join-Path $PSScriptRoot 'ManifiestoEjecucion.ps1')
+. (Join-Path $PSScriptRoot 'CargarConfiguracion.ps1')
 
-if (Test-Path -LiteralPath $rutaDirectorioLogs -PathType Container) {
-    $reportes = @(Get-ChildItem -LiteralPath $rutaDirectorioLogs -Filter '*-review.json' -File -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending)
-    if ($reportes.Count -gt 0) { $rutaReporte = $reportes[0].FullName }
-}
+$manifiestoEjecucion = Leer-ManifiestoEjecucion -RutaManifiesto $ManifiestoPath
+$contexto = Cargar-Configuracion -ConfigPath ([string]$manifiestoEjecucion.configPath) -ClienteId ([string]$manifiestoEjecucion.clienteId) -AmbienteId ([string]$manifiestoEjecucion.ambienteId)
+$rutaDirectorioLogs = $contexto.DirectorioLogs
+$rutaDirectorioServicios = $contexto.DirectorioServicios
+$rutaReporte = Join-Path $rutaDirectorioLogs ([string]$manifiestoEjecucion.ejecucionId + '-actualizacion-review.json')
 
-if (-not $rutaReporte) {
+if (-not (Test-Path -LiteralPath $rutaReporte -PathType Leaf)) {
     Write-Host ''
     Write-Host 'Resumen de la operacion PDF:' -ForegroundColor Cyan
-    Write-Host '  No hay reporte de revision del generador disponible.' -ForegroundColor DarkYellow
+    Write-Host '  No hay reporte de revision del generador disponible para esta ejecucion.' -ForegroundColor DarkYellow
     exit 0
 }
 
@@ -31,17 +34,14 @@ $pdfValidos = New-Object System.Collections.Generic.List[object]
 $pdfConservados = New-Object System.Collections.Generic.List[object]
 $pdfFallidos = New-Object System.Collections.Generic.List[object]
 $omitidos = @($reporte.servicios | Where-Object { $_.estado -in @('OMITIDO', 'ELIMINADO') -or $_.estadoPdf -eq 'NO_APLICA' })
+$indiceResumen = Cargar-IndiceMultiXPZ -RutaXpzPrincipal ([string]$manifiestoEjecucion.xpz)
+$fqnsInventario = @(Obtener-ServiciosHttpDesdeIndice -Indice $indiceResumen | ForEach-Object { [string]$_.proceso })
 foreach ($servicio in @($reporte.servicios)) {
     if ([string]$servicio.estado -in @('OMITIDO', 'ELIMINADO') -or [string]$servicio.estadoPdf -eq 'NO_APLICA') { continue }
     $rutaPdf = [string]$servicio.pdf
     if ([string]::IsNullOrWhiteSpace($rutaPdf)) {
-        $fqnsInventario = @()
-        $rutaInventarioResumen = Join-Path $raizRepositorio 'documentacion\Endpoints\assets\endpoints.json'
-        if (Test-Path -LiteralPath $rutaInventarioResumen -PathType Leaf) {
-            $fqnsInventario = @((Leer-InventarioEndpoints -RutaInventario $rutaInventarioResumen) | ForEach-Object { [string]$_.proceso })
-        }
         $nombreLocal = Obtener-NombreArchivoServicio -FullyQualifiedName ([string]$servicio.fullyQualifiedName) -FqnsInventario $fqnsInventario
-        $rutaPdf = Join-Path (Join-Path $raizRepositorio 'documentacion\servicios') ($nombreLocal + '.pdf')
+        $rutaPdf = Join-Path $rutaDirectorioServicios ($nombreLocal + '.pdf')
     }
     if (Test-PdfValidoParaPromocion -Ruta $rutaPdf) {
         [void]$pdfValidos.Add($servicio)
