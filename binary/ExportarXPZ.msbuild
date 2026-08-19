@@ -4,6 +4,15 @@
 
   <Import Project="$(GX_PROGRAM_DIR)\Genexus.Tasks.targets" />
 
+  <PropertyGroup>
+    <GeneXusExportProfile Condition="'$(GeneXusExportProfile)' == ''">GX18</GeneXusExportProfile>
+  </PropertyGroup>
+
+  <Target Name="ValidarPerfilExportacion">
+    <Error Condition="'$(GeneXusExportProfile)' != 'GX18' and '$(GeneXusExportProfile)' != 'Evo3'"
+           Text="Perfil de exportacion no soportado: $(GeneXusExportProfile). Use GX18 o Evo3." />
+  </Target>
+
   <Target Name="AbrirKnowledgeBase">
     <Error Condition="'$(KBPath)' == ''"
            Text="No se definio la propiedad KBPath." />
@@ -17,8 +26,25 @@
     </PropertyGroup>
   </Target>
 
-  <Target Name="ExportarAPIGLM" DependsOnTargets="AbrirKnowledgeBase">
+  <Target Name="ExportarAPIGLM" DependsOnTargets="ValidarPerfilExportacion;AbrirKnowledgeBase">
     <Message Text="Exportando Module:APIGLM con referencias minimas." Importance="high" />
+    <CallTarget Targets="ExportarAPIGLMEvo3" Condition="'$(GeneXusExportProfile)' == 'Evo3'" />
+    <CallTarget Targets="ExportarAPIGLMGX18" Condition="'$(GeneXusExportProfile)' == 'GX18'" />
+    <CallTarget Targets="CerrarKnowledgeBase" />
+
+    <OnError ExecuteTargets="CerrarKnowledgeBase" />
+  </Target>
+
+  <Target Name="ExportarAPIGLMEvo3">
+    <Export File="$(XPZFile)"
+            Objects="Procedure:APIGLM.APIGLMMain"
+            DependencyType="ReferencesTo"
+            ReferenceType="Hard"
+            IncludeGXMessages="false"
+            IncludeUntranslatedMessages="false" />
+  </Target>
+
+  <Target Name="ExportarAPIGLMGX18">
     <Export File="$(XPZFile)"
             Objects="Module:APIGLM"
             IncludeChildren="true"
@@ -28,18 +54,30 @@
             IncludeGXMessages="false"
             IncludeUntranslatedMessages="false" />
 
+  </Target>
+
+  <Target Name="ExportarTodaLaKB" DependsOnTargets="ValidarPerfilExportacion;AbrirKnowledgeBase">
+    <Message Text="Exportando todos los objetos de la Knowledge Base." Importance="high" />
+    <CallTarget Targets="ExportarTodaLaKBEvo3" Condition="'$(GeneXusExportProfile)' == 'Evo3'" />
+    <CallTarget Targets="ExportarTodaLaKBGX18" Condition="'$(GeneXusExportProfile)' == 'GX18'" />
+    <CallTarget Targets="CerrarKnowledgeBase" />
+
     <OnError ExecuteTargets="CerrarKnowledgeBase" />
   </Target>
 
-  <Target Name="ExportarTodaLaKB" DependsOnTargets="AbrirKnowledgeBase">
-    <Message Text="Exportando todos los objetos de la Knowledge Base." Importance="high" />
+  <Target Name="ExportarTodaLaKBEvo3">
+    <Export File="$(XPZFile)"
+            IncludeGXMessages="false"
+            IncludeUntranslatedMessages="false" />
+  </Target>
+
+  <Target Name="ExportarTodaLaKBGX18">
     <Export File="$(XPZFile)"
             ExportAll="true"
             ExportKBInfo="true"
             IncludeGXMessages="false"
             IncludeUntranslatedMessages="false" />
 
-    <OnError ExecuteTargets="CerrarKnowledgeBase" />
   </Target>
 
   <Target Name="CerrarKnowledgeBase"

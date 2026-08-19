@@ -1,0 +1,27 @@
+{
+  "rutas": {
+    "clientesRoot": "clientes"
+  },
+  "herramientas": {
+    "geneXusProgramDir": "C:/Program Files (x86)/GeneXus/GeneXus18",
+    "msbuildPath": "C:/Windows/Microsoft.NET/Framework/v4.0.30319/MSBuild.exe",
+    "pandocPath": "binary/tools/pandoc.exe",
+    "typstPath": "binary/tools/typst.exe"
+  },
+  "clientes": [
+    {
+      "id": "existente",
+      "nombre": "Cliente existente",
+      "packagename": "existente.",
+      "serviciosIgnorados": [],
+      "ambientes": [
+        {
+          "id": "testing",
+          "nombre": "Testing",
+          "tipo": "test",
+          "kbPath": "C:/KBs/CLIENTE_EXISTENTE"
+        }
+      ]
+    }
+  ]
+}

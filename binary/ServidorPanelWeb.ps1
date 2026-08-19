@@ -19,8 +19,12 @@ if ([string]::IsNullOrWhiteSpace($ConfigPath)) {
 }
 
 . (Join-Path $PSScriptRoot 'CargarConfiguracion.ps1')
+. (Join-Path $PSScriptRoot 'AnalizarServicio.ps1')
 . (Join-Path $PSScriptRoot 'CargarMultiXPZ.ps1')
+. (Join-Path $PSScriptRoot 'ControlVersiones.ps1')
 . (Join-Path $PSScriptRoot 'ManifiestoEjecucion.ps1')
+
+Inicializar-ConsolaUtf8
 
 $script:SessionToken = [Guid]::NewGuid().ToString('N')
 $script:ConfigurationRaw = $null
@@ -56,6 +60,7 @@ function Get-ConfiguredContexts {
                 clienteNombre = [string]$client.nombre
                 ambienteId = [string]$environment.id
                 ambienteNombre = [string]$environment.nombre
+                ambienteTipo = Clasificar-TipoAmbiente -Tipo ([string]$environment.tipo)
                 contextId = ([string]$client.id + '/' + [string]$environment.id)
             })
         }
@@ -93,15 +98,149 @@ function Get-WorkStatusFromExitCode {
     }
 }
 
+function Get-VisibleWorkStatus {
+    param(
+        [Parameter(Mandatory = $true)][string]$TechnicalStatus,
+        [Parameter(Mandatory = $false)][AllowNull()][int]$ExitCode
+    )
+    if ($TechnicalStatus -in @('QUEUED', 'RUNNING')) { return 'EN PROCESO' }
+    switch ($TechnicalStatus) {
+        'COMPLETED' { return 'COMPLETADO' }
+        'PARTIAL' { return 'COMPLETADO PARCIALMENTE' }
+        default { return 'ERROR' }
+    }
+}
+
+function Get-LatestValidXpz {
+    if ($null -eq $script:ActiveContext) { return $null }
+    foreach ($candidate in @(Get-ActiveXpzCandidates | Sort-Object Fecha -Descending)) {
+        try {
+            $validation = Test-XpzValido -Ruta $candidate.Ruta
+            if ($validation.Valid) { return $candidate }
+        } catch { }
+    }
+    return $null
+}
+
 function Get-WorkTail {
     param([Parameter(Mandatory = $true)]$Work)
     $lines = New-Object System.Collections.Generic.List[string]
     foreach ($path in @($Work.stdoutPath, $Work.stderrPath)) {
+        if ([string]::IsNullOrWhiteSpace([string]$path)) { continue }
         if (Test-Path -LiteralPath $path -PathType Leaf) {
             foreach ($line in @(Get-Content -LiteralPath $path -Tail 20 -ErrorAction SilentlyContinue)) { [void]$lines.Add([string]$line) }
         }
     }
     return @($lines | Select-Object -Last 20)
+}
+
+function Get-WorkFullOutput {
+    param([Parameter(Mandatory = $true)]$Work)
+    $sections = New-Object System.Collections.Generic.List[string]
+    foreach ($definition in @(
+        [pscustomobject]@{ Nombre = 'STDOUT'; Ruta = $Work.stdoutPath },
+        [pscustomobject]@{ Nombre = 'STDERR'; Ruta = $Work.stderrPath }
+    )) {
+        [void]$sections.Add('===== ' + $definition.Nombre + ' =====')
+        if (Test-Path -LiteralPath $definition.Ruta -PathType Leaf) {
+            [void]$sections.Add([System.IO.File]::ReadAllText($definition.Ruta, [System.Text.Encoding]::UTF8))
+        }
+    }
+    return ($sections -join [Environment]::NewLine)
+}
+
+function Get-OperationType {
+    param([Parameter(Mandatory = $true)][string]$Operation)
+    return $Operation
+}
+
+function Get-OperationSeverity {
+    param([Parameter(Mandatory = $true)][string]$TechnicalStatus)
+    switch ($TechnicalStatus) {
+        'PARTIAL' { return 'WARNING' }
+        'COMPLETED' { return 'INFO' }
+        'QUEUED' { return 'INFO' }
+        'RUNNING' { return 'INFO' }
+        default { return 'ERROR' }
+    }
+}
+
+function Write-OperationRecord {
+    param([Parameter(Mandatory = $true)]$Work)
+    $record = [ordered]@{
+        schemaVersion = 1
+        operationId = $Work.operationId
+        contextId = $Work.contextId
+        tipo = Get-OperationType -Operation $Work.operacion
+        severidad = Get-OperationSeverity -TechnicalStatus $Work.estado
+        xpz = [ordered]@{ nombre = $Work.xpzNombre; sha256 = $Work.xpzSha256 }
+        inicio = $Work.inicio
+        fin = $Work.fin
+        estadoTecnico = $Work.estado
+        estadoVisible = Get-VisibleWorkStatus -TechnicalStatus $Work.estado -ExitCode $Work.codigoSalida
+        codigoSalida = $Work.codigoSalida
+        warnings = @($Work.warnings)
+        error = $Work.error
+        logNombre = $Work.operationLogName
+    }
+    $json = $record | ConvertTo-Json -Depth 10
+    $null = $json | ConvertFrom-Json
+    [System.IO.File]::WriteAllText($Work.operationManifestPath, $json, (New-Object System.Text.UTF8Encoding($false)))
+}
+
+function Write-PanelMutationOperation {
+    param(
+        [Parameter(Mandatory = $true)][string]$Operation,
+        [Parameter(Mandatory = $true)]$Context,
+        [Parameter(Mandatory = $false)]$Xpz,
+        [Parameter(Mandatory = $false)][string]$TechnicalStatus = 'COMPLETED',
+        [Parameter(Mandatory = $false)][AllowNull()][int]$ExitCode = 0,
+        [Parameter(Mandatory = $false)][string[]]$Warnings = @(),
+        [Parameter(Mandatory = $false)][AllowNull()][string]$ErrorMessage = $null,
+        [Parameter(Mandatory = $false)][string[]]$Output = @()
+    )
+    $operationsDirectory = Join-Path $Context.DirectorioLogs 'operaciones'
+    New-Item -ItemType Directory -Path $operationsDirectory -Force | Out-Null
+    $operationId = [Guid]::NewGuid().ToString('N')
+    $logName = $operationId + '.log'
+    $logPath = Join-Path $operationsDirectory $logName
+    $manifestPath = Join-Path $operationsDirectory ($operationId + '.json')
+    $start = (Get-Date).ToUniversalTime().ToString('o')
+    $work = [pscustomobject]@{
+        operationId = $operationId
+        contextId = $Context.ContextId
+        operacion = $Operation
+        estado = $TechnicalStatus
+        codigoSalida = $ExitCode
+        inicio = $start
+        fin = $start
+        warnings = @($Warnings)
+        error = $ErrorMessage
+        operationLogName = $logName
+        operationLogPath = $logPath
+        operationManifestPath = $manifestPath
+        xpzNombre = if ($Xpz) { [string]$Xpz.Nombre } else { $null }
+        xpzSha256 = if ($Xpz -and (Test-Path -LiteralPath $Xpz.Ruta -PathType Leaf)) { Obtener-Sha256Archivo -Ruta $Xpz.Ruta } else { $null }
+    }
+    [System.IO.File]::WriteAllText($logPath, (($Output -join [Environment]::NewLine)), (New-Object System.Text.UTF8Encoding($false)))
+    Write-OperationRecord -Work $work
+    return $work
+}
+
+function New-ImmediateFailedWork {
+    param(
+        [Parameter(Mandatory = $true)][string]$Operation,
+        [Parameter(Mandatory = $true)]$Context,
+        [Parameter(Mandatory = $true)][string]$ErrorMessage,
+        [Parameter(Mandatory = $false)]$Xpz
+    )
+    $work = Write-PanelMutationOperation -Operation $Operation -Context $Context -Xpz $Xpz -TechnicalStatus 'FAILED' -ExitCode 1 -ErrorMessage $ErrorMessage -Output @($ErrorMessage)
+    $work | Add-Member -NotePropertyName id -NotePropertyValue $work.operationId
+    $work | Add-Member -NotePropertyName progreso -NotePropertyValue ([pscustomobject]@{ indeterminado = $false; porcentaje = 100 })
+    $work | Add-Member -NotePropertyName stdoutPath -NotePropertyValue $null
+    $work | Add-Member -NotePropertyName stderrPath -NotePropertyValue $null
+    $script:LastFinishedWork = $work
+    return $work
 }
 
 function Get-PublicWork {
@@ -111,7 +250,10 @@ function Get-PublicWork {
         contextId = $Work.contextId
         operacion = $Work.operacion
         estado = $Work.estado
-        log = $Work.log
+        estadoTecnico = $Work.estado
+        estadoVisible = Get-VisibleWorkStatus -TechnicalStatus $Work.estado -ExitCode $Work.codigoSalida
+        logNombre = $Work.operationLogName
+        operationId = $Work.operationId
         inicio = $Work.inicio
         fin = $Work.fin
         codigoSalida = $Work.codigoSalida
@@ -134,12 +276,29 @@ function Update-CurrentWork {
 
     $work.codigoSalida = [int]$work.process.ExitCode
     $work.estado = Get-WorkStatusFromExitCode -ExitCode $work.codigoSalida
+    if ([string]$work.operacion -eq 'EXPORTAR_XPZ') {
+        $validXpz = if ($work.codigoSalida -eq 0) { Get-LatestValidXpz } else { $null }
+        if ($null -ne $validXpz) {
+            $script:ActiveXpz = $validXpz
+            $script:XpzOverride = $false
+        } else {
+            $script:ActiveXpz = $null
+            $script:XpzOverride = $false
+            if ($work.codigoSalida -eq 0) {
+                $work.codigoSalida = 1
+                $work.estado = 'FAILED'
+                $work.error = 'La exportacion termino sin producir un XPZ valido y utilizable.'
+            }
+        }
+    }
     $work.fin = (Get-Date).ToUniversalTime().ToString('o')
     $work.progreso = [pscustomobject]@{ indeterminado = $false; porcentaje = 100 }
     $output = Get-WorkTail -Work $work
     $header = 'Trabajo ' + $work.id + ' | ' + $work.operacion + ' | codigo ' + $work.codigoSalida
-    [System.IO.File]::WriteAllLines($work.log, @($header) + $output, (New-Object System.Text.UTF8Encoding($false)))
-    if ($work.codigoSalida -eq 1) { $work.error = 'El proceso hijo termino con errores.' }
+    [System.IO.File]::WriteAllText($work.operationLogPath, (Get-WorkFullOutput -Work $work), (New-Object System.Text.UTF8Encoding($false)))
+    if ($work.codigoSalida -eq 3) { $work.error = 'Operacion abortada.' }
+    if ($work.codigoSalida -eq 1 -and [string]::IsNullOrWhiteSpace([string]$work.error)) { $work.error = 'El proceso hijo termino con errores.' }
+    Write-OperationRecord -Work $work
     $script:LastFinishedWork = $work
     $script:CurrentWork = $null
 }
@@ -150,38 +309,45 @@ function Quote-ProcessArgument {
 }
 
 function Start-ValidationWork {
+    param([Parameter(Mandatory = $false)]$RequestBody)
     if ($null -eq $script:ActiveContext) { throw 'No hay un contexto activo.' }
+    if ($RequestBody -and $RequestBody.nombre) {
+        $selected = @(Get-ActiveXpzCandidates | Where-Object { $_.Nombre -ceq [string]$RequestBody.nombre })
+        if ($selected.Count -ne 1) { throw 'El XPZ indicado no pertenece al contexto activo.' }
+        $script:ActiveXpz = $selected[0]
+        $script:XpzOverride = $true
+    }
     if ($null -eq $script:ActiveXpz) { throw 'No hay un XPZ activo en el contexto.' }
-    $jobId = 'panel-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + ([Guid]::NewGuid().ToString('N').Substring(0, 8))
     $jobsDirectory = Join-Path $script:ActiveContext.DirectorioLogs 'panel-jobs'
     New-Item -ItemType Directory -Path $jobsDirectory -Force | Out-Null
-    $logPath = Join-Path $script:ActiveContext.DirectorioLogs ($jobId + '.log')
-    $stdoutPath = Join-Path $jobsDirectory ($jobId + '.out')
-    $stderrPath = Join-Path $jobsDirectory ($jobId + '.err')
-    $manifestBase = Join-Path $jobsDirectory $jobId
+    $manifestBase = Join-Path $jobsDirectory ('validation-' + (Get-Date -Format 'yyyyMMdd-HHmmss'))
     $manifest = Crear-ManifiestoEjecucion -Xpz $script:ActiveXpz.Ruta -FullyQualifiedNames @() -DirectorioBase $manifestBase -Contexto $script:ActiveContext
-    $powerShellPath = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
     $scriptPath = Join-Path $RepositoryRoot 'binary\ValidarXPZ.ps1'
     $argumentValues = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $scriptPath, '-ConfigPath', $ConfigPath, '-XpzPath', $script:ActiveXpz.Ruta, '-ManifiestoPath', $manifest.Ruta)
-    $argumentText = (($argumentValues | ForEach-Object { Quote-ProcessArgument -Value ([string]$_) }) -join ' ')
-    $process = Start-Process -FilePath $powerShellPath -ArgumentList $argumentText -WorkingDirectory $RepositoryRoot -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath -WindowStyle Hidden -PassThru
-    $script:CurrentWork = [pscustomobject]@{
-        id = $jobId
-        contextId = $script:ActiveContext.ContextId
-        operacion = 'VALIDAR_XPZ'
-        estado = 'RUNNING'
-        log = $logPath
-        inicio = (Get-Date).ToUniversalTime().ToString('o')
-        fin = $null
-        codigoSalida = $null
-        progreso = [pscustomobject]@{ indeterminado = $true; porcentaje = $null }
-        warnings = @()
-        error = $null
-        stdoutPath = $stdoutPath
-        stderrPath = $stderrPath
-        process = $process
+    return Start-PanelChildWork -Operation 'VALIDAR_XPZ' -ScriptPath $scriptPath -ArgumentValues $argumentValues -Context $script:ActiveContext
+}
+
+function Start-PdfGenerationWork {
+    param([Parameter(Mandatory = $true)]$RequestBody)
+    if ($null -eq $script:ActiveContext -or $null -eq $script:ActiveXpz) { throw 'No hay contexto y XPZ activos.' }
+    if ($RequestBody.confirmRestart -ne $true) { throw 'La regeneracion requiere confirmRestart=true.' }
+    if ($null -eq $RequestBody.PSObject.Properties['xpz'] -or $null -eq $RequestBody.xpz) {
+        throw 'PRECONDICION_XPZ: La confirmacion requiere nombre y SHA-256 del XPZ.'
     }
-    return $script:CurrentWork
+    $confirmedXpzName = [string]$RequestBody.xpz.nombre
+    $confirmedXpzHash = [string]$RequestBody.xpz.sha256
+    $currentXpzHash = if (Test-Path -LiteralPath $script:ActiveXpz.Ruta -PathType Leaf) { Obtener-Sha256Archivo -Ruta $script:ActiveXpz.Ruta } else { '' }
+    if ($confirmedXpzName -cne [string]$script:ActiveXpz.Nombre -or
+        $confirmedXpzHash -notmatch '^[0-9a-fA-F]{64}$' -or
+        $confirmedXpzHash -ine $currentXpzHash) {
+        throw 'PRECONDICION_XPZ: El XPZ activo o su SHA-256 cambio; confirme nuevamente.'
+    }
+    $jobsDirectory = Join-Path $script:ActiveContext.DirectorioLogs 'panel-jobs'
+    New-Item -ItemType Directory -Path $jobsDirectory -Force | Out-Null
+    $manifest = Crear-ManifiestoEjecucion -Xpz $script:ActiveXpz.Ruta -FullyQualifiedNames @() -DirectorioBase (Join-Path $jobsDirectory ('pdf-' + (Get-Date -Format 'yyyyMMdd-HHmmss'))) -Contexto $script:ActiveContext
+    $scriptPath = Join-Path $RepositoryRoot 'binary\GenerarPdfPanel.ps1'
+    $arguments = @('-File', $scriptPath, '-Repositorio', $RepositoryRoot, '-ConfigPath', $ConfigPath, '-XpzActivo', $script:ActiveXpz.Ruta, '-ManifiestoPath', $manifest.Ruta)
+    return Start-PanelChildWork -Operation 'GENERAR_PDF' -ScriptPath $scriptPath -ArgumentValues $arguments -Context $script:ActiveContext
 }
 
 function Get-EndpointInventoryState {
@@ -210,6 +376,63 @@ function Get-EndpointInventoryState {
     } catch {
         return [pscustomobject]@{ disponible = $false; vigente = $false; obsoleto = $true; motivo = $_.Exception.Message; inventario = $null }
     }
+}
+
+function Get-EnrichedServices {
+    if ($null -eq $script:ActiveContext -or $null -eq $script:ActiveXpz) { return @() }
+
+    $index = Cargar-IndiceMultiXPZ -RutaXpzPrincipal $script:ActiveXpz.Ruta
+    $inventoryServices = @(Obtener-ServiciosHttpDesdeIndice -Indice $index)
+    $inventoryNames = @($inventoryServices | ForEach-Object { [string]$_.proceso })
+    $ignoredServices = @($script:ActiveContext.ServiciosIgnorados)
+    $controlServices = @{}
+    if (Test-Path -LiteralPath $script:ActiveContext.RutaControl -PathType Leaf) {
+        try {
+            $control = Leer-ControlVersiones -RutaControl $script:ActiveContext.RutaControl
+            $controlServices = Convertir-DiccionarioControlVersiones -Objeto $control.services
+        } catch { $controlServices = @{} }
+    }
+
+    $enrichedServices = New-Object System.Collections.Generic.List[object]
+    foreach ($inventoryService in $inventoryServices) {
+        $fullyQualifiedName = [string]$inventoryService.proceso
+        if ($ignoredServices -contains $fullyQualifiedName) { continue }
+        $fileBaseName = Obtener-NombreArchivoServicio -FullyQualifiedName $fullyQualifiedName -FqnsInventario $inventoryNames
+        $markdownName = $fileBaseName + '.md'
+        $pdfName = $fileBaseName + '.pdf'
+        $markdownPath = Join-Path $script:ActiveContext.DirectorioServicios $markdownName
+        $pdfPath = Join-Path $script:ActiveContext.DirectorioServicios $pdfName
+        $controlService = if ($controlServices.ContainsKey($fullyQualifiedName)) { $controlServices[$fullyQualifiedName] } else { $null }
+        $version = if ($null -ne $controlService) { [string](Obtener-PropiedadControlVersiones -Objeto $controlService -Nombre 'version') } else { $null }
+        if ([string]::IsNullOrWhiteSpace($version)) { $version = $null }
+        $observacion = if (-not [string]::IsNullOrWhiteSpace($version)) { Get-ObservacionCambioServicioDesdeArchivo -RutaHistorial $script:ActiveContext.RutaHistorial -FullyQualifiedName $fullyQualifiedName -Version $version } else { $null }
+        $status = if ($null -ne $controlService) { [string](Obtener-PropiedadControlVersiones -Objeto $controlService -Nombre 'status') } else { 'ACTIVO' }
+        if ([string]::IsNullOrWhiteSpace($status)) { $status = 'ACTIVO' }
+        $pdfExists = Test-Path -LiteralPath $pdfPath -PathType Leaf
+        $markdownExists = Test-Path -LiteralPath $markdownPath -PathType Leaf
+        $lastModified = $null
+        foreach ($artifactPath in @($markdownPath, $pdfPath)) {
+            if (Test-Path -LiteralPath $artifactPath -PathType Leaf) {
+                $artifactDate = (Get-Item -LiteralPath $artifactPath).LastWriteTimeUtc
+                if ($null -eq $lastModified -or $artifactDate -gt $lastModified) { $lastModified = $artifactDate }
+            }
+        }
+        [void]$enrichedServices.Add([pscustomobject]@{
+            fullyQualifiedName = $fullyQualifiedName
+            nombre = [string]$inventoryService.nombre
+            descripcion = [string]$inventoryService.descripcion
+            proceso = $fullyQualifiedName
+            endpoint = [string]$script:ActiveContext.PackageName + [string]$inventoryService.endpoint
+            estado = $status
+            version = $version
+            versionDisponible = ($null -ne $version)
+            observacion = $observacion
+            fecha = if ($lastModified) { $lastModified.ToString('o') } else { $null }
+            pdf = [pscustomobject]@{ disponible = $pdfExists; nombre = if ($pdfExists) { $pdfName } else { $null } }
+            markdown = [pscustomobject]@{ disponible = $markdownExists; nombre = if ($markdownExists) { $markdownName } else { $null } }
+        })
+    }
+    return @($enrichedServices.ToArray())
 }
 
 function Start-EndpointGenerationWork {
@@ -256,8 +479,13 @@ function Start-PanelChildWork {
     )
     $jobId = 'panel-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + ([Guid]::NewGuid().ToString('N').Substring(0, 8))
     $jobsDirectory = Join-Path $Context.DirectorioLogs 'panel-jobs'
+    $operationsDirectory = Join-Path $Context.DirectorioLogs 'operaciones'
     New-Item -ItemType Directory -Path $jobsDirectory -Force | Out-Null
-    $logPath = Join-Path $Context.DirectorioLogs ($jobId + '.log')
+    New-Item -ItemType Directory -Path $operationsDirectory -Force | Out-Null
+    $operationId = [Guid]::NewGuid().ToString('N')
+    $operationLogName = $operationId + '.log'
+    $operationLogPath = Join-Path $operationsDirectory $operationLogName
+    $operationManifestPath = Join-Path $operationsDirectory ($operationId + '.json')
     $stdoutPath = Join-Path $jobsDirectory ($jobId + '.out')
     $stderrPath = Join-Path $jobsDirectory ($jobId + '.err')
     $powerShellPath = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
@@ -265,10 +493,14 @@ function Start-PanelChildWork {
     $process = Start-Process -FilePath $powerShellPath -ArgumentList $argumentText -WorkingDirectory $RepositoryRoot -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath -WindowStyle Hidden -PassThru
     $script:CurrentWork = [pscustomobject]@{
         id = $jobId
+        operationId = $operationId
         contextId = $Context.ContextId
         operacion = $Operation
         estado = 'RUNNING'
-        log = $logPath
+        log = $operationLogPath
+        operationLogPath = $operationLogPath
+        operationManifestPath = $operationManifestPath
+        operationLogName = $operationLogName
         inicio = (Get-Date).ToUniversalTime().ToString('o')
         fin = $null
         codigoSalida = $null
@@ -277,14 +509,28 @@ function Start-PanelChildWork {
         error = $null
         stdoutPath = $stdoutPath
         stderrPath = $stderrPath
+        xpzNombre = if ($script:ActiveXpz) { [string]$script:ActiveXpz.Nombre } else { $null }
+        xpzSha256 = if ($script:ActiveXpz -and (Test-Path -LiteralPath $script:ActiveXpz.Ruta -PathType Leaf)) { Obtener-Sha256Archivo -Ruta $script:ActiveXpz.Ruta } else { $null }
         process = $process
     }
+    Write-OperationRecord -Work $script:CurrentWork
     return $script:CurrentWork
 }
 
 function Start-ExportWork {
     param([Parameter(Mandatory = $true)]$RequestBody)
     if ($null -eq $script:ActiveContext) { throw 'No hay un contexto activo.' }
+    $geneXus = Resolver-RutaRepositorio -Ruta ([string]$script:ActiveContext.Herramientas.GeneXusProgramDir) -Raiz $RepositoryRoot
+    if ([string]::IsNullOrWhiteSpace($geneXus) -or -not (Test-Path -LiteralPath $geneXus -PathType Container)) {
+        throw ('No se encontro GeneXus en: ' + $geneXus + '. Verifique herramientas.geneXusProgramDir en configuracion.json.')
+    }
+    $msbuild = Resolver-RutaRepositorio -Ruta ([string]$script:ActiveContext.Herramientas.MsbuildPath) -Raiz $RepositoryRoot
+    if ([string]::IsNullOrWhiteSpace($msbuild) -or -not (Test-Path -LiteralPath $msbuild -PathType Leaf)) {
+        throw ('No se encontro MSBuild en: ' + $msbuild + '. Verifique herramientas.msbuildPath en configuracion.json.')
+    }
+    if (-not (Test-Path -LiteralPath $script:ActiveContext.KbPath -PathType Container)) {
+        throw ('No existe la Knowledge Base: ' + $script:ActiveContext.KbPath)
+    }
     $policy = [string]$RequestBody.policy
     if ([string]::IsNullOrWhiteSpace($policy)) { $policy = 'abort' }
     if ($policy -notin @('abort', 'continue')) { throw 'policy debe ser abort o continue.' }
@@ -293,6 +539,21 @@ function Start-ExportWork {
     $work = Start-PanelChildWork -Operation 'EXPORTAR_XPZ' -ScriptPath $scriptPath -ArgumentValues $arguments -Context $script:ActiveContext
     if ($policy -eq 'continue') { $work.warnings = @('La politica continue permite conservar un XPZ incompleto y pendientes visibles.') }
     return $work
+}
+
+function Start-CompleteXpzWork {
+    param([Parameter(Mandatory = $true)]$RequestBody)
+    if ($null -eq $script:ActiveContext) { throw 'No hay un contexto activo.' }
+    $name = [string]$RequestBody.nombre
+    $selected = @(Get-ActiveXpzCandidates | Where-Object { $_.Nombre -ceq $name })
+    if ($selected.Count -ne 1) { throw 'El XPZ indicado no pertenece al contexto activo.' }
+    $script:ActiveXpz = $selected[0]
+    $script:XpzOverride = $true
+    $jobsDirectory = Join-Path $script:ActiveContext.DirectorioLogs 'panel-jobs'
+    $manifest = Crear-ManifiestoEjecucion -Xpz $script:ActiveXpz.Ruta -FullyQualifiedNames @() -DirectorioBase (Join-Path $jobsDirectory ('completar-' + (Get-Date -Format 'yyyyMMdd-HHmmss'))) -Contexto $script:ActiveContext
+    $scriptPath = Join-Path $RepositoryRoot 'binary\CompletarXPZActivoGLM.ps1'
+    $arguments = @('-File', $scriptPath, '-Repositorio', $RepositoryRoot, '-XpzActivo', $script:ActiveXpz.Ruta, '-ManifiestoPath', $manifest.Ruta, '-PoliticaPendientes', 'continue')
+    return Start-PanelChildWork -Operation 'COMPLETAR_XPZ' -ScriptPath $scriptPath -ArgumentValues $arguments -Context $script:ActiveContext
 }
 
 function Start-DocumentationWork {
@@ -319,6 +580,7 @@ function Start-DocumentationWork {
     $scriptPath = Join-Path $RepositoryRoot 'binary\ActualizarServicios.ps1'
     $arguments = @('-File', $scriptPath, '-ConfigPath', $ConfigPath, '-ManifiestoPath', $manifest.Ruta)
     if ($mode -eq 'all') { $arguments += '-ForzarRegeneracionCompleta' }
+    if ($RequestBody.reiniciar -eq $true) { $arguments += '-Inicializar' }
     return Start-PanelChildWork -Operation 'PUBLICAR_DOCUMENTACION' -ScriptPath $scriptPath -ArgumentValues $arguments -Context $script:ActiveContext
 }
 
@@ -326,6 +588,94 @@ function Test-SafeLogicalName {
     param([Parameter(Mandatory = $true)][string]$Name)
     if ($Name.Length -gt 180 -or $Name -match '%|\.\.|[\\/:]' -or $Name -ne [System.Uri]::UnescapeDataString($Name)) { return $false }
     return ($Name -cmatch '^[A-Za-z0-9][A-Za-z0-9._-]*$')
+}
+
+function Get-ContextLogCatalog {
+    param(
+        [Parameter(Mandatory = $false)][int]$Limite = 12
+    )
+    if ($null -eq $script:ActiveContext -or -not (Test-Path -LiteralPath $script:ActiveContext.DirectorioLogs -PathType Container)) { return @() }
+    $archivos = @(Get-ChildItem -LiteralPath $script:ActiveContext.DirectorioLogs -File -ErrorAction SilentlyContinue |
+        Where-Object { $_.Extension.ToLowerInvariant() -in @('.log', '.json', '.txt') } |
+        Sort-Object LastWriteTimeUtc -Descending |
+        Select-Object -First $Limite)
+    $catalogo = New-Object System.Collections.Generic.List[object]
+    foreach ($archivo in $archivos) {
+        $categoria = 'ok'
+        $colas = @(Get-Content -LiteralPath $archivo.FullName -Tail 40 -ErrorAction SilentlyContinue)
+        $texto = ($colas -join ' ').ToLowerInvariant()
+        if ($texto -match 'error|failed|termino con errores|exit code 1|codigo 1|codigo de salida 1') { $categoria = 'error' }
+        elseif ($texto -match 'warning|advertencia|pendiente') { $categoria = 'advertencia' }
+        [void]$catalogo.Add([pscustomobject]@{
+            nombre = $archivo.Name
+            extension = $archivo.Extension.ToLowerInvariant()
+            bytes = $archivo.Length
+            modificado = $archivo.LastWriteTimeUtc.ToString('o')
+            categoria = $categoria
+        })
+    }
+    return @($catalogo.ToArray())
+}
+
+function Get-QueryValue {
+    param(
+        [Parameter(Mandatory = $true)]$Request,
+        [Parameter(Mandatory = $true)][string]$Name
+    )
+    $query = [string]$Request.Url.Query
+    foreach ($part in @($query.TrimStart('?').Split('&'))) {
+        if ([string]::IsNullOrWhiteSpace($part)) { continue }
+        $separator = $part.IndexOf('=')
+        $key = if ($separator -ge 0) { $part.Substring(0, $separator) } else { $part }
+        if ($key -ieq $Name) {
+            $value = if ($separator -ge 0) { $part.Substring($separator + 1) } else { '' }
+            return [System.Uri]::UnescapeDataString($value.Replace('+', ' '))
+        }
+    }
+    return ''
+}
+
+function Get-OperationLogCatalog {
+    param(
+        [Parameter(Mandatory = $false)][string]$OperationType = '',
+        [Parameter(Mandatory = $false)][string]$Severity = '',
+        [Parameter(Mandatory = $false)][bool]$History = $false
+    )
+    if ($null -eq $script:ActiveContext) { return @() }
+    $operationsDirectory = Join-Path $script:ActiveContext.DirectorioLogs 'operaciones'
+    if (-not (Test-Path -LiteralPath $operationsDirectory -PathType Container)) { return @() }
+    $records = New-Object System.Collections.Generic.List[object]
+    foreach ($manifestFile in @(Get-ChildItem -LiteralPath $operationsDirectory -Filter '*.json' -File -ErrorAction SilentlyContinue)) {
+        try {
+            $record = Get-Content -LiteralPath $manifestFile.FullName -Raw | ConvertFrom-Json
+            if ([string]$record.contextId -ne $script:ActiveContext.ContextId) { continue }
+            if ($OperationType -and $OperationType -ne 'todos' -and [string]$record.tipo -ine $OperationType) { continue }
+            if ($Severity -and $Severity -ne 'todos' -and [string]$record.severidad -ine $Severity) { continue }
+            $logName = [string]$record.logNombre
+            $logPath = if (Test-SafeLogicalName -Name $logName) { Join-Path $operationsDirectory $logName } else { $null }
+            [void]$records.Add([pscustomobject]@{
+                nombre = $logName
+                extension = '.log'
+                bytes = if ($logPath -and (Test-Path -LiteralPath $logPath -PathType Leaf)) { (Get-Item -LiteralPath $logPath).Length } else { 0 }
+                modificado = [string]$record.fin
+                categoria = ([string]$record.severidad).ToLowerInvariant()
+                operationId = [string]$record.operationId
+                tipo = [string]$record.tipo
+                severidad = [string]$record.severidad
+                estadoTecnico = [string]$record.estadoTecnico
+                estadoVisible = [string]$record.estadoVisible
+                codigoSalida = $record.codigoSalida
+                inicio = [string]$record.inicio
+                fin = [string]$record.fin
+                logNombre = $logName
+                error = [string]$record.error
+                warnings = @($record.warnings)
+            })
+        } catch { continue }
+    }
+    $sortedRecords = @($records | Sort-Object { [datetime]$_.inicio } -Descending)
+    if ($History -or ($OperationType -and $OperationType -ne 'todos')) { return $sortedRecords }
+    return @($sortedRecords | Group-Object tipo | ForEach-Object { $_.Group | Select-Object -First 1 })
 }
 
 function Get-ContextFileList {
@@ -339,18 +689,47 @@ function Get-ContextFileList {
     })
 }
 
+function Get-PublishedPdfCatalog {
+    if ($null -eq $script:ActiveContext) { return @() }
+    $pdfFiles = @(Get-ContextFileList -Directory $script:ActiveContext.DirectorioServicios -Extensions @('.pdf'))
+    return @($pdfFiles | ForEach-Object {
+        $pdf = $_
+        $baseName = [System.IO.Path]::GetFileNameWithoutExtension($pdf.nombre)
+        $markdownPath = Join-Path $script:ActiveContext.DirectorioServicios ($baseName + '.md')
+        $serviceName = $baseName
+        $description = 'Documento publicado'
+        $version = $null
+        $endpoint = $null
+        if (Test-Path -LiteralPath $markdownPath -PathType Leaf) {
+            $lines = @(Get-Content -LiteralPath $markdownPath -Encoding UTF8)
+            $heading = $lines | Where-Object { $_ -match '^#\s+(.+)$' } | Select-Object -First 1
+            if ($heading -and $heading -match '^#\s+(.+)$') { $serviceName = $Matches[1].Trim() }
+            $descriptionRow = $lines | Where-Object { $_ -match '(?i)^\|\s*Descripci.n\s*\|\s*(.+?)\s*\|$' } | Select-Object -First 1
+            if ($descriptionRow -and $descriptionRow -match '(?i)^\|\s*Descripci.n\s*\|\s*(.+?)\s*\|$') { $description = $Matches[1].Trim() }
+            $versionRow = $lines | Where-Object { $_ -match '(?i)^\|\s*Versi.n\s*\|\s*(.+?)\s*\|$' } | Select-Object -First 1
+            if ($versionRow -and $versionRow -match '(?i)^\|\s*Versi.n\s*\|\s*(.+?)\s*\|$') { $version = $Matches[1].Trim() }
+            $endpointRow = $lines | Where-Object { $_ -match '(?i)^\|\s*Endpoint\s*\|\s*`?(.+?)`?\s*\|$' } | Select-Object -First 1
+            if ($endpointRow -and $endpointRow -match '(?i)^\|\s*Endpoint\s*\|\s*`?(.+?)`?\s*\|$') { $endpoint = $Matches[1].Replace('`', '').Trim() }
+        }
+        [pscustomobject]@{ nombre = $pdf.nombre; extension = '.pdf'; bytes = $pdf.bytes; modificado = $pdf.modificado; servicioNombre = $serviceName; descripcion = $description; version = $version; endpoint = $endpoint }
+    })
+}
+
 function Write-BytesResponse {
     param(
         [Parameter(Mandatory = $true)]$RequestContext,
         [Parameter(Mandatory = $true)][int]$StatusCode,
         [Parameter(Mandatory = $true)][byte[]]$Bytes,
-        [Parameter(Mandatory = $true)][string]$ContentType
+        [Parameter(Mandatory = $true)][string]$ContentType,
+        [Parameter(Mandatory = $false)][ValidateSet('inline', 'attachment')][string]$ContentDisposition = 'inline',
+        [Parameter(Mandatory = $false)][string]$DownloadName = ''
     )
     $response = $RequestContext.Response
     $response.StatusCode = $StatusCode
     $response.ContentType = $ContentType
     $response.Headers['Cache-Control'] = 'no-store'
-    $response.Headers['Content-Disposition'] = 'inline'
+    $safeDownloadName = if ([string]::IsNullOrWhiteSpace($DownloadName)) { '' } else { [System.IO.Path]::GetFileName($DownloadName) }
+    $response.Headers['Content-Disposition'] = if ($safeDownloadName) { $ContentDisposition + '; filename="' + $safeDownloadName + '"' } else { $ContentDisposition }
     $response.ContentLength64 = $Bytes.Length
     $response.OutputStream.Write($Bytes, 0, $Bytes.Length)
     $response.Close()
@@ -413,13 +792,20 @@ function Reset-PanelSession {
 }
 
 function Write-ConfigurationCandidate {
-    param([Parameter(Mandatory = $true)]$Candidate)
+    param(
+        [Parameter(Mandatory = $true)]$Candidate,
+        [Parameter(Mandatory = $false)][string]$Operation = 'CONFIGURACION_CLIENTE'
+    )
+    $contextBeforeWrite = $script:ActiveContext
     Test-ConfigurationCandidate -Candidate $Candidate
     $content = Normalizar-SaltosLineaLf -Texto ($Candidate | ConvertTo-Json -Depth 15)
     Escribir-ArchivoAtomico -Ruta $ConfigPath -Contenido $content | Out-Null
     $script:ConfigurationRaw = Get-Content -LiteralPath $ConfigPath -Raw | ConvertFrom-Json
     $script:ConfigurationErrors.Clear()
     Reset-PanelSession
+    if ($contextBeforeWrite) {
+        Write-PanelMutationOperation -Operation $Operation -Context $contextBeforeWrite -Output @('Configuracion actualizada correctamente.') | Out-Null
+    }
 }
 
 function Get-MutationPayload {
@@ -439,6 +825,52 @@ function Find-ConfiguredClient {
 function Find-ConfiguredEnvironment {
     param([Parameter(Mandatory = $true)]$Client, [Parameter(Mandatory = $true)][string]$EnvironmentId)
     return @($Client.ambientes | Where-Object { [string]$_.id -ceq $EnvironmentId }) | Select-Object -First 1
+}
+
+function Convert-MutationPayloadToNewClient {
+    param([Parameter(Mandatory = $true)]$Payload)
+
+    foreach ($propertyName in @('id', 'nombre', 'packagename')) {
+        if (-not $Payload.PSObject.Properties[$propertyName] -or [string]::IsNullOrWhiteSpace([string]$Payload.$propertyName)) {
+            throw ('El alta de cliente requiere el campo ' + $propertyName + '.')
+        }
+    }
+    if (-not (Test-NombreSlugValido -Valor ([string]$Payload.id))) {
+        throw 'El id de cliente no es valido. Use minusculas, digitos y guiones.'
+    }
+    if (-not $Payload.PSObject.Properties['ambientes'] -or @($Payload.ambientes).Count -ne 1) {
+        throw 'El alta de cliente requiere exactamente un primer ambiente completo.'
+    }
+    if ($Payload.PSObject.Properties['serviciosIgnorados'] -and @($Payload.serviciosIgnorados).Count -gt 0) {
+        throw 'Un cliente nuevo debe conservar serviciosIgnorados como coleccion vacia.'
+    }
+
+    $environmentPayload = @($Payload.ambientes)[0]
+    foreach ($propertyName in @('id', 'nombre', 'tipo', 'kbPath')) {
+        if (-not $environmentPayload.PSObject.Properties[$propertyName] -or [string]::IsNullOrWhiteSpace([string]$environmentPayload.$propertyName)) {
+            throw ('El primer ambiente requiere el campo ' + $propertyName + '.')
+        }
+    }
+    if (-not (Test-NombreSlugValido -Valor ([string]$environmentPayload.id))) {
+        throw 'El id del primer ambiente no es valido. Use minusculas, digitos y guiones.'
+    }
+    $environmentType = Clasificar-TipoAmbiente -Tipo ([string]$environmentPayload.tipo)
+    if ($null -eq $environmentType) {
+        throw 'El tipo del primer ambiente debe ser test o prod.'
+    }
+
+    return [pscustomobject]@{
+        id = [string]$Payload.id
+        nombre = [string]$Payload.nombre
+        packagename = [string]$Payload.packagename
+        serviciosIgnorados = @()
+        ambientes = @([pscustomobject]@{
+            id = [string]$environmentPayload.id
+            nombre = [string]$environmentPayload.nombre
+            tipo = $environmentType
+            kbPath = [string]$environmentPayload.kbPath
+        })
+    }
 }
 
 function Get-PanelPort {
@@ -514,7 +946,10 @@ function Get-StaticPath {
     param([Parameter(Mandatory = $true)][string]$RequestPath)
     $logicalPath = $RequestPath
     if ($logicalPath -eq '/') { $logicalPath = '/index.html' }
-    if ($logicalPath -notmatch '^/(index\.html|app\.js|style\.css|favicon\.svg)$') {
+    if ($logicalPath -match '^/fonts/Poppins-(Regular|SemiBold|Bold)\.ttf$') {
+        return Join-Path (Join-Path $RepositoryRoot 'binary\fonts') ([System.IO.Path]::GetFileName($logicalPath))
+    }
+    if ($logicalPath -notmatch '^/(index\.html|style\.css|favicon\.svg|resources/example\.html|app\.js|app/(main|api-client|state|preferences|render-utils)\.js|app/components/(app-shell|base-states|service-components|operation-console|crud-list)\.js|app/views/(index|dashboard|documentation|logs|configuration)\.js)$') {
         return $null
     }
     return Join-Path (Join-Path $RepositoryRoot 'web') $logicalPath.TrimStart('/')
@@ -527,6 +962,7 @@ function Get-ContentType {
         '.js' { return 'text/javascript; charset=utf-8' }
         '.css' { return 'text/css; charset=utf-8' }
         '.svg' { return 'image/svg+xml' }
+        '.ttf' { return 'font/ttf' }
         default { return 'application/octet-stream' }
     }
 }
@@ -538,6 +974,10 @@ function Send-StaticFile {
         Write-TextResponse -RequestContext $RequestContext -StatusCode 404 -Content 'Recurso no encontrado.' -ContentType 'text/plain; charset=utf-8'
         return
     }
+    if ([System.IO.Path]::GetExtension($path).ToLowerInvariant() -eq '.ttf') {
+        Write-BytesResponse -RequestContext $RequestContext -StatusCode 200 -Bytes ([System.IO.File]::ReadAllBytes($path)) -ContentType (Get-ContentType -Path $path)
+        return
+    }
     $content = [System.IO.File]::ReadAllText($path, [System.Text.Encoding]::UTF8)
     if ([System.IO.Path]::GetFileName($path) -eq 'index.html') {
         $tokenScript = '<script>window.PANEL_TOKEN="' + $script:SessionToken + '";</script>'
@@ -546,14 +986,121 @@ function Send-StaticFile {
     Write-TextResponse -RequestContext $RequestContext -StatusCode 200 -Content $content -ContentType (Get-ContentType -Path $path)
 }
 
+function Get-ObservacionCambioServicioDesdeArchivo {
+    param(
+        [Parameter(Mandatory = $true)][string]$RutaHistorial,
+        [Parameter(Mandatory = $true)][string]$FullyQualifiedName,
+        [Parameter(Mandatory = $false)][AllowEmptyString()][string]$Version = ''
+    )
+    if (-not (Test-Path -LiteralPath $RutaHistorial -PathType Leaf)) { return $null }
+    if ([string]::IsNullOrWhiteSpace($Version)) { return $null }
+    $lineas = @([System.IO.File]::ReadAllLines($RutaHistorial, (New-Object System.Text.UTF8Encoding($false))))
+    $seccionEsperada = '## ' + $FullyQualifiedName
+    $patronVersion = [regex]::new('^-\s+\*\*' + [regex]::Escape($Version) + '\*\*')
+    $enSeccion = $false
+    for ($i = 0; $i -lt $lineas.Count; $i++) {
+        $linea = [string]$lineas[$i]
+        if ($linea -match '^##\s+') {
+            if ($enSeccion) { break }
+            if ($linea.TrimEnd() -eq $seccionEsperada) { $enSeccion = $true }
+            continue
+        }
+        if (-not $enSeccion) { continue }
+        if ($patronVersion.IsMatch($linea)) {
+            $textoEntrada = New-Object System.Collections.Generic.List[string]
+            [void]$textoEntrada.Add($linea.Trim())
+            for ($j = $i + 1; $j -lt $lineas.Count; $j++) {
+                $siguiente = [string]$lineas[$j]
+                if ($siguiente -match '^-\s+\*\*' -or $siguiente -match '^##\s+') { break }
+                if ([string]::IsNullOrWhiteSpace($siguiente)) { continue }
+                [void]$textoEntrada.Add($siguiente.Trim())
+            }
+            return (($textoEntrada.ToArray()) -join ' ')
+        }
+    }
+    return $null
+}
+
+function Get-ContextValidaciones {
+    $validaciones = New-Object System.Collections.Generic.List[object]
+    if ($null -eq $script:ActiveContext) { return @($validaciones.ToArray()) }
+    if ($script:ConfigurationErrors.Count -eq 0) {
+        [void]$validaciones.Add([pscustomobject]@{ item = 'Configuracion'; estado = 'OK'; mensaje = 'Esquema multicliente valido.' })
+    } else {
+        [void]$validaciones.Add([pscustomobject]@{ item = 'Configuracion'; estado = 'ERROR'; mensaje = ($script:ConfigurationErrors -join '; ') })
+    }
+    $herramientasDefinidas = @(
+        [pscustomobject]@{ nombre = 'GeneXus'; propiedad = 'geneXusProgramDir'; tipo = 'Container' },
+        [pscustomobject]@{ nombre = 'MSBuild'; propiedad = 'msbuildPath'; tipo = 'Leaf' },
+        [pscustomobject]@{ nombre = 'Pandoc'; propiedad = 'pandocPath'; tipo = 'Leaf' },
+        [pscustomobject]@{ nombre = 'Typst'; propiedad = 'typstPath'; tipo = 'Leaf' }
+    )
+    foreach ($herramienta in $herramientasDefinidas) {
+        $valor = $null
+        if ($script:ConfigurationRaw -and $script:ConfigurationRaw.herramientas) { $valor = [string]$script:ConfigurationRaw.herramientas.($herramienta.propiedad) }
+        if ([string]::IsNullOrWhiteSpace($valor)) {
+            [void]$validaciones.Add([pscustomobject]@{ item = $herramienta.nombre; estado = 'ADVERTENCIA'; mensaje = 'No configurado.' })
+            continue
+        }
+        $rutaResuelta = Resolver-RutaRepositorio -Ruta $valor -Raiz $RepositoryRoot
+        if (Test-Path -LiteralPath $rutaResuelta -PathType $herramienta.tipo) {
+            [void]$validaciones.Add([pscustomobject]@{ item = $herramienta.nombre; estado = 'OK'; mensaje = $rutaResuelta })
+        } else {
+            [void]$validaciones.Add([pscustomobject]@{ item = $herramienta.nombre; estado = 'ADVERTENCIA'; mensaje = ('No se encontro en: ' + $valor) })
+        }
+    }
+    [void]$validaciones.Add([pscustomobject]@{ item = 'Contexto'; estado = 'OK'; mensaje = ($script:ActiveContext.ContextId + ' (' + $script:ActiveContext.ClienteNombre + ' / ' + $script:ActiveContext.AmbienteNombre + ')') })
+    if (Test-Path -LiteralPath $script:ActiveContext.KbPath -PathType Container) {
+        [void]$validaciones.Add([pscustomobject]@{ item = 'Knowledge Base'; estado = 'OK'; mensaje = $script:ActiveContext.KbPath })
+    } else {
+        [void]$validaciones.Add([pscustomobject]@{ item = 'Knowledge Base'; estado = 'ERROR'; mensaje = ('No existe la Knowledge Base: ' + $script:ActiveContext.KbPath) })
+    }
+    return @($validaciones.ToArray())
+}
+
 function Get-StateData {
     Update-CurrentWork
+    $inventoryState = if ($script:ActiveContext -and $script:ActiveXpz) { Get-EndpointInventoryState } else { $null }
+    $documentFiles = if ($script:ActiveContext) { @(Get-ContextFileList -Directory $script:ActiveContext.DirectorioServicios -Extensions @('.pdf')) } else { @() }
+    $ultimaActualizacion = $null
+    if ($documentFiles.Count -gt 0) {
+        $maximaFecha = $documentFiles | ForEach-Object { [datetime]$_.modificado } | Measure-Object -Maximum
+        if ($null -ne $maximaFecha) { $ultimaActualizacion = $maximaFecha.Maximum.ToString('o') }
+    }
+    $xpzCandidates = if ($script:ActiveContext) { @(Get-ActiveXpzCandidates | ForEach-Object { Convert-XpzForResponse -Xpz $_ }) } else { @() }
+    $activeXpzHash = if ($script:ActiveXpz -and (Test-Path -LiteralPath $script:ActiveXpz.Ruta -PathType Leaf)) { (Obtener-Sha256Archivo -Ruta $script:ActiveXpz.Ruta) } else { $null }
+    $lastReview = if ($script:ActiveContext) { Get-LatestContextReport -Type review } else { $null }
+    $publicWork = if ($script:CurrentWork) { Get-PublicWork -Work $script:CurrentWork } elseif ($script:LastFinishedWork) { Get-PublicWork -Work $script:LastFinishedWork } else { $null }
+    $processedCount = 0
+    $processingState = 'NUNCA_PROCESADO'
+    $ultimaProcesamiento = $null
+    if ($script:ActiveContext -and (Test-Path -LiteralPath $script:ActiveContext.RutaControl -PathType Leaf)) {
+        $ultimaProcesamiento = (Get-Item -LiteralPath $script:ActiveContext.RutaControl).LastWriteTimeUtc.ToString('o')
+        try {
+            $control = Leer-ControlVersiones -RutaControl $script:ActiveContext.RutaControl
+            $processedCount = @($control.services.PSObject.Properties).Count
+            if ($processedCount -gt 0) { $processingState = 'PROCESADO' }
+        } catch { $processingState = 'INCONSISTENTE' }
+    }
+    $dashboard = [pscustomobject]@{
+        contexto = $script:ActiveContext
+        kb = if ($script:ActiveContext) { [pscustomobject]@{ path = $script:ActiveContext.KbPath; disponible = (Test-Path -LiteralPath $script:ActiveContext.KbPath -PathType Container) } } else { $null }
+        inventario = $inventoryState
+        documentos = [pscustomobject]@{ total = $documentFiles.Count; archivos = $documentFiles; ultimaActualizacion = $ultimaActualizacion }
+        procesamiento = [pscustomobject]@{ procesado = ($processedCount -gt 0); serviciosProcesados = $processedCount; estado = $processingState; pdfDisponibles = $documentFiles.Count; ultimaActualizacion = $ultimaProcesamiento }
+        ultimoReview = $lastReview
+        validaciones = @(Get-ContextValidaciones)
+        xpz = [pscustomobject]@{ disponibles = $xpzCandidates; activo = if ($script:ActiveXpz) { Convert-XpzForResponse -Xpz $script:ActiveXpz } else { $null }; sha256 = $activeXpzHash }
+        herramientas = if ($script:ConfigurationRaw) { $script:ConfigurationRaw.herramientas } else { $null }
+        trabajo = $publicWork
+    }
     [pscustomobject]@{
         configurationValid = ($script:ConfigurationErrors.Count -eq 0)
         configurationErrors = @($script:ConfigurationErrors)
         context = $script:ActiveContext
         xpz = if ($script:ActiveXpz) { Convert-XpzForResponse -Xpz $script:ActiveXpz } else { $null }
-        work = if ($script:CurrentWork) { Get-PublicWork -Work $script:CurrentWork } elseif ($script:LastFinishedWork) { Get-PublicWork -Work $script:LastFinishedWork } else { $null }
+        work = $publicWork
+        dashboard = $dashboard
     }
 }
 
@@ -581,9 +1128,11 @@ function Invoke-ApiRequest {
             $candidate = ($script:ConfigurationRaw | ConvertTo-Json -Depth 15 | ConvertFrom-Json)
             $client = Find-ConfiguredClient -Candidate $candidate -ClientId ([System.Uri]::UnescapeDataString($Matches[1]))
             if ($null -eq $client) { throw 'Cliente no encontrado.' }
-            $environment = [pscustomobject]@{ id = [string]$payload.id; nombre = [string]$payload.nombre; kbPath = [string]$payload.kbPath }
+            $tipoNormalizado = Clasificar-TipoAmbiente -Tipo ([string]$payload.tipo)
+            if ($null -eq $tipoNormalizado) { throw 'El tipo de ambiente debe ser test o prod.' }
+            $environment = [pscustomobject]@{ id = [string]$payload.id; nombre = [string]$payload.nombre; tipo = $tipoNormalizado; kbPath = [string]$payload.kbPath }
             $client.ambientes = @($client.ambientes) + $environment
-            Write-ConfigurationCandidate -Candidate $candidate
+            Write-ConfigurationCandidate -Candidate $candidate -Operation 'CONFIGURACION_AMBIENTE'
             Write-JsonResponse -RequestContext $RequestContext -StatusCode 200 -Payload @{ ok = $true; data = @{ configHash = Get-ConfigurationHash } }
         } catch { $status = if ($_.Exception.Message -match 'cambio externamente') { 409 } else { 400 }; Write-JsonResponse -RequestContext $RequestContext -StatusCode $status -Payload @{ ok = $false; error = $_.Exception.Message } }
         return
@@ -598,7 +1147,12 @@ function Invoke-ApiRequest {
             $environment = Find-ConfiguredEnvironment -Client $client -EnvironmentId ([System.Uri]::UnescapeDataString($Matches[2]))
             if ($null -eq $environment) { throw 'Ambiente no encontrado.' }
             foreach ($propertyName in @('nombre', 'kbPath')) { if ($payload.PSObject.Properties[$propertyName]) { $environment.$propertyName = [string]$payload.$propertyName } }
-            Write-ConfigurationCandidate -Candidate $candidate
+            if ($payload.PSObject.Properties['tipo']) {
+                $tipoNormalizado = Clasificar-TipoAmbiente -Tipo ([string]$payload.tipo)
+                if ($null -eq $tipoNormalizado) { throw 'El tipo de ambiente debe ser test o prod.' }
+                $environment.tipo = $tipoNormalizado
+            }
+            Write-ConfigurationCandidate -Candidate $candidate -Operation 'CONFIGURACION_AMBIENTE'
             Write-JsonResponse -RequestContext $RequestContext -StatusCode 200 -Payload @{ ok = $true; data = @{ configHash = Get-ConfigurationHash } }
         } catch { $status = if ($_.Exception.Message -match 'cambio externamente') { 409 } else { 400 }; Write-JsonResponse -RequestContext $RequestContext -StatusCode $status -Payload @{ ok = $false; error = $_.Exception.Message } }
         return
@@ -613,7 +1167,7 @@ function Invoke-ApiRequest {
             if ($null -eq $client) { throw 'Cliente no encontrado.' }
             $environmentId = [System.Uri]::UnescapeDataString($Matches[2])
             $client.ambientes = @($client.ambientes | Where-Object { [string]$_.id -cne $environmentId })
-            Write-ConfigurationCandidate -Candidate $candidate
+            Write-ConfigurationCandidate -Candidate $candidate -Operation 'CONFIGURACION_AMBIENTE'
             Write-JsonResponse -RequestContext $RequestContext -StatusCode 200 -Payload @{ ok = $true; data = @{ configHash = Get-ConfigurationHash } }
         } catch { $status = if ($_.Exception.Message -match 'cambio externamente') { 409 } else { 400 }; Write-JsonResponse -RequestContext $RequestContext -StatusCode $status -Payload @{ ok = $false; error = $_.Exception.Message } }
         return
@@ -626,7 +1180,7 @@ function Invoke-ApiRequest {
             $client = Find-ConfiguredClient -Candidate $candidate -ClientId ([System.Uri]::UnescapeDataString($Matches[1]))
             if ($null -eq $client) { throw 'Cliente no encontrado.' }
             foreach ($propertyName in @('nombre', 'packagename', 'serviciosIgnorados')) { if ($payload.PSObject.Properties[$propertyName]) { $client.$propertyName = $payload.$propertyName } }
-            Write-ConfigurationCandidate -Candidate $candidate
+            Write-ConfigurationCandidate -Candidate $candidate -Operation 'CONFIGURACION_CLIENTE'
             Write-JsonResponse -RequestContext $RequestContext -StatusCode 200 -Payload @{ ok = $true; data = @{ configHash = Get-ConfigurationHash } }
         } catch { $status = if ($_.Exception.Message -match 'cambio externamente') { 409 } else { 400 }; Write-JsonResponse -RequestContext $RequestContext -StatusCode $status -Payload @{ ok = $false; error = $_.Exception.Message } }
         return
@@ -639,7 +1193,7 @@ function Invoke-ApiRequest {
             $candidate = ($script:ConfigurationRaw | ConvertTo-Json -Depth 15 | ConvertFrom-Json)
             $clientId = [System.Uri]::UnescapeDataString($Matches[1])
             $candidate.clientes = @($candidate.clientes | Where-Object { [string]$_.id -cne $clientId })
-            Write-ConfigurationCandidate -Candidate $candidate
+            Write-ConfigurationCandidate -Candidate $candidate -Operation 'CONFIGURACION_CLIENTE'
             Write-JsonResponse -RequestContext $RequestContext -StatusCode 200 -Payload @{ ok = $true; data = @{ configHash = Get-ConfigurationHash } }
         } catch { $status = if ($_.Exception.Message -match 'cambio externamente') { 409 } else { 400 }; Write-JsonResponse -RequestContext $RequestContext -StatusCode $status -Payload @{ ok = $false; error = $_.Exception.Message } }
         return
@@ -649,9 +1203,9 @@ function Invoke-ApiRequest {
         try {
             $body = Get-RequestBodyJson -Request $request; $payload = Get-MutationPayload -Body $body
             $candidate = ($script:ConfigurationRaw | ConvertTo-Json -Depth 15 | ConvertFrom-Json)
-            $newClient = [pscustomobject]@{ id = [string]$payload.id; nombre = [string]$payload.nombre; packagename = [string]$payload.packagename; serviciosIgnorados = @($payload.serviciosIgnorados); ambientes = @($payload.ambientes) }
+            $newClient = Convert-MutationPayloadToNewClient -Payload $payload
             $candidate.clientes = @($candidate.clientes) + $newClient
-            Write-ConfigurationCandidate -Candidate $candidate
+            Write-ConfigurationCandidate -Candidate $candidate -Operation 'CONFIGURACION_CLIENTE'
             Write-JsonResponse -RequestContext $RequestContext -StatusCode 200 -Payload @{ ok = $true; data = @{ configHash = Get-ConfigurationHash } }
         } catch { $status = if ($_.Exception.Message -match 'cambio externamente') { 409 } else { 400 }; Write-JsonResponse -RequestContext $RequestContext -StatusCode $status -Payload @{ ok = $false; error = $_.Exception.Message } }
         return
@@ -662,7 +1216,7 @@ function Invoke-ApiRequest {
             $body = Get-RequestBodyJson -Request $request; $payload = Get-MutationPayload -Body $body
             $candidate = ($script:ConfigurationRaw | ConvertTo-Json -Depth 15 | ConvertFrom-Json)
             foreach ($propertyName in @('rutas', 'herramientas', 'exportacion', 'panel')) { if ($payload.PSObject.Properties[$propertyName]) { $candidate.$propertyName = $payload.$propertyName } }
-            Write-ConfigurationCandidate -Candidate $candidate
+            Write-ConfigurationCandidate -Candidate $candidate -Operation 'CONFIGURACION_GLOBAL'
             Write-JsonResponse -RequestContext $RequestContext -StatusCode 200 -Payload @{ ok = $true; data = @{ configHash = Get-ConfigurationHash } }
         } catch { $status = if ($_.Exception.Message -match 'cambio externamente') { 409 } else { 400 }; Write-JsonResponse -RequestContext $RequestContext -StatusCode $status -Payload @{ ok = $false; error = $_.Exception.Message } }
         return
@@ -689,9 +1243,9 @@ function Invoke-ApiRequest {
             $body = Get-RequestBodyJson -Request $request
             if ($script:ConfigurationErrors.Count -gt 0) { throw 'La configuracion no es valida; el panel permanece en solo lectura.' }
             $script:ActiveContext = Resolver-ContextoConfiguracion -ConfiguracionRaw $script:ConfigurationRaw -ConfigPath $ConfigPath -RaizRepositorio $RepositoryRoot -ClienteId ([string]$body.clienteId) -AmbienteId ([string]$body.ambienteId)
-            $script:ActiveXpz = @(Get-ActiveXpzCandidates | Sort-Object Fecha | Select-Object -Last 1)
-            if ($script:ActiveXpz.Count -eq 0) { $script:ActiveXpz = $null } else { $script:ActiveXpz = $script:ActiveXpz[0] }
+            $script:ActiveXpz = $null
             $script:XpzOverride = $false
+            Write-PanelMutationOperation -Operation 'ACTIVAR_CONTEXTO' -Context $script:ActiveContext -Output @('Contexto activo: ' + $script:ActiveContext.ContextId) | Out-Null
             $contextData = [pscustomobject]@{
                 contextId = $script:ActiveContext.ContextId
                 clienteId = $script:ActiveContext.ClienteId
@@ -724,7 +1278,8 @@ function Invoke-ApiRequest {
             return
         }
         try {
-            $work = Start-ValidationWork
+            $body = Get-RequestBodyJson -Request $request
+            $work = Start-ValidationWork -RequestBody $body
             Write-JsonResponse -RequestContext $RequestContext -StatusCode 202 -Payload @{ ok = $true; data = @{ jobId = $work.id } }
         } catch {
             Write-JsonResponse -RequestContext $RequestContext -StatusCode 409 -Payload @{ ok = $false; error = $_.Exception.Message }
@@ -742,10 +1297,26 @@ function Invoke-ApiRequest {
         }
         try {
             $body = Get-RequestBodyJson -Request $request
-            $work = Start-ExportWork -RequestBody $body
+            $work = if ([string]$body.modo -eq 'completar') { Start-CompleteXpzWork -RequestBody $body } else { Start-ExportWork -RequestBody $body }
             Write-JsonResponse -RequestContext $RequestContext -StatusCode 202 -Payload @{ ok = $true; data = @{ jobId = $work.id } }
         } catch {
-            Write-JsonResponse -RequestContext $RequestContext -StatusCode 409 -Payload @{ ok = $false; error = $_.Exception.Message }
+            $errorMessage = $_.Exception.Message
+            if ($errorMessage -match 'No se encontro GeneXus|No se encontro MSBuild|No existe la Knowledge Base') {
+                $failedWork = New-ImmediateFailedWork -Operation 'EXPORTAR_XPZ' -Context $script:ActiveContext -ErrorMessage $errorMessage
+                Write-JsonResponse -RequestContext $RequestContext -StatusCode 202 -Payload @{ ok = $true; data = @{ jobId = $failedWork.id } }
+            } else {
+                Write-JsonResponse -RequestContext $RequestContext -StatusCode 409 -Payload @{ ok = $false; error = $errorMessage }
+            }
+        }
+        return
+    }
+    if ($route -eq '/api/generar-pdf' -and $request.HttpMethod -eq 'POST') {
+        if (-not (Test-SessionToken -Request $request)) { Write-JsonResponse -RequestContext $RequestContext -StatusCode 403 -Payload @{ ok = $false; error = 'Token de sesion invalido.' }; return }
+        if (Test-WorkInProgress) { Write-JsonResponse -RequestContext $RequestContext -StatusCode 409 -Payload @{ ok = $false; error = 'Ya existe un trabajo activo.' }; return }
+        try { $body = Get-RequestBodyJson -Request $request; $work = Start-PdfGenerationWork -RequestBody $body; Write-JsonResponse -RequestContext $RequestContext -StatusCode 202 -Payload @{ ok = $true; data = @{ jobId = $work.id } } }
+        catch {
+            $statusCode = if ($_.Exception.Message -match '^PRECONDICION_XPZ:') { 409 } else { 400 }
+            Write-JsonResponse -RequestContext $RequestContext -StatusCode $statusCode -Payload @{ ok = $false; error = $_.Exception.Message }
         }
         return
     }
@@ -754,7 +1325,19 @@ function Invoke-ApiRequest {
             Write-JsonResponse -RequestContext $RequestContext -StatusCode 409 -Payload @{ ok = $false; error = 'No hay un contexto activo.' }
             return
         }
-        Write-JsonResponse -RequestContext $RequestContext -StatusCode 200 -Payload @{ ok = $true; data = @{ documentos = @(Get-ContextFileList -Directory $script:ActiveContext.DirectorioServicios -Extensions @('.md', '.pdf')) } }
+        Write-JsonResponse -RequestContext $RequestContext -StatusCode 200 -Payload @{ ok = $true; data = @{ documentos = @(Get-PublishedPdfCatalog) } }
+        return
+    }
+    if ($route -eq '/api/servicios' -and $request.HttpMethod -eq 'GET') {
+        if ($null -eq $script:ActiveContext -or $null -eq $script:ActiveXpz) {
+            Write-JsonResponse -RequestContext $RequestContext -StatusCode 409 -Payload @{ ok = $false; error = 'No hay un contexto y XPZ activos.' }
+            return
+        }
+        try {
+            Write-JsonResponse -RequestContext $RequestContext -StatusCode 200 -Payload @{ ok = $true; data = @{ servicios = @(Get-EnrichedServices) } }
+        } catch {
+            Write-JsonResponse -RequestContext $RequestContext -StatusCode 500 -Payload @{ ok = $false; error = $_.Exception.Message }
+        }
         return
     }
     if ($route -match '^/api/documentos/([^/]+)$' -and $request.HttpMethod -eq 'GET') {
@@ -773,7 +1356,14 @@ function Invoke-ApiRequest {
             return
         }
         $extension = [System.IO.Path]::GetExtension($documentPath).ToLowerInvariant()
-        if ($extension -eq '.pdf') { Write-BytesResponse -RequestContext $RequestContext -StatusCode 200 -Bytes ([System.IO.File]::ReadAllBytes($documentPath)) -ContentType 'application/pdf' }
+        $downloadRequested = (Get-QueryValue -Request $request -Name 'download') -match '^(?i:true|1|si|sí|yes)$'
+        if ($extension -eq '.pdf') {
+            $contentType = if ($downloadRequested) { 'application/octet-stream' } else { 'application/pdf' }
+            $contentDisposition = if ($downloadRequested) { 'attachment' } else { 'inline' }
+            $downloadName = Get-QueryValue -Request $request -Name 'filename'
+            if ([string]::IsNullOrWhiteSpace($downloadName)) { $downloadName = $documentName }
+            Write-BytesResponse -RequestContext $RequestContext -StatusCode 200 -Bytes ([System.IO.File]::ReadAllBytes($documentPath)) -ContentType $contentType -ContentDisposition $contentDisposition -DownloadName $downloadName
+        }
         else { Write-TextResponse -RequestContext $RequestContext -StatusCode 200 -Content ([System.IO.File]::ReadAllText($documentPath, [System.Text.Encoding]::UTF8)) -ContentType 'text/markdown; charset=utf-8' }
         return
     }
@@ -782,7 +1372,12 @@ function Invoke-ApiRequest {
             Write-JsonResponse -RequestContext $RequestContext -StatusCode 409 -Payload @{ ok = $false; error = 'No hay un contexto activo.' }
             return
         }
-        Write-JsonResponse -RequestContext $RequestContext -StatusCode 200 -Payload @{ ok = $true; data = @{ logs = @(Get-ContextFileList -Directory $script:ActiveContext.DirectorioLogs -Extensions @('.log', '.json', '.txt')) } }
+        $operationType = Get-QueryValue -Request $request -Name 'tipo'
+        $severity = Get-QueryValue -Request $request -Name 'severidad'
+        $historyValue = Get-QueryValue -Request $request -Name 'historial'
+        $history = $historyValue -match '^(?i:true|1|si|sí|yes)$'
+        $operationLogs = @(Get-OperationLogCatalog -OperationType $operationType -Severity $severity -History $history)
+        Write-JsonResponse -RequestContext $RequestContext -StatusCode 200 -Payload @{ ok = $true; data = @{ logs = $operationLogs; resumen = $operationLogs; historial = $history; filtros = @{ tipo = $operationType; severidad = $severity } } }
         return
     }
     if ($route -match '^/api/logs/([^/]+)$' -and $request.HttpMethod -eq 'GET') {
@@ -860,6 +1455,18 @@ function Invoke-ApiRequest {
         }
         return
     }
+    if ($route -eq '/api/reiniciar' -and $request.HttpMethod -eq 'POST') {
+        if (-not (Test-SessionToken -Request $request)) { Write-JsonResponse -RequestContext $RequestContext -StatusCode 403 -Payload @{ ok = $false; error = 'Token de sesion invalido.' }; return }
+        if (Test-WorkInProgress) { Write-JsonResponse -RequestContext $RequestContext -StatusCode 409 -Payload @{ ok = $false; error = 'Ya existe un trabajo activo.' }; return }
+        try {
+            $body = Get-RequestBodyJson -Request $request
+            $body | Add-Member -MemberType NoteProperty -Name mode -Value 'all' -Force
+            $body | Add-Member -MemberType NoteProperty -Name reiniciar -Value $true -Force
+            $work = Start-DocumentationWork -RequestBody $body
+            Write-JsonResponse -RequestContext $RequestContext -StatusCode 202 -Payload @{ ok = $true; data = @{ jobId = $work.id } }
+        } catch { Write-JsonResponse -RequestContext $RequestContext -StatusCode 400 -Payload @{ ok = $false; error = $_.Exception.Message } }
+        return
+    }
     if ($route -eq '/api/endpoints' -and $request.HttpMethod -eq 'GET') {
         if ($null -eq $script:ActiveContext) {
             Write-JsonResponse -RequestContext $RequestContext -StatusCode 409 -Payload @{ ok = $false; error = 'No hay un contexto activo.' }
@@ -921,13 +1528,8 @@ function Invoke-ApiRequest {
             if ($selected.Count -ne 1) { throw 'El XPZ indicado no pertenece al contexto activo.' }
             $script:ActiveXpz = $selected[0]
             $script:XpzOverride = $true
-            $inventoryState = Get-EndpointInventoryState
-            if (-not $inventoryState.vigente) {
-                $regenerationWork = Start-EndpointGenerationWork
-                Write-JsonResponse -RequestContext $RequestContext -StatusCode 202 -Payload @{ ok = $true; data = (Convert-XpzForResponse -Xpz $script:ActiveXpz); jobId = $regenerationWork.id; inventory = $inventoryState }
-            } else {
-                Write-JsonResponse -RequestContext $RequestContext -StatusCode 200 -Payload @{ ok = $true; data = (Convert-XpzForResponse -Xpz $script:ActiveXpz); inventory = $inventoryState }
-            }
+            Write-PanelMutationOperation -Operation 'ACTIVAR_XPZ' -Context $script:ActiveContext -Xpz $script:ActiveXpz -Output @('XPZ activo: ' + $script:ActiveXpz.Nombre) | Out-Null
+            Write-JsonResponse -RequestContext $RequestContext -StatusCode 200 -Payload @{ ok = $true; data = (Convert-XpzForResponse -Xpz $script:ActiveXpz) }
         } catch {
             Write-JsonResponse -RequestContext $RequestContext -StatusCode 400 -Payload @{ ok = $false; error = $_.Exception.Message }
         }

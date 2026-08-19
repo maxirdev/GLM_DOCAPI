@@ -13,7 +13,9 @@ param(
     [string]$KbPath,
     [string]$XpzFile,
     [string]$LogFile,
-    [string]$ManifiestoPath
+    [string]$ManifiestoPath,
+    [ValidateSet('GX18', 'Evo3')]
+    [string]$GeneXusExportProfile
 )
 
 $ErrorActionPreference = 'Stop'
@@ -299,7 +301,9 @@ function Ejecutar-ExportacionSelectiva {
         [Parameter(Mandatory = $true)][string]$RutaKnowledgeBase,
         [Parameter(Mandatory = $true)][string[]]$Selectores,
         [Parameter(Mandatory = $true)][string]$RutaXpzSalida,
-        [Parameter(Mandatory = $true)][string]$RutaLog
+        [Parameter(Mandatory = $true)][string]$RutaLog,
+        [ValidateSet('GX18', 'Evo3')]
+        [string]$GeneXusExportProfile = 'GX18'
     )
 
     $rutaProyectoTemporal = Crear-ProyectoMsbuildTemporal -RutaProyectoBase $RutaProyecto -Selectores $Selectores
@@ -309,6 +313,7 @@ function Ejecutar-ExportacionSelectiva {
         (Quote-ProcessArgument -Valor ("/p:GX_PROGRAM_DIR=$DirectorioGeneXus")),
         (Quote-ProcessArgument -Valor ("/p:KBPath=$RutaKnowledgeBase")),
         (Quote-ProcessArgument -Valor ("/p:XPZFile=$RutaXpzSalida")),
+        (Quote-ProcessArgument -Valor ("/p:GeneXusExportProfile=$GeneXusExportProfile")),
         '/nologo',
         '/verbosity:minimal',
         '/fl',
@@ -408,10 +413,15 @@ try {
     if ($XpzPath) {
         $configuracion | Add-Member -MemberType NoteProperty -Name 'XpzPath' -Value $XpzPath -Force
     }
+    if (-not $GeneXusExportProfile) { $GeneXusExportProfile = [string]$configuracion.Herramientas.GeneXusExportProfile }
+    if ($GeneXusExportProfile -notin @('GX18', 'Evo3')) { $GeneXusExportProfile = 'GX18' }
     $seleccion = Seleccionar-ReporteValidacion -Configuracion $configuracion -RutaReporte $ReportePath -EjecucionId $ejecucionId
     Mostrar-RecetaSeleccionada -Seleccion $seleccion
     $complemento = Seleccionar-SiguienteXpzComplementario -RutaXpzPrincipal $seleccion.XpzPrincipal
-    $rutaMsbuildEfectiva = if ($MsbuildPath) { $MsbuildPath } else { Join-Path $env:SystemRoot 'Microsoft.NET\Framework\v4.0.30319\MSBuild.exe' }
+    $rutaMsbuildEfectiva = if ($MsbuildPath) { $MsbuildPath } else {
+        $directorioMsbuild = if ($GeneXusExportProfile -eq 'Evo3') { 'v3.5' } else { 'v4.0.30319' }
+        Join-Path $env:SystemRoot ('Microsoft.NET\Framework\' + $directorioMsbuild + '\MSBuild.exe')
+    }
     $rutaProyectoEfectiva = if ($ProjectFile) { $ProjectFile } else { Join-Path $PSScriptRoot 'ExportarXPZSelectivo.msbuild' }
     if (-not $GxProgramDir) { throw 'Debe indicar -GxProgramDir para ejecutar la exportacion selectiva.' }
     if (-not $KbPath) { throw 'Debe indicar -KbPath para ejecutar la exportacion selectiva.' }
@@ -433,7 +443,7 @@ try {
     Write-Host ('Complemento de salida: ' + $rutaXpzSalida) -ForegroundColor DarkGray
     Write-Host ('Log de ejecucion: ' + $rutaLogEfectiva) -ForegroundColor DarkGray
     Write-Host ('Selectores tipo:FQN: ' + ($seleccion.Selectores -join ',')) -ForegroundColor DarkGray
-    Ejecutar-ExportacionSelectiva -RutaMsbuild $rutaMsbuildEfectiva -RutaProyecto $rutaProyectoEfectiva -DirectorioGeneXus $GxProgramDir -RutaKnowledgeBase $KbPath -Selectores $seleccion.Selectores -RutaXpzSalida $rutaXpzSalida -RutaLog $rutaLogEfectiva | Out-Null
+    Ejecutar-ExportacionSelectiva -RutaMsbuild $rutaMsbuildEfectiva -RutaProyecto $rutaProyectoEfectiva -DirectorioGeneXus $GxProgramDir -RutaKnowledgeBase $KbPath -Selectores $seleccion.Selectores -RutaXpzSalida $rutaXpzSalida -RutaLog $rutaLogEfectiva -GeneXusExportProfile $GeneXusExportProfile | Out-Null
     Write-Host ('XPZ complementario generado correctamente: ' + $rutaXpzSalida) -ForegroundColor Green
     exit 0
 } catch {

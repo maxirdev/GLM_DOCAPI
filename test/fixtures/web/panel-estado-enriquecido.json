@@ -1,0 +1,36 @@
+{
+    "meta": {
+        "contextId": "trunk/testing",
+        "configValid": true
+    },
+    "dashboard": {
+        "contexto": {
+            "contextId": "trunk/testing",
+            "clienteId": "trunk",
+            "clienteNombre": "Trunk",
+            "ambienteId": "testing",
+            "ambienteNombre": "Testing",
+            "kbPath": "C:/kb/trunk/testing"
+        },
+        "documentos": {
+            "total": 2,
+            "ultimaActualizacion": "2026-08-16T12:00:00Z",
+            "archivos": [
+                { "nombre": "wsobtenerproductor.pdf", "extension": ".pdf", "bytes": 2048, "modificado": "2026-08-16T12:00:00Z" },
+                { "nombre": "wslistarestados.pdf", "extension": ".pdf", "bytes": 1024, "modificado": "2026-08-15T10:00:00Z" }
+            ]
+        },
+        "procesamiento": {
+            "procesado": true,
+            "serviciosProcesados": 2,
+            "estado": "PROCESADO",
+            "pdfDisponibles": 2
+        },
+        "validaciones": [
+            { "item": "Configuración", "estado": "OK", "mensaje": "Esquema multicliente válido." },
+            { "item": "GeneXus", "estado": "OK", "mensaje": "C:/GeneXus/18" },
+            { "item": "MSBuild", "estado": "ADVERTENCIA", "mensaje": "No se encontró en: C:/nonexistent" },
+            { "item": "Knowledge Base", "estado": "ERROR", "mensaje": "No existe la Knowledge Base: C:/kb/trunk/testing" }
+        ]
+    }
+}

@@ -4,6 +4,15 @@
 
   <Import Project="$(GX_PROGRAM_DIR)\Genexus.Tasks.targets" />
 
+  <PropertyGroup>
+    <GeneXusExportProfile Condition="'$(GeneXusExportProfile)' == ''">GX18</GeneXusExportProfile>
+  </PropertyGroup>
+
+  <Target Name="ValidarPerfilExportacion">
+    <Error Condition="'$(GeneXusExportProfile)' != 'GX18' and '$(GeneXusExportProfile)' != 'Evo3'"
+           Text="Perfil de exportacion no soportado: $(GeneXusExportProfile). Use GX18 o Evo3." />
+  </Target>
+
   <Target Name="AbrirKnowledgeBase">
     <Error Condition="'$(KBPath)' == ''"
            Text="No se definio la propiedad KBPath." />
@@ -19,8 +28,25 @@
     </PropertyGroup>
   </Target>
 
-  <Target Name="ExportarObjetosSelectivos" DependsOnTargets="AbrirKnowledgeBase">
+  <Target Name="ExportarObjetosSelectivos" DependsOnTargets="ValidarPerfilExportacion;AbrirKnowledgeBase">
     <Message Text="Exportando objetos selectivos con referencias minimas: $(ObjectList)" Importance="high" />
+    <CallTarget Targets="ExportarObjetosSelectivosEvo3" Condition="'$(GeneXusExportProfile)' == 'Evo3'" />
+    <CallTarget Targets="ExportarObjetosSelectivosGX18" Condition="'$(GeneXusExportProfile)' == 'GX18'" />
+    <CallTarget Targets="CerrarKnowledgeBase" />
+
+    <OnError ExecuteTargets="CerrarKnowledgeBase" />
+  </Target>
+
+  <Target Name="ExportarObjetosSelectivosEvo3">
+    <Export File="$(XPZFile)"
+            Objects="$(ObjectList)"
+            DependencyType="ReferencesTo"
+            ReferenceType="Minimal"
+            IncludeGXMessages="false"
+            IncludeUntranslatedMessages="false" />
+  </Target>
+
+  <Target Name="ExportarObjetosSelectivosGX18">
     <Export File="$(XPZFile)"
             Objects="$(ObjectList)"
             IncludeChildren="true"
@@ -30,7 +56,6 @@
             IncludeGXMessages="false"
             IncludeUntranslatedMessages="false" />
 
-    <OnError ExecuteTargets="CerrarKnowledgeBase" />
   </Target>
 
   <Target Name="CerrarKnowledgeBase"

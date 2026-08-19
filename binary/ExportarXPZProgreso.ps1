@@ -7,12 +7,16 @@ param(
     [Parameter(Mandatory = $true)][string]$XpzFile,
     [Parameter(Mandatory = $true)][string]$LogFile,
     [ValidateSet('ExportarAPIGLM', 'ExportarTodaLaKB')]
-    [string]$TargetName = 'ExportarAPIGLM'
+    [string]$TargetName = 'ExportarAPIGLM',
+    [ValidateSet('GX18', 'Evo3')]
+    [string]$GeneXusExportProfile = 'GX18'
 )
 
 $ErrorActionPreference = 'Stop'
 
 . (Join-Path $PSScriptRoot 'GLMUtilidades.ps1')
+
+Inicializar-ConsolaUtf8
 
 $onlyModuleAPIGLM = ($TargetName -eq 'ExportarAPIGLM')
 
@@ -112,6 +116,7 @@ $arguments = @(
     (Quote-ProcessArgument "/p:GX_PROGRAM_DIR=$GxProgramDir"),
     (Quote-ProcessArgument "/p:KBPath=$KbPath"),
     (Quote-ProcessArgument "/p:XPZFile=$XpzFile"),
+    (Quote-ProcessArgument "/p:GeneXusExportProfile=$GeneXusExportProfile"),
     '/nologo',
     '/verbosity:minimal',
     '/fl',

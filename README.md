@@ -15,6 +15,8 @@ La única fuente de evidencia es el XPZ del ambiente activo. No se completan dat
 - Actualización incremental con control de versiones esquema 2, historial, fingerprints, dependencias y lock por ambiente.
 - Diagnósticos estructurados y reviews por ejecución.
 - Panel web local unificado, sin frameworks ni dependencias externas, para operar el pipeline y consultar endpoints, documentos, reportes y logs.
+- El panel usa navegación `Dashboard`, `XPZ`, `Exportar`, `Endpoints`, `Documentación`, `Logs` y `Configuración`; Documentación unifica la consulta por endpoint, estado, versión y PDF.
+- Poppins se sirve offline desde `binary/fonts/` mediante la allowlist `/fonts/Poppins-Regular.ttf`, `/fonts/Poppins-SemiBold.ttf` y `/fonts/Poppins-Bold.ttf`.
 - No se genera `APIServicios.html` ni existe un visor estático separado. La SPEC 20 de OpenAPI está en borrador.
 
 ## Requisitos
@@ -46,6 +48,14 @@ El repositorio auxiliar `GeneXus-XPZ-Skills-main/` es opcional. Su catálogo se 
 ```
 
 7. Usar la consola o el panel para validar, exportar, regenerar documentación y consultar artefactos del contexto activo.
+
+### Panel web
+
+El panel mantiene la sesión en el servidor local y no activa un contexto automáticamente. `Dashboard` resume el contexto, KB, inventario, documentos, review, XPZ, hash, herramientas y trabajos. Sin contexto o con configuración inválida solo quedan disponibles `Dashboard` y `Configuración`.
+
+Las vistas `Endpoints` y `Documentación` consumen `GET /api/servicios`, que resuelve en el servidor el inventario del XPZ, el control contextual y la disponibilidad de PDF. La respuesta usa el FQN como identificador, devuelve `SIN VERSIÓN` cuando falta control y nunca expone rutas físicas. La interfaz ofrece paginación cliente de 25, 50 o 100 elementos, filtros por FQN y selección documental persistente.
+
+`Logs` clasifica logs, reviews, validaciones e historial y permite leerlos inline. Las fuentes tipográficas son locales y no requieren CDN, Node.js ni paquetes externos.
 
 También se pueden ejecutar scripts directamente para automatización:
 

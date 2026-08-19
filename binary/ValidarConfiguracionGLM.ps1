@@ -27,6 +27,8 @@ if ([string]::IsNullOrWhiteSpace($ConfigPath)) {
 . (Join-Path $PSScriptRoot 'GLMUtilidades.ps1')
 . (Join-Path $PSScriptRoot 'CargarConfiguracion.ps1')
 
+Inicializar-ConsolaUtf8
+
 function Escribir-Estado {
     param(
         [Parameter(Mandatory = $true)][ValidateSet('OK', 'ERROR', 'ADVERTENCIA', 'PENDIENTE')][string]$Estado,

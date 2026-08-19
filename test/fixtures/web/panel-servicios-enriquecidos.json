@@ -1,0 +1,49 @@
+{
+    "meta": {
+        "contextId": "trunk/testing",
+        "xpz": "APIGLM_20260816.xpz",
+        "inventarioObsoleto": true,
+        "totalServicios": 3
+    },
+    "servicios": [
+        {
+            "fullyQualifiedName": "APIGLM.Cotizacion.WSObtenerProductor",
+            "nombre": "WSObtenerProductor",
+            "descripcion": "Consulta del productor",
+            "proceso": "APIGLM.Cotizacion.WSObtenerProductor",
+            "endpoint": "glmsuit.comercial.apiglm.cotizacion.awsobtenerproductor",
+            "estado": "ACTIVO",
+            "version": "1.3",
+            "versionDisponible": true,
+            "observacion": "Objetos: Procedure `APIGLM.Cotizacion.WSObtenerProductor` modificado. Se actualizó el tipo de un parámetro de entrada.",
+            "pdf": { "disponible": true, "nombre": "wsobtenerproductor.pdf" },
+            "markdown": { "disponible": true, "nombre": "wsobtenerproductor.md" }
+        },
+        {
+            "fullyQualifiedName": "APIGLM.Emision.WSConsultarSolicitud",
+            "nombre": "WSConsultarSolicitud",
+            "descripcion": "Consulta el estado de una solicitud",
+            "proceso": "APIGLM.Emision.WSConsultarSolicitud",
+            "endpoint": "glmsuit.comercial.apiglm.emision.awsconsultarsolicitud",
+            "estado": "OBSOLETO",
+            "version": "1.1",
+            "versionDisponible": true,
+            "observacion": "Se modificó el documento.",
+            "pdf": { "disponible": false, "nombre": null },
+            "markdown": { "disponible": true, "nombre": "wsconsultarsolicitud.md" }
+        },
+        {
+            "fullyQualifiedName": "APIGLM.Comun.WSListarEstados",
+            "nombre": "WSListarEstados",
+            "descripcion": "Lista estados disponibles",
+            "proceso": "APIGLM.Comun.WSListarEstados",
+            "endpoint": "glmsuit.comercial.apiglm.comun.awslistarestados",
+            "estado": "ACTIVO",
+            "version": null,
+            "versionDisponible": false,
+            "observacion": null,
+            "pdf": { "disponible": false, "nombre": null },
+            "markdown": { "disponible": false, "nombre": null }
+        }
+    ]
+}

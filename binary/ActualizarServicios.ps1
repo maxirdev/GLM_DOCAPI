@@ -23,6 +23,8 @@ $lockActualizacion = $null
 . (Join-Path $PSScriptRoot 'AnalizarServicio.ps1')
 . (Join-Path $PSScriptRoot 'CargarMultiXPZ.ps1')
 . (Join-Path $PSScriptRoot 'RedactarDocumento.ps1')
+
+Inicializar-ConsolaUtf8
 . (Join-Path $PSScriptRoot 'ControlVersiones.ps1')
 . (Join-Path $PSScriptRoot 'HistorialVersiones.ps1')
 . (Join-Path $PSScriptRoot 'ManifiestoEjecucion.ps1')
@@ -492,7 +494,7 @@ try {
             }
         } catch {
             Write-Host ('  Motivo: ' + $_.Exception.Message) -ForegroundColor Yellow
-            $rutaXpzAlternativa = Seleccionar-XpzAlternativo -DirectorioXpz (Join-Path $raizRepositorio 'xpz')
+            $rutaXpzAlternativa = Seleccionar-XpzAlternativo -DirectorioXpz $configuracion.DirectorioXpz
             if (-not $rutaXpzAlternativa) {
                 exit 3
             }

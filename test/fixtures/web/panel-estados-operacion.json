@@ -1,0 +1,40 @@
+{
+    "estadosPermitidos": [
+        "EN PROCESO",
+        "COMPLETADO",
+        "COMPLETADO PARCIALMENTE",
+        "ERROR"
+    ],
+    "casos": [
+        {
+            "estadoTecnico": "QUEUED",
+            "codigoSalida": null,
+            "estadoVisible": "EN PROCESO"
+        },
+        {
+            "estadoTecnico": "RUNNING",
+            "codigoSalida": null,
+            "estadoVisible": "EN PROCESO"
+        },
+        {
+            "estadoTecnico": "COMPLETED",
+            "codigoSalida": 0,
+            "estadoVisible": "COMPLETADO"
+        },
+        {
+            "estadoTecnico": "PARTIAL",
+            "codigoSalida": 2,
+            "estadoVisible": "COMPLETADO PARCIALMENTE"
+        },
+        {
+            "estadoTecnico": "ABORTED",
+            "codigoSalida": 3,
+            "estadoVisible": "ERROR"
+        },
+        {
+            "estadoTecnico": "FAILED",
+            "codigoSalida": 1,
+            "estadoVisible": "ERROR"
+        }
+    ]
+}

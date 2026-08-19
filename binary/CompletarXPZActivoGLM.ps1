@@ -4,7 +4,7 @@
 # componentes adicionales, exporta los elementos necesarios con ExportarXPZSelectivo.ps1.
 # Si la exportacion falla o se detiene sin completar, pregunta si desea continuar de
 # todas formas advirtiendo que algunos servicios no se documentaran.
-# Codigos de salida: 0 = listo (XPZ completo o continuar a pesar de pendientes),
+# Codigos de salida: 0 = XPZ completo, 2 = continuar a pesar de pendientes,
 # 3 = abortado por el usuario, 1 = error.
 
 [CmdletBinding()]
@@ -29,6 +29,8 @@ $script:objetosPendientes = @()
 . (Join-Path $PSScriptRoot 'GLMUtilidades.ps1')
 . (Join-Path $PSScriptRoot 'ManifiestoEjecucion.ps1')
 . (Join-Path $PSScriptRoot 'CargarConfiguracion.ps1')
+
+Inicializar-ConsolaUtf8
 
 function Invocar-Script {
     <#
@@ -154,6 +156,8 @@ try {
     $rutaMsbuild = [string]$contexto.Herramientas.MsbuildPath
     $rutaGeneXus = [string]$contexto.Herramientas.GeneXusProgramDir
     $rutaKb = [string]$contexto.KbPath
+    $perfilExportacion = [string]$contexto.Herramientas.GeneXusExportProfile
+    if ($perfilExportacion -notin @('GX18', 'Evo3')) { $perfilExportacion = 'GX18' }
 
     $signaturaAnterior = ''
     for ($ciclo = 1; $ciclo -le $maximoCiclos; $ciclo++) {
@@ -167,10 +171,11 @@ try {
             '-MsbuildPath', $rutaMsbuild,
             '-ProjectFile', $rutaProyectoSelectivo,
             '-GxProgramDir', $rutaGeneXus,
-            '-KbPath', $rutaKb
+            '-KbPath', $rutaKb,
+            '-GeneXusExportProfile', $perfilExportacion
         )
         if ($codigoSelectivo -ne 0) {
-            if (Preguntar-Continuar -Motivo (Obtener-MotivoError)) { exit 0 } else { exit 3 }
+            if (Preguntar-Continuar -Motivo (Obtener-MotivoError)) { exit 2 } else { exit 3 }
         }
 
         Write-Host ''
@@ -188,10 +193,10 @@ try {
         $script:objetosPendientes = @(Obtener-ObjetosPendientes -Reporte $nuevoReporte.Datos)
         $signaturaActual = Obtener-SignaturaPendientes -Reporte $nuevoReporte.Datos
         if ($signaturaAnterior -and $signaturaAnterior -eq $signaturaActual) {
-            if (Preguntar-Continuar -Motivo 'La validacion no produjo progreso tras la exportacion selectiva.') { exit 0 } else { exit 3 }
+            if (Preguntar-Continuar -Motivo 'La validacion no produjo progreso tras la exportacion selectiva.') { exit 2 } else { exit 3 }
         }
         if ($ciclo -eq $maximoCiclos) {
-            if (Preguntar-Continuar -Motivo ('Se alcanzo el limite de ' + $maximoCiclos + ' ciclos y quedan objetos pendientes de exportacion.')) { exit 0 } else { exit 3 }
+            if (Preguntar-Continuar -Motivo ('Se alcanzo el limite de ' + $maximoCiclos + ' ciclos y quedan objetos pendientes de exportacion.')) { exit 2 } else { exit 3 }
         }
         $signaturaAnterior = $signaturaActual
         $reporteSeleccionado = $nuevoReporte

@@ -1,6 +1,6 @@
 # SPEC 19 — Pipeline multicliente y multiambiente
 
-> **Estado:** Aprobado
+> **Estado:** Implementado
 > **Depende de:** SPEC 04, SPEC 13, SPEC 14, SPEC 16, SPEC 18
 > **Fecha:** 2026-08-16
 > **Objetivo:** Adaptar la consola y el pipeline compartido para generar y versionar documentación aislada por cliente y ambiente mediante una configuración central parametrizable.

@@ -1,0 +1,8 @@
+{
+    "elementos": 26,
+    "paginaInicial": 1,
+    "tamanoInicial": 25,
+    "tamanoPermitido": [25, 50, 100],
+    "seleccionPorFqn": true,
+    "cambiarFiltroConservaSeleccion": true
+}

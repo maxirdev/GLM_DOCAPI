@@ -24,6 +24,8 @@ $maximoCiclos = 5
 . (Join-Path $PSScriptRoot 'CargarConfiguracion.ps1')
 . (Join-Path $PSScriptRoot 'ManifiestoEjecucion.ps1')
 
+Inicializar-ConsolaUtf8
+
 function Obtener-OnlyModuleAPIGLM {
     param([Parameter(Mandatory = $true)]$Configuracion)
 
@@ -70,6 +72,8 @@ try {
     $rutaGeneXus = [string]$contexto.Herramientas.GeneXusProgramDir
     $rutaKb = [string]$contexto.KbPath
     $rutaMsbuild = [string]$contexto.Herramientas.MsbuildPath
+    $perfilExportacion = [string]$contexto.Herramientas.GeneXusExportProfile
+    if ($perfilExportacion -notin @('GX18', 'Evo3')) { $perfilExportacion = 'GX18' }
 
     foreach ($requerido in @(
         [pscustomobject]@{ Nombre = 'GeneXus'; Ruta = $rutaGeneXus; Tipo = 'Container' },
@@ -103,10 +107,18 @@ try {
         -KbPath $rutaKb `
         -XpzFile $rutaXpzNuevo `
         -LogFile $rutaLogExportacion `
+        -GeneXusExportProfile $perfilExportacion `
         -TargetName $targetExportacion 2>&1 | Out-Host
     $codigoExportacion = $LASTEXITCODE
-    if ($codigoExportacion -ne 0 -or -not (Test-XpzValido -Ruta $rutaXpzNuevo).Valid) {
+    $validacionXpz = Test-XpzValido -Ruta $rutaXpzNuevo
+    if ($codigoExportacion -ne 0 -or -not $validacionXpz.Valid) {
         throw ('La exportacion completa fallo. Revise el log: ' + $rutaLogExportacion)
+    }
+    if ($onlyModuleAPIGLM -and $perfilExportacion -eq 'Evo3') {
+        $validacionRaiz = Test-XpzContieneObjeto -Ruta $rutaXpzNuevo -FullyQualifiedName 'APIGLM.APIGLMMain'
+        if (-not $validacionRaiz.Valid) {
+            throw ('La exportacion de APIGLM genero un XPZ incompleto: ' + $validacionRaiz.Error + '. Revise el log: ' + $rutaLogExportacion)
+        }
     }
 
     Write-Host ('XPZ exportado: ' + $rutaXpzNuevo) -ForegroundColor Green
@@ -141,11 +153,11 @@ try {
         }
         if ($signaturaAnterior -and $signaturaAnterior -eq $signaturaActual) {
             Write-Host 'La validacion no produjo progreso; se detiene el ciclo automatico.' -ForegroundColor Yellow
-            if ($PoliticaPendientes -eq 'continue') { exit 0 } else { exit 1 }
+            if ($PoliticaPendientes -eq 'continue') { exit 2 } else { exit 1 }
         }
         if ($ciclo -eq $maximoCiclos) {
             Write-Host ('Se alcanzo el limite de ' + $maximoCiclos + ' ciclos. Pendientes: ' + $signaturaActual) -ForegroundColor Yellow
-            if ($PoliticaPendientes -eq 'continue') { exit 0 } else { exit 1 }
+            if ($PoliticaPendientes -eq 'continue') { exit 2 } else { exit 1 }
         }
 
         $signaturaAnterior = $signaturaActual
@@ -158,10 +170,11 @@ try {
             -ProjectFile $rutaProyectoSelectivo `
             -GxProgramDir $rutaGeneXus `
             -KbPath $rutaKb `
+            -GeneXusExportProfile $perfilExportacion `
             -ManifiestoPath $rutaManifiestoExportacion 2>&1 | Out-Host
         $codigoSelectivo = $LASTEXITCODE
         if ($codigoSelectivo -ne 0) {
-            if ($PoliticaPendientes -eq 'continue') { exit 0 }
+            if ($PoliticaPendientes -eq 'continue') { exit 2 }
             throw 'La exportacion selectiva fallo. Revise el log generado por el script.'
         }
     }

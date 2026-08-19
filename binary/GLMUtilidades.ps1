@@ -15,6 +15,7 @@ function Inicializar-ConsolaUtf8 {
     if (-not [Console]::IsOutputRedirected) {
         try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch { }
     }
+    try { $OutputEncoding = [System.Text.Encoding]::UTF8 } catch { }
 }
 
 function Restaurar-ColorConsola {
@@ -228,6 +229,43 @@ function Test-XpzValido {
         return [pscustomobject]@{ Valid = $true; Error = '' }
     } catch {
         return [pscustomobject]@{ Valid = $false; Error = "el XPZ no es valido: $($_.Exception.Message)" }
+    } finally {
+        if ($null -ne $zip) { $zip.Dispose() }
+    }
+}
+
+function Test-XpzContieneObjeto {
+    param(
+        [Parameter(Mandatory = $true)][string]$Ruta,
+        [Parameter(Mandatory = $true)][string]$FullyQualifiedName
+    )
+
+    $validacion = Test-XpzValido -Ruta $Ruta
+    if (-not $validacion.Valid) {
+        return [pscustomobject]@{ Valid = $false; Error = $validacion.Error }
+    }
+
+    $zip = $null
+    try {
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+        $zip = [System.IO.Compression.ZipFile]::OpenRead($Ruta)
+        $entradaXml = @($zip.Entries | Where-Object { $_.Name -like '*.xml' })[0]
+        $lector = New-Object System.IO.StreamReader($entradaXml.Open())
+        try {
+            $xml = New-Object System.Xml.XmlDocument
+            $xml.LoadXml($lector.ReadToEnd())
+        } finally {
+            $lector.Dispose()
+        }
+        $objeto = @($xml.SelectNodes("//*[local-name()='Object']") | Where-Object {
+            [string]$_.GetAttribute('fullyQualifiedName') -eq $FullyQualifiedName
+        }) | Select-Object -First 1
+        if ($null -eq $objeto) {
+            return [pscustomobject]@{ Valid = $false; Error = "no contiene el objeto '$FullyQualifiedName'" }
+        }
+        return [pscustomobject]@{ Valid = $true; Error = '' }
+    } catch {
+        return [pscustomobject]@{ Valid = $false; Error = "no se pudo inspeccionar el XPZ: $($_.Exception.Message)" }
     } finally {
         if ($null -ne $zip) { $zip.Dispose() }
     }

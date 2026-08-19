@@ -13,8 +13,12 @@ clientes/**/test/resultados/
 servicios/
 logs/
 resources/
+!web/resources/
+!web/resources/example.html
 tmp/
 estado/
 
 binary/tools/pandoc.exe
 binary/tools/typst.exe
+
+.playwright-mcp/*
