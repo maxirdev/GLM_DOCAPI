@@ -26,11 +26,13 @@
         {
           "id": "testing",
           "nombre": "Testing",
+          "tipo": "test",
           "kbPath": "C:/KBs/SEGUROS_COMERCIAL_TRUNK"
         },
         {
           "id": "produccion",
           "nombre": "Produccion",
+          "tipo": "prod",
           "kbPath": "C:/KBs/SEGUROS_COMERCIAL_PROD"
         }
       ]
@@ -44,6 +46,7 @@
         {
           "id": "testing",
           "nombre": "Testing",
+          "tipo": "test",
           "kbPath": "test/fixtures/kb/otra"
         }
       ]

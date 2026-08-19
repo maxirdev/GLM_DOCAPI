@@ -127,6 +127,7 @@ try {
         throw ('No se encontro el archivo de configuracion: ' + $ConfigPath)
     }
     . (Join-Path $PSScriptRoot 'GLMUtilidades.ps1')
+    Inicializar-ConsolaUtf8
     $configuracion = Leer-ConfiguracionCruda -ConfigPath $ConfigPath
     $rutaPandoc = [string]$configuracion.herramientas.pandocPath
     $rutaTypst = [string]$configuracion.herramientas.typstPath

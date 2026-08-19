@@ -15,6 +15,8 @@ $raizRepositorio = [System.IO.Path]::GetFullPath($Repositorio)
 . (Join-Path $PSScriptRoot 'ManifiestoEjecucion.ps1')
 . (Join-Path $PSScriptRoot 'CargarConfiguracion.ps1')
 
+Inicializar-ConsolaUtf8
+
 $manifiestoEjecucion = Leer-ManifiestoEjecucion -RutaManifiesto $ManifiestoPath
 $contexto = Cargar-Configuracion -ConfigPath ([string]$manifiestoEjecucion.configPath) -ClienteId ([string]$manifiestoEjecucion.clienteId) -AmbienteId ([string]$manifiestoEjecucion.ambienteId)
 $rutaDirectorioLogs = $contexto.DirectorioLogs

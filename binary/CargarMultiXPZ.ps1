@@ -3,6 +3,43 @@
 
 . (Join-Path $PSScriptRoot 'GLMUtilidades.ps1')
 
+function Obtener-XpzPrincipalesDesdeDirectorio {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$DirectorioXpz
+    )
+
+    if (-not (Test-Path -LiteralPath $DirectorioXpz -PathType Container)) {
+        return @()
+    }
+
+    $entradas = New-Object System.Collections.Generic.List[object]
+    foreach ($archivo in @(Get-ChildItem -LiteralPath $DirectorioXpz -Filter '*.xpz' -File -ErrorAction SilentlyContinue)) {
+        $nombreSinExtension = [System.IO.Path]::GetFileNameWithoutExtension($archivo.Name)
+        $coincidenciaComplemento = [regex]::Match($nombreSinExtension, '^(.*)_\d+$')
+        if ($coincidenciaComplemento.Success) {
+            $rutaPrincipalAsociada = Join-Path $DirectorioXpz ($coincidenciaComplemento.Groups[1].Value + '.xpz')
+            if (Test-Path -LiteralPath $rutaPrincipalAsociada -PathType Leaf) { continue }
+        }
+
+        $coincidenciaMarca = [regex]::Match($nombreSinExtension, '_(\d{8})_(\d{9})$')
+        $fecha = $archivo.LastWriteTime
+        if ($coincidenciaMarca.Success) {
+            try { $fecha = [datetime]::ParseExact(($coincidenciaMarca.Groups[1].Value + '_' + $coincidenciaMarca.Groups[2].Value), 'yyyyMMdd_HHmmssfff', [System.Globalization.CultureInfo]::InvariantCulture) } catch { }
+        }
+        $entradas.Add([pscustomobject]@{
+            Nombre = $archivo.Name
+            Ruta = [System.IO.Path]::GetFullPath($archivo.FullName)
+            Fecha = $fecha
+            EsPrincipal = $false
+        })
+    }
+
+    $ordenadas = @($entradas | Sort-Object Fecha, Nombre)
+    if ($ordenadas.Count -gt 0) { $ordenadas[$ordenadas.Count - 1].EsPrincipal = $true }
+    return $ordenadas
+}
+
 function Obtener-RutaRelativaRepositorio {
     [CmdletBinding()]
     param(

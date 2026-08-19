@@ -403,6 +403,21 @@ function Ejecutar-CasosConfiguracionMulticliente {
     $rutaKbDuplicada = Join-Path $DirectorioFixturesJson 'configuracion-multicliente-kb-duplicada.json'
     Test-AsercionLanzaError -Id 'configuracionMulticliente.kbPathDuplicado' -Bloque { Cargar-Configuracion -ConfigPath $rutaKbDuplicada -ClienteId 'trunk' -AmbienteId 'testing' } -PatronMensaje 'misma ruta de Knowledge Base' -DetalleExito 'Dos kbPath que normalizan a la misma ruta se rechazan.' -DetalleFallo 'El kbPath duplicado no se rechazo.'
 
+    Test-Asercion -Id 'configuracionMulticliente.ambienteTipo' -Condicion (
+        $contextoTrunk.AmbienteTipo -eq 'test' -and
+        $contextoProduccion.AmbienteTipo -eq 'prod' -and
+        $contextoOtro.AmbienteTipo -eq 'test'
+    ) -DetalleExito 'El contexto expone el tipo de ambiente canonico (test o prod) derivado del campo tipo.' -DetalleFallo 'El tipo de ambiente no se expuso o no coincide con el campo tipo.'
+
+    $rutaTipoFaltante = Join-Path $DirectorioFixturesJson 'configuracion-multicliente-tipo-faltante.json'
+    Test-AsercionLanzaError -Id 'configuracionMulticliente.tipoFaltante' -Bloque { Cargar-Configuracion -ConfigPath $rutaTipoFaltante -ClienteId 'trunk' -AmbienteId 'testing' } -PatronMensaje 'tipo valido' -DetalleExito 'Un ambiente sin tipo (o con tipo invalido) se rechaza.' -DetalleFallo 'El ambiente sin tipo no se rechazo.'
+
+    $rutaTipoDuplicado = Join-Path $DirectorioFixturesJson 'configuracion-multicliente-tipo-duplicado.json'
+    Test-AsercionLanzaError -Id 'configuracionMulticliente.tipoDuplicado' -Bloque { Cargar-Configuracion -ConfigPath $rutaTipoDuplicado -ClienteId 'trunk' -AmbienteId 'testing' } -PatronMensaje 'mas de un ambiente de tipo' -DetalleExito 'Un cliente no puede tener dos ambientes del mismo tipo.' -DetalleFallo 'El tipo duplicado dentro de un cliente no se rechazo.'
+
+    $rutaTresAmbientes = Join-Path $DirectorioFixturesJson 'configuracion-multicliente-tres-ambientes.json'
+    Test-AsercionLanzaError -Id 'configuracionMulticliente.demasiadosAmbientes' -Bloque { Cargar-Configuracion -ConfigPath $rutaTresAmbientes -ClienteId 'trunk' -AmbienteId 'testing' } -PatronMensaje 'mas de dos ambientes' -DetalleExito 'Un cliente con mas de dos ambientes se rechaza.' -DetalleFallo 'El exceso de ambientes no se rechazo.'
+
     Test-AsercionLanzaError -Id 'configuracionMulticliente.requiereContexto' -Bloque { Cargar-Configuracion -ConfigPath $rutaMulticliente } -PatronMensaje 'requiere -ClienteId' -DetalleExito 'El esquema multicliente exige cliente y ambiente explicitos.' -DetalleFallo 'El esquema multicliente no exigio el contexto.'
 
     Test-AsercionLanzaError -Id 'configuracionMulticliente.clienteInexistente' -Bloque { Cargar-Configuracion -ConfigPath $rutaMulticliente -ClienteId 'inexistente' -AmbienteId 'testing' } -PatronMensaje 'no existe en la configuracion' -DetalleExito 'Un cliente fuera de la coleccion se informa con los configurados.' -DetalleFallo 'El cliente inexistente no se informo.'
@@ -511,8 +526,8 @@ function Crear-ConfiguracionMulticontextoPrueba {
                 packagename = 'clientea.comercial.'
                 serviciosIgnorados = @()
                 ambientes = @(
-                    [ordered]@{ id = 'testing'; nombre = 'Testing'; kbPath = ($kbA -replace '\\', '/') }
-                    [ordered]@{ id = 'produccion'; nombre = 'Produccion'; kbPath = ($kbProd -replace '\\', '/') }
+                    [ordered]@{ id = 'testing'; nombre = 'Testing'; tipo = 'test'; kbPath = ($kbA -replace '\\', '/') }
+                    [ordered]@{ id = 'produccion'; nombre = 'Produccion'; tipo = 'prod'; kbPath = ($kbProd -replace '\\', '/') }
                 )
             },
             [ordered]@{
@@ -521,7 +536,7 @@ function Crear-ConfiguracionMulticontextoPrueba {
                 packagename = 'clienteb.comercial.'
                 serviciosIgnorados = @()
                 ambientes = @(
-                    [ordered]@{ id = 'testing'; nombre = 'Testing'; kbPath = ($kbB -replace '\\', '/') }
+                    [ordered]@{ id = 'testing'; nombre = 'Testing'; tipo = 'test'; kbPath = ($kbB -replace '\\', '/') }
                 )
             }
         )
@@ -575,6 +590,26 @@ function Test-EstadoDirectoriosIgual {
         }
     }
     return $true
+}
+
+function Obtener-DiferenciasDirectoriosGlobales {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][hashtable]$Antes,
+        [Parameter(Mandatory = $true)][hashtable]$Despues
+    )
+    $diferencias = New-Object System.Collections.Generic.List[string]
+    foreach ($clave in @($Antes.Keys)) {
+        if (-not $Despues.ContainsKey($clave)) {
+            [void]$diferencias.Add($clave + ': directorio ausente despues')
+        } elseif ($Antes[$clave] -ne $Despues[$clave]) {
+            [void]$diferencias.Add($clave + ': archivos agregados, eliminados o modificados')
+        }
+    }
+    foreach ($clave in @($Despues.Keys | Where-Object { -not $Antes.ContainsKey($_) })) {
+        [void]$diferencias.Add($clave + ': directorio agregado despues')
+    }
+    return @($diferencias.ToArray())
 }
 
 function Ejecutar-PipelineContextoPrueba {
@@ -776,6 +811,51 @@ function Ejecutar-CasosMulticontexto {
     }
     Test-Asercion -Id 'multicontexto.logsContextuales' -Condicion $logsOk -DetalleExito 'Los reviews de la ejecucion quedan en los Logs del ambiente correspondiente.' -DetalleFallo 'Falta el review en los Logs de algun ambiente.'
 
+    $operacionesAisladasOk = $true
+    $manifiestosOperacion = @()
+    foreach ($claveOperacion in @('clientea/testing', 'clienteb/testing')) {
+        $contextoOperacion = $contextosResueltos[$claveOperacion]
+        $directorioOperaciones = Join-Path $contextoOperacion.DirectorioLogs 'operaciones'
+        New-DirectorioSiNoExiste -Directorio $directorioOperaciones | Out-Null
+        $identificadorOperacion = [Guid]::NewGuid().ToString('N')
+        $nombreLogOperacion = $identificadorOperacion + '.log'
+        $nombreXpzOperacion = if ($claveOperacion -eq 'clientea/testing') { [System.IO.Path]::GetFileName($rutaXpzA) } else { [System.IO.Path]::GetFileName($rutaXpzB) }
+        $manifiestoOperacion = [ordered]@{
+            schemaVersion = 1
+            operationId = $identificadorOperacion
+            contextId = $contextoOperacion.ContextId
+            tipo = 'ACTIVAR_XPZ'
+            severidad = 'INFO'
+            xpz = [ordered]@{ nombre = $nombreXpzOperacion; sha256 = $null }
+            inicio = (Get-Date).ToUniversalTime().ToString('o')
+            fin = (Get-Date).ToUniversalTime().ToString('o')
+            estadoTecnico = 'COMPLETED'
+            estadoVisible = 'COMPLETADO'
+            codigoSalida = 0
+            warnings = @()
+            error = $null
+            logNombre = $nombreLogOperacion
+        }
+        $rutaManifiestoOperacion = Join-Path $directorioOperaciones ($identificadorOperacion + '.json')
+        $rutaLogOperacion = Join-Path $directorioOperaciones $nombreLogOperacion
+        [System.IO.File]::WriteAllText($rutaManifiestoOperacion, ($manifiestoOperacion | ConvertTo-Json -Depth 10), (New-Object System.Text.UTF8Encoding($false)))
+        [System.IO.File]::WriteAllText($rutaLogOperacion, ('Contexto: ' + $contextoOperacion.ContextId), (New-Object System.Text.UTF8Encoding($false)))
+        $manifiestosOperacion += $manifiestoOperacion
+    }
+    $manifiestosTesting = @(Get-ChildItem -LiteralPath (Join-Path $contextosResueltos['clientea/testing'].DirectorioLogs 'operaciones') -Filter '*.json' -File)
+    $manifiestosClienteb = @(Get-ChildItem -LiteralPath (Join-Path $contextosResueltos['clienteb/testing'].DirectorioLogs 'operaciones') -Filter '*.json' -File)
+    $operacionesAisladasOk = $manifiestosTesting.Count -eq 1 -and $manifiestosClienteb.Count -eq 1
+    foreach ($manifiestoOperacion in @($manifiestosOperacion)) {
+        $rutaContextual = Join-Path $contextosResueltos[[string]$manifiestoOperacion.contextId].DirectorioLogs ('operaciones\' + $manifiestoOperacion.operationId + '.json')
+        $registroOperacion = Get-Content -LiteralPath $rutaContextual -Raw | ConvertFrom-Json
+        if ([string]$registroOperacion.contextId -ne [string]$manifiestoOperacion.contextId -or
+            [System.IO.Path]::GetFileNameWithoutExtension($rutaContextual) -ne [string]$registroOperacion.operationId -or
+            [string]$registroOperacion.logNombre -ne ([string]$registroOperacion.operationId + '.log')) {
+            $operacionesAisladasOk = $false
+        }
+    }
+    Test-Asercion -Id 'multicontexto.operacionesAisladas' -Condicion $operacionesAisladasOk -DetalleExito 'Los manifiestos y salidas de operaciones quedan aislados por contexto y correlacionados por operationId.' -DetalleFallo 'Los manifiestos o salidas de operaciones se mezclaron entre contextos o perdieron su correlación.'
+
     $locksIndependientes = $false
     $flujoTesting = $null
     $flujoProduccion = $null
@@ -802,7 +882,8 @@ function Ejecutar-CasosMulticontexto {
     Test-Asercion -Id 'multicontexto.locksIndependientes' -Condicion $locksIndependientes -DetalleExito 'Locks de ambientes distintos coexisten y un segundo lock del mismo ambiente se rechaza.' -DetalleFallo 'El lock no aisla por ambiente o no rechaza el segundo lock del mismo ambiente.'
 
     $estadoGlobalesDespues = Obtener-EstadoDirectoriosGlobales
-    Test-Asercion -Id 'multicontexto.sinContaminacionGlobal' -Condicion (Test-EstadoDirectoriosIgual -Antes $estadoGlobalesAntes -Despues $estadoGlobalesDespues) -DetalleExito 'Las ejecuciones contextuales no modificaron documentacionServicios, estado, Logs ni xpz globales.' -DetalleFallo 'Alguna ejecucion contextual modifico directorios globales del pipeline.'
+    $diferenciasGlobales = @(Obtener-DiferenciasDirectoriosGlobales -Antes $estadoGlobalesAntes -Despues $estadoGlobalesDespues)
+    Test-Asercion -Id 'multicontexto.sinContaminacionGlobal' -Condicion ($diferenciasGlobales.Count -eq 0) -DetalleExito 'Las ejecuciones contextuales no modificaron documentacionServicios, estado, Logs ni xpz globales.' -DetalleFallo ('Alguna ejecucion contextual modifico directorios globales del pipeline: ' + ($diferenciasGlobales -join '; '))
 }
 
 function Ejecutar-CasosPipeline {
@@ -1765,6 +1846,140 @@ function Cargar-JsonFixture {
     )
     $texto = [System.IO.File]::ReadAllText((Join-Path $DirectorioFixturesJson $Nombre), (New-Object System.Text.UTF8Encoding($false)))
     return ($texto | ConvertFrom-Json)
+}
+
+function Cargar-WebJsonFixture {
+    <#
+    .SYNOPSIS
+    Carga un fixture JSON de los contratos del panel web.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$Nombre
+    )
+    $directorioFixturesWeb = Join-Path $DirectorioFixtures 'web'
+    $rutaFixture = Join-Path $directorioFixturesWeb $Nombre
+    $texto = [System.IO.File]::ReadAllText($rutaFixture, (New-Object System.Text.UTF8Encoding($false)))
+    return ($texto | ConvertFrom-Json)
+}
+
+function Ejecutar-CasosFixturesPanelWeb {
+    <#
+    .SYNOPSIS
+    Verifica que los fixtures enriquecidos del panel se lean sin artefactos.
+    #>
+    [CmdletBinding()]
+    param()
+
+$servicios = $null
+    $paginacion = $null
+    $estado = $null
+    try {
+        $servicios = Cargar-WebJsonFixture -Nombre 'panel-servicios-enriquecidos.json'
+        $paginacion = Cargar-WebJsonFixture -Nombre 'panel-paginacion.json'
+        $estado = Cargar-WebJsonFixture -Nombre 'panel-estado-enriquecido.json'
+    } catch {
+        Test-Asercion -Id 'panelFixtures.lectura' -Condicion $false -DetalleFallo ('No se pudieron leer los fixtures web: ' + $_.Exception.Message)
+        return
+    }
+
+    $sinRutasFisicas = $true
+    foreach ($servicio in @($servicios.servicios)) {
+        foreach ($propiedad in @('pdf', 'markdown')) {
+            if ($servicio.$propiedad.PSObject.Properties['ruta']) { $sinRutasFisicas = $false }
+        }
+    }
+    Test-Asercion -Id 'panelFixtures.serviciosEnriquecidos' -Condicion (
+        $servicios.meta.contextId -eq 'trunk/testing' -and
+        $servicios.meta.inventarioObsoleto -eq $true -and
+        @($servicios.servicios).Count -eq 3 -and
+        $servicios.servicios[0].versionDisponible -eq $true -and
+        $servicios.servicios[1].estado -eq 'OBSOLETO' -and
+        $servicios.servicios[1].pdf.disponible -eq $false -and
+        $servicios.servicios[2].version -eq $null -and
+        $servicios.servicios[2].versionDisponible -eq $false -and
+        $sinRutasFisicas
+    ) -DetalleExito 'El fixture enriquecido cubre contexto, version, PDF ausente, estado obsoleto y ausencia de rutas fisicas.' -DetalleFallo 'El fixture enriquecido no contiene los contratos esperados.'
+
+    Test-Asercion -Id 'panelFixtures.serviciosObservacion' -Condicion (
+        [string]$servicios.servicios[0].observacion -match 'Objetos: .* modificado' -and
+        [string]$servicios.servicios[1].observacion -eq 'Se modificó el documento.' -and
+        $null -eq $servicios.servicios[2].observacion
+    ) -DetalleExito 'El servicio enriquecido expone la observacion del cambio de la version vigente.' -DetalleFallo 'El fixture no expone la observacion del cambio por servicio.'
+
+    $archivosPdf = @($estado.dashboard.documentos.archivos | Where-Object { $_.extension -eq '.pdf' })
+    $estadosValidacion = @($estado.dashboard.validaciones | ForEach-Object { [string]$_.estado })
+    Test-Asercion -Id 'panelFixtures.estadoEnriquecido' -Condicion (
+        $estado.dashboard.documentos.total -eq $archivosPdf.Count -and
+        $estado.dashboard.documentos.total -eq 2 -and
+        -not [string]::IsNullOrWhiteSpace([string]$estado.dashboard.documentos.ultimaActualizacion) -and
+        $estadosValidacion -contains 'OK' -and
+        $estadosValidacion -contains 'ADVERTENCIA' -and
+        $estadosValidacion -contains 'ERROR'
+    ) -DetalleExito 'El dashboard enriquecido cuenta solo PDF, expone ultima actualizacion y validaciones de ambiente.' -DetalleFallo 'El dashboard enriquecido no contiene los contratos esperados.'
+
+    Test-Asercion -Id 'panelFixtures.paginacion' -Condicion (
+        $paginacion.elementos -gt $paginacion.tamanoInicial -and
+        $paginacion.paginaInicial -eq 1 -and
+        (@($paginacion.tamanoPermitido) -join ',') -eq '25,50,100' -and
+        $paginacion.seleccionPorFqn -eq $true -and
+        $paginacion.cambiarFiltroConservaSeleccion -eq $true
+    ) -DetalleExito 'El fixture de paginacion conserva pagina inicial, tamanos permitidos y seleccion por FQN.' -DetalleFallo 'El fixture de paginacion no contiene los contratos esperados.'
+}
+
+function Ejecutar-CasosEstadosOperacionPanel {
+    <#
+    .SYNOPSIS
+    Verifica el contrato entre estados tecnicos, codigos de salida y estados visibles.
+    #>
+    [CmdletBinding()]
+    param()
+
+    $fixture = $null
+    try {
+        $fixture = Cargar-WebJsonFixture -Nombre 'panel-estados-operacion.json'
+    } catch {
+        Test-Asercion -Id 'panelEstadosOperacion.lectura' -Condicion $false -DetalleFallo ('No se pudo leer el fixture de estados operativos: ' + $_.Exception.Message)
+        return
+    }
+
+    $estadosPermitidos = @($fixture.estadosPermitidos)
+    $casosEstadoOperacion = @($fixture.casos)
+    $mapeoValido = $true
+    foreach ($casoEstadoOperacion in $casosEstadoOperacion) {
+        if ($estadosPermitidos -notcontains [string]$casoEstadoOperacion.estadoVisible) {
+            $mapeoValido = $false
+            break
+        }
+
+        if ([string]$casoEstadoOperacion.estadoTecnico -in @('QUEUED', 'RUNNING')) {
+            if ($null -ne $casoEstadoOperacion.codigoSalida -or [string]$casoEstadoOperacion.estadoVisible -ne 'EN PROCESO') {
+                $mapeoValido = $false
+                break
+            }
+            continue
+        }
+
+        $codigoSalida = [int]$casoEstadoOperacion.codigoSalida
+        $estadoEsperado = switch ($codigoSalida) {
+            0 { 'COMPLETADO' }
+            2 { 'COMPLETADO PARCIALMENTE' }
+            default { 'ERROR' }
+        }
+        if ([string]$casoEstadoOperacion.estadoVisible -ne $estadoEsperado) {
+            $mapeoValido = $false
+            break
+        }
+    }
+
+    Test-Asercion -Id 'panelEstadosOperacion.mapeoTecnicoVisible' -Condicion (
+        $mapeoValido -and
+        $casosEstadoOperacion.Count -eq 6 -and
+        @($casosEstadoOperacion | Where-Object { $_.codigoSalida -eq 0 }).Count -eq 1 -and
+        @($casosEstadoOperacion | Where-Object { $_.codigoSalida -eq 2 }).Count -eq 1 -and
+        @($casosEstadoOperacion | Where-Object { $_.codigoSalida -eq 3 }).Count -eq 1 -and
+        @($casosEstadoOperacion | Where-Object { $_.codigoSalida -eq 1 }).Count -eq 1
+    ) -DetalleExito 'El contrato del panel mapea los codigos 0, 2, 3 y 1 a estados visibles consistentes.' -DetalleFallo 'El contrato de estados operativos no cubre o mapea correctamente los codigos requeridos.'
 }
 
 function Procesar-ServicioPrueba {
@@ -2819,6 +3034,378 @@ function Ejecutar-CasosValidacionEstado {
     Test-Asercion -Id 'validacionEstado.historial' -Condicion $conformidadHistorial -DetalleExito 'El historial es coherente con el control: última revisión por bloque y lineageId del encabezado.' -DetalleFallo 'El historial no es coherente con el control.'
 }
 
+function Ejecutar-CasosConfiguracionPanelTemporal {
+    <#
+    .SYNOPSIS
+    Inicia el panel con una copia temporal de configuracion.json.
+    .DESCRIPTION
+    Esta base de pruebas evita escribir la configuracion operativa y comprueba el
+    contenido del archivo despues de cada solicitud de configuracion.
+    #>
+    [CmdletBinding()]
+    param()
+
+    $rutaServidorPanel = Join-Path $DirectorioBinario 'ServidorPanelWeb.ps1'
+    $rutaFixtureConfiguracion = Join-Path $DirectorioFixturesJson 'configuracion-multicliente-alta.json'
+    $directorioPruebaPanel = Join-Path $DirectorioTmp 'configuracion-panel-temporal'
+    $rutaConfiguracionTemporal = Join-Path $directorioPruebaPanel 'configuracion.json'
+    New-DirectorioSiNoExiste -Directorio $directorioPruebaPanel | Out-Null
+    Copy-Item -LiteralPath $rutaFixtureConfiguracion -Destination $rutaConfiguracionTemporal -Force
+
+    $puerto = 8240 + (Get-Random -Minimum 0 -Maximum 100)
+    $rutaPowerShell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    $procesoPanel = $null
+    $etapaPrueba = 'inicio'
+    try {
+        $procesoPanel = Start-Process -FilePath $rutaPowerShell -ArgumentList @(
+            '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $rutaServidorPanel,
+            '-RepositoryRoot', $RaizRepositorio, '-ConfigPath', $rutaConfiguracionTemporal,
+            '-Port', $puerto, '-NoBrowser'
+        ) -WindowStyle Hidden -PassThru
+
+        $respuestaInicio = $null
+        for ($intentoInicio = 0; $intentoInicio -lt 20; $intentoInicio++) {
+            Start-Sleep -Milliseconds 250
+            try {
+                $respuestaInicio = Invoke-WebRequest -UseBasicParsing -Uri ('http://127.0.0.1:' + $puerto + '/') -ErrorAction Stop
+                break
+            } catch { }
+        }
+        $tokenMatch = if ($respuestaInicio) { [regex]::Match($respuestaInicio.Content, 'window\.PANEL_TOKEN="([a-f0-9]+)"') } else { $null }
+        Test-Asercion -Id 'configuracionPanelTemporal.inicio' -Condicion ($null -ne $respuestaInicio -and $tokenMatch.Success) -DetalleExito 'El panel se inicia con una configuracion temporal y entrega token de sesion.' -DetalleFallo 'El panel no se inicio con la configuracion temporal o no entrego token.'
+        if ($null -eq $respuestaInicio -or -not $tokenMatch.Success) { return }
+
+        $headersPanel = @{ 'X-Panel-Token' = $tokenMatch.Groups[1].Value }
+        $etapaPrueba = 'leer configuracion temporal'
+        $respuestaConfiguracion = Invoke-RestMethod -Uri ('http://127.0.0.1:' + $puerto + '/api/configuracion')
+        $hashInicial = [string]$respuestaConfiguracion.data.configHash
+        $contenidoInicial = [System.IO.File]::ReadAllBytes($rutaConfiguracionTemporal)
+        Test-Asercion -Id 'configuracionPanelTemporal.lectura' -Condicion ([bool]$respuestaConfiguracion.ok -and $hashInicial -match '^[0-9a-f]{64}$' -and $contenidoInicial.Length -gt 0) -DetalleExito 'La API lee el hash y el contenido de la copia temporal.' -DetalleFallo 'La API no leyo correctamente la configuracion temporal.'
+
+        $payloadCliente = [ordered]@{
+            configHash = $hashInicial
+            data = [ordered]@{
+                id = 'nuevo-cliente'
+                nombre = 'Nuevo cliente'
+                packagename = 'nuevo.'
+                serviciosIgnorados = @()
+                ambientes = @([ordered]@{
+                    id = 'testing'
+                    nombre = 'Testing'
+                    tipo = 'test'
+                    kbPath = 'C:/KBs/NUEVO_CLIENTE'
+                })
+            }
+        }
+        $etapaPrueba = 'alta temporal'
+        $respuestaAlta = Invoke-WebRequest -Method Post -UseBasicParsing -Uri ('http://127.0.0.1:' + $puerto + '/api/configuracion/clientes') -Headers $headersPanel -ContentType 'application/json' -Body ($payloadCliente | ConvertTo-Json -Depth 10)
+        $datosAlta = $respuestaAlta.Content | ConvertFrom-Json
+        $contenidoPosterior = [System.IO.File]::ReadAllBytes($rutaConfiguracionTemporal)
+        $configuracionPosterior = Get-Content -LiteralPath $rutaConfiguracionTemporal -Raw | ConvertFrom-Json
+        $clienteNuevo = @($configuracionPosterior.clientes | Where-Object { $_.id -eq 'nuevo-cliente' })
+        Test-Asercion -Id 'configuracionPanelTemporal.escritura' -Condicion (
+            $respuestaAlta.StatusCode -eq 200 -and
+            [bool]$datosAlta.ok -and
+            $clienteNuevo.Count -eq 1 -and
+            @($clienteNuevo[0].ambientes).Count -eq 1 -and
+            $clienteNuevo[0].serviciosIgnorados.Count -eq 0 -and
+            -not [System.Linq.Enumerable]::SequenceEqual($contenidoInicial, $contenidoPosterior)
+        ) -DetalleExito 'La mutacion valida escribe la copia temporal y conserva el cliente con su primer ambiente.' -DetalleFallo 'La mutacion no actualizo correctamente la copia temporal.'
+
+        $hashPosterior = [string]$datosAlta.data.configHash
+        $contenidoAntesError = [System.IO.File]::ReadAllBytes($rutaConfiguracionTemporal)
+        $respuestaErrorValidacion = $null
+        try {
+            $payloadInvalido = [ordered]@{ configHash = $hashPosterior; data = [ordered]@{ id = 'cliente-invalido'; nombre = 'Invalido'; packagename = 'invalido.'; serviciosIgnorados = @(); ambientes = @() } }
+            Invoke-WebRequest -Method Post -UseBasicParsing -Uri ('http://127.0.0.1:' + $puerto + '/api/configuracion/clientes') -Headers $headersPanel -ContentType 'application/json' -Body ($payloadInvalido | ConvertTo-Json -Depth 10) -ErrorAction Stop | Out-Null
+        } catch { $respuestaErrorValidacion = $_ }
+        $contenidoDespuesError = [System.IO.File]::ReadAllBytes($rutaConfiguracionTemporal)
+        $codigoErrorValidacion = if ($respuestaErrorValidacion -and $respuestaErrorValidacion.Exception.Response) { [int]$respuestaErrorValidacion.Exception.Response.StatusCode.value__ } else { 200 }
+        Test-Asercion -Id 'configuracionPanelTemporal.errorValidacionAtomico' -Condicion ($codigoErrorValidacion -eq 400 -and [System.Linq.Enumerable]::SequenceEqual($contenidoAntesError, $contenidoDespuesError)) -DetalleExito 'Un payload invalido se rechaza sin modificar ningun byte de la copia temporal.' -DetalleFallo 'Un payload invalido modifico la copia temporal o no devolvio 400.'
+
+        $respuestaErrorHash = $null
+        try {
+            $payloadHashObsoleto = [ordered]@{ configHash = ('0' * 64); data = $payloadCliente.data }
+            Invoke-WebRequest -Method Post -UseBasicParsing -Uri ('http://127.0.0.1:' + $puerto + '/api/configuracion/clientes') -Headers $headersPanel -ContentType 'application/json' -Body ($payloadHashObsoleto | ConvertTo-Json -Depth 10) -ErrorAction Stop | Out-Null
+        } catch { $respuestaErrorHash = $_ }
+        $contenidoDespuesHash = [System.IO.File]::ReadAllBytes($rutaConfiguracionTemporal)
+        $codigoErrorHash = if ($respuestaErrorHash -and $respuestaErrorHash.Exception.Response) { [int]$respuestaErrorHash.Exception.Response.StatusCode.value__ } else { 200 }
+        Test-Asercion -Id 'configuracionPanelTemporal.hashObsoletoAtomico' -Condicion ($codigoErrorHash -eq 409 -and [System.Linq.Enumerable]::SequenceEqual($contenidoAntesError, $contenidoDespuesHash)) -DetalleExito 'Un hash obsoleto devuelve 409 y conserva byte a byte la copia temporal.' -DetalleFallo 'Un hash obsoleto no devolvio 409 o modifico la copia temporal.'
+
+        $respuestaErrorId = $null
+        try {
+            $payloadIdDuplicado = [ordered]@{ configHash = $hashPosterior; data = [ordered]@{ id = 'existente'; nombre = 'Duplicado'; packagename = 'duplicado.'; serviciosIgnorados = @(); ambientes = @([ordered]@{ id = 'nuevo'; nombre = 'Nuevo'; tipo = 'prod'; kbPath = 'C:/KBs/CLIENTE_DUPLICADO' }) } }
+            Invoke-WebRequest -Method Post -UseBasicParsing -Uri ('http://127.0.0.1:' + $puerto + '/api/configuracion/clientes') -Headers $headersPanel -ContentType 'application/json' -Body ($payloadIdDuplicado | ConvertTo-Json -Depth 10) -ErrorAction Stop | Out-Null
+        } catch { $respuestaErrorId = $_ }
+        $contenidoDespuesId = [System.IO.File]::ReadAllBytes($rutaConfiguracionTemporal)
+        $codigoErrorId = if ($respuestaErrorId -and $respuestaErrorId.Exception.Response) { [int]$respuestaErrorId.Exception.Response.StatusCode.value__ } else { 200 }
+        Test-Asercion -Id 'configuracionPanelTemporal.idDuplicadoAtomico' -Condicion ($codigoErrorId -eq 400 -and [System.Linq.Enumerable]::SequenceEqual($contenidoAntesError, $contenidoDespuesId)) -DetalleExito 'Un ID de cliente duplicado se rechaza antes de escribir y conserva el archivo.' -DetalleFallo 'Un ID de cliente duplicado modifico el archivo o no devolvio 400.'
+
+        $respuestaErrorKb = $null
+        try {
+            $payloadKbDuplicada = [ordered]@{ configHash = $hashPosterior; data = [ordered]@{ id = 'existente'; nombre = 'Cliente existente'; packagename = 'existente.'; serviciosIgnorados = @(); ambientes = @([ordered]@{ id = 'produccion'; nombre = 'Produccion'; tipo = 'prod'; kbPath = 'C:/KBs/CLIENTE_EXISTENTE' }) } }
+            Invoke-WebRequest -Method Post -UseBasicParsing -Uri ('http://127.0.0.1:' + $puerto + '/api/configuracion/clientes') -Headers $headersPanel -ContentType 'application/json' -Body ($payloadKbDuplicada | ConvertTo-Json -Depth 10) -ErrorAction Stop | Out-Null
+        } catch { $respuestaErrorKb = $_ }
+        $contenidoDespuesKb = [System.IO.File]::ReadAllBytes($rutaConfiguracionTemporal)
+        $codigoErrorKb = if ($respuestaErrorKb -and $respuestaErrorKb.Exception.Response) { [int]$respuestaErrorKb.Exception.Response.StatusCode.value__ } else { 200 }
+        Test-Asercion -Id 'configuracionPanelTemporal.kbDuplicadaAtomica' -Condicion ($codigoErrorKb -eq 400 -and [System.Linq.Enumerable]::SequenceEqual($contenidoAntesError, $contenidoDespuesKb)) -DetalleExito 'Una KB duplicada se rechaza antes de escribir y conserva el archivo.' -DetalleFallo 'Una KB duplicada modifico el archivo o no devolvio 400.'
+    } catch {
+        Registrar-Caso -Id 'configuracionPanelTemporal.error' -Estado 'FAIL' -Detalle ($etapaPrueba + ': ' + $_.Exception.Message)
+    } finally {
+        if ($procesoPanel -and -not $procesoPanel.HasExited) {
+            try { & taskkill.exe /PID $procesoPanel.Id /T /F | Out-Null } catch { try { Stop-Process -Id $procesoPanel.Id -Force -ErrorAction SilentlyContinue } catch { } }
+        }
+        if (Test-Path -LiteralPath $directorioPruebaPanel) {
+            Remove-Item -LiteralPath $directorioPruebaPanel -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
+function Ejecutar-CasosPanelWeb {
+    $rutaServidorPanel = Join-Path $DirectorioBinario 'ServidorPanelWeb.ps1'
+    $archivosWeb = @('web/index.html', 'web/app.js', 'web/style.css') | ForEach-Object { Join-Path $RaizRepositorio $_ }
+    $dependenciasExternas = $false
+    foreach ($rutaWeb in $archivosWeb) {
+        if (-not (Test-Path -LiteralPath $rutaWeb -PathType Leaf)) { $dependenciasExternas = $true; continue }
+        $contenidoWeb = [System.IO.File]::ReadAllText($rutaWeb)
+        if ($contenidoWeb -match '(?i)https?://|cdn|node_modules|(^|[^A-Za-z])import\s|require\s*\(') { $dependenciasExternas = $true }
+    }
+    Test-Asercion -Id 'panelWeb.sinDependenciasExternas' -Condicion (-not $dependenciasExternas) -DetalleExito 'El frontend del panel no referencia frameworks, CDN ni paquetes externos.' -DetalleFallo 'El frontend contiene una referencia externa o falta un archivo web.'
+    $contenidoAplicacionPanel = [System.IO.File]::ReadAllText((Join-Path $RaizRepositorio 'web\app.js'))
+    $contenidoHtmlPanel = [System.IO.File]::ReadAllText((Join-Path $RaizRepositorio 'web\index.html'))
+    $contenidoEstilosPanel = [System.IO.File]::ReadAllText((Join-Path $RaizRepositorio 'web\style.css'))
+    $contenidoServidorPanel = [System.IO.File]::ReadAllText($rutaServidorPanel)
+    Test-Asercion -Id 'panelWeb.persistenciaContexto' -Condicion (
+        $contenidoAplicacionPanel -match 'glm-panel-context:v1' -and
+        $contenidoAplicacionPanel -match 'localStorage\.getItem' -and
+        $contenidoAplicacionPanel -match 'localStorage\.setItem' -and
+        $contenidoAplicacionPanel -match 'localStorage\.removeItem' -and
+        $contenidoAplicacionPanel -match '/api/contextos' -and
+        $contenidoAplicacionPanel -match '/api/estado' -and
+        $contenidoAplicacionPanel -match '/api/contexto/activar'
+    ) -DetalleExito 'El frontend declara el contrato de persistencia, validacion y activacion del contexto.' -DetalleFallo 'Falta el contrato de persistencia o validacion del contexto del navegador.'
+    Test-Asercion -Id 'panelWeb.decisionConflictoContexto' -Condicion (
+        ($contenidoAplicacionPanel -match 'Usar contexto guardado' -or $contenidoHtmlPanel -match 'Usar contexto guardado') -and
+        ($contenidoAplicacionPanel -match 'Usar contexto del servidor' -or $contenidoHtmlPanel -match 'Usar contexto del servidor')
+    ) -DetalleExito 'El frontend declara las dos decisiones explicitas para resolver un conflicto de contexto.' -DetalleFallo 'Faltan las decisiones del popup de conflicto de contexto.'
+    Test-Asercion -Id 'panelWeb.estadoOcupadoContexto' -Condicion (
+        $contenidoAplicacionPanel -match 'pendingUi' -and
+        $contenidoAplicacionPanel -match 'environment-dropdown-trigger' -and
+        $contenidoAplicacionPanel -match 'aria-busy' -and
+        $contenidoHtmlPanel -match 'class="spinner'
+    ) -DetalleExito 'El frontend declara un estado ocupado comun y un indicador de espera para la activacion.' -DetalleFallo 'Falta el contrato de estado ocupado para la activacion del contexto.'
+    Test-Asercion -Id 'panelWeb.dashboardKb' -Condicion (
+        $contenidoAplicacionPanel -match 'label: ''KB''' -and
+        $contenidoAplicacionPanel -match 'kbPath' -and
+        $contenidoAplicacionPanel -match 'summary-item'
+    ) -DetalleExito 'El Dashboard declara la tarjeta de KB y utiliza la ruta del contexto.' -DetalleFallo 'Falta el contrato visual de la tarjeta KB del Dashboard.'
+    Test-Asercion -Id 'panelWeb.estilosEstadoOcupado' -Condicion (
+        $contenidoEstilosPanel -match 'animation:\s*spinner-rotate' -and
+        $contenidoEstilosPanel -match '@keyframes\s+spinner-rotate' -and
+        $contenidoEstilosPanel -match 'prefers-reduced-motion' -and
+        $contenidoEstilosPanel -match 'margin-top:\s*10px'
+    ) -DetalleExito 'Los estilos declaran animacion de spinners, movimiento reducido y espaciado de tarjetas.' -DetalleFallo 'Falta algun contrato CSS de spinners, movimiento reducido o espaciado de tarjetas.'
+    Test-Asercion -Id 'panelWeb.contratosPaginacion' -Condicion (
+        $contenidoHtmlPanel -match 'documentation-filter' -and
+        $contenidoHtmlPanel -match 'documentation-pdf-list'
+    ) -DetalleExito 'El frontend declara la consulta filtrable de PDF publicados.' -DetalleFallo 'El frontend no conserva la consulta de PDF publicados.'
+    Test-Asercion -Id 'panelWeb.contratosSeleccion' -Condicion (
+        $contenidoAplicacionPanel -match 'selectedFallbackXpz' -and
+        $contenidoAplicacionPanel -match 'validate-xpz-option' -and
+        $contenidoAplicacionPanel -match 'continue-operation'
+    ) -DetalleExito 'El frontend permite seleccionar, validar y continuar con un XPZ de recuperación.' -DetalleFallo 'El contrato de recuperación de XPZ no está implementado en el frontend.'
+    Test-Asercion -Id 'panelWeb.contratosOperativos' -Condicion (
+        $contenidoServidorPanel -match "route -eq '/api/servicios'" -and
+        $contenidoServidorPanel -match "route -eq '/api/generar-pdf'" -and
+        $contenidoServidorPanel -match '/api/reiniciar' -and
+        $contenidoServidorPanel -match "modo.*completar" -and
+        $contenidoAplicacionPanel -match '/api/reportes/review-ultimo' -and
+        $contenidoHtmlPanel -match 'configuration-modal'
+    ) -DetalleExito 'El servidor y frontend declaran los contratos de servicios, reinicio, recuperación, reportes y configuración.' -DetalleFallo 'Falta algún contrato operativo del rediseño.'
+    Test-Asercion -Id 'panelWeb.estadosSemanticos' -Condicion (
+        $contenidoServidorPanel -match 'function Get-VisibleWorkStatus' -and
+        $contenidoServidorPanel -match 'COMPLETADO PARCIALMENTE' -and
+        $contenidoServidorPanel -match 'estadoTecnico = \$Work.estado' -and
+        $contenidoServidorPanel -match 'estadoVisible = Get-VisibleWorkStatus' -and
+        $contenidoServidorPanel -match 'function Get-LatestValidXpz' -and
+        $contenidoServidorPanel -match 'Test-XpzValido -Ruta \$candidate.Ruta' -and
+        $contenidoServidorPanel -match 'Operacion abortada.'
+    ) -DetalleExito 'El servidor publica estados visibles derivados del resultado técnico y valida el XPZ antes de activarlo.' -DetalleFallo 'Falta el contrato de estados semánticos o la poscondición de XPZ válido.'
+    Test-Asercion -Id 'panelWeb.seleccionPasiva' -Condicion (
+        $contenidoServidorPanel -match "route -eq '/api/xpz/activar'" -and
+        $contenidoServidorPanel -match 'StatusCode 200 -Payload @\{ ok = \$true; data = \(Convert-XpzForResponse' -and
+        @([regex]::Matches($contenidoServidorPanel, 'regenerationWork = Start-EndpointGenerationWork')).Count -eq 1
+    ) -DetalleExito 'Seleccionar XPZ solo cambia el XPZ activo de la sesión y no inicia regeneración automática.' -DetalleFallo 'Seleccionar XPZ todavía inicia una operación automática o no devuelve activación pasiva.'
+    Test-Asercion -Id 'panelWeb.precondicionPdfXpz' -Condicion (
+        $contenidoServidorPanel -match 'confirmRestart=true' -and
+        $contenidoServidorPanel -match 'PRECONDICION_XPZ' -and
+        $contenidoServidorPanel -match 'Obtener-Sha256Archivo -Ruta \$script:ActiveXpz.Ruta' -and
+        $contenidoServidorPanel -match 'StatusCode 409' -and
+        $contenidoServidorPanel -match 'Start-PdfGenerationWork -RequestBody \$body'
+    ) -DetalleExito 'La generación PDF exige confirmar nombre y SHA-256 del XPZ y responde 409 ante divergencias.' -DetalleFallo 'Falta la precondición nombre más SHA-256 o su respuesta 409.'
+    Test-Asercion -Id 'panelWeb.consolasIndependientes' -Condicion (
+        $contenidoHtmlPanel -match 'id="export-work-card"' -and
+        $contenidoHtmlPanel -match 'id="pdf-work-card"' -and
+        $contenidoHtmlPanel -notmatch 'id="work-card"' -and
+        $contenidoAplicacionPanel -match 'operationResults' -and
+        $contenidoAplicacionPanel -match 'exportConsoleVisible' -and
+        $contenidoAplicacionPanel -match 'pdfConsoleVisible' -and
+        $contenidoAplicacionPanel -match 'activeXpz\.nombre' -and
+        $contenidoAplicacionPanel -match 'activeXpzHash'
+    ) -DetalleExito 'Exportar y Generar PDF tienen consolas separadas y la confirmación PDF transporta nombre y SHA-256.' -DetalleFallo 'Las consolas no están separadas o falta la precondición enviada por el navegador.'
+    Test-Asercion -Id 'panelWeb.resultadoUnificado' -Condicion (
+        $contenidoAplicacionPanel -match 'function updateOperationResult' -and
+        $contenidoAplicacionPanel -match 'estadoVisible \|\| work.estado' -and
+        $contenidoAplicacionPanel -match 'finalStatus = payload.data.estadoVisible' -and
+        $contenidoAplicacionPanel -match 'COMPLETADO PARCIALMENTE' -and
+        $contenidoHtmlPanel -match 'id="tab-documentacion"' -and
+        $contenidoHtmlPanel -notmatch 'Consola de ejecución'
+    ) -DetalleExito 'Tag, popup y consola derivan del mismo estado visible y Documentación no contiene consola de proceso.' -DetalleFallo 'El resultado visible no está unificado o Documentación conserva una consola.'
+    Test-Asercion -Id 'panelWeb.logsOperaciones' -Condicion (
+        $contenidoServidorPanel -match 'Join-Path \$Context.DirectorioLogs ''operaciones''' -and
+        $contenidoServidorPanel -match 'function Get-WorkFullOutput' -and
+        $contenidoServidorPanel -match 'STDOUT' -and
+        $contenidoServidorPanel -match 'STDERR' -and
+        $contenidoServidorPanel -match 'function Write-OperationRecord' -and
+        $contenidoServidorPanel -match 'function Write-PanelMutationOperation' -and
+        $contenidoServidorPanel -match 'operationId = \$Work.operationId' -and
+        $contenidoServidorPanel -match 'logNombre = \$Work.operationLogName' -and
+        $contenidoServidorPanel -notmatch 'log = \$Work.log'
+    ) -DetalleExito 'Los trabajos escriben manifiesto y salida completa en Logs/operaciones sin exponer rutas físicas.' -DetalleFallo 'Falta la persistencia contextual del manifiesto o la captura completa de stdout/stderr.'
+    Test-Asercion -Id 'panelWeb.catalogoLogsOperaciones' -Condicion (
+        $contenidoServidorPanel -match 'function Get-OperationLogCatalog' -and
+        $contenidoServidorPanel -match 'function Get-QueryValue' -and
+        $contenidoServidorPanel -match 'Group-Object tipo' -and
+        $contenidoServidorPanel -match 'historial' -and
+        $contenidoServidorPanel -match 'severidad' -and
+        $contenidoServidorPanel -match 'resumen = \$operationLogs' -and
+        $contenidoServidorPanel -notmatch 'ruta = \$logPath'
+    ) -DetalleExito 'GET /api/logs resume por tipo, filtra por operación y severidad y devuelve nombres lógicos.' -DetalleFallo 'El catálogo de Logs no implementa resumen, historial, filtros o aislamiento de rutas.'
+    Test-Asercion -Id 'panelWeb.trazabilidadMutaciones' -Condicion (
+        $contenidoServidorPanel -match "Write-PanelMutationOperation -Operation 'ACTIVAR_CONTEXTO'" -and
+        $contenidoServidorPanel -match "Write-PanelMutationOperation -Operation 'ACTIVAR_XPZ'" -and
+        $contenidoServidorPanel -match 'Write-ConfigurationCandidate -Candidate \$candidate -Operation ''CONFIGURACION_CLIENTE''' -and
+        $contenidoServidorPanel -match 'Write-ConfigurationCandidate -Candidate \$candidate -Operation ''CONFIGURACION_AMBIENTE''' -and
+        $contenidoServidorPanel -match 'Write-ConfigurationCandidate -Candidate \$candidate -Operation ''CONFIGURACION_GLOBAL''' -and
+        $contenidoServidorPanel -match 'Start-PanelChildWork -Operation ''VALIDAR_XPZ'''
+    ) -DetalleExito 'Las activaciones, CRUD de configuración, validación y trabajos operativos quedan correlacionados en Logs/operaciones.' -DetalleFallo 'Falta trazabilidad en alguna mutación del panel.'
+
+    $puerto = 8140 + (Get-Random -Minimum 0 -Maximum 100)
+    $rutaPowerShell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    $procesoPanel = $null
+    $etapaPanel = 'inicio'
+    try {
+        $procesoPanel = Start-Process -FilePath $rutaPowerShell -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $rutaServidorPanel, '-RepositoryRoot', $RaizRepositorio, '-Port', $puerto, '-NoBrowser') -WindowStyle Hidden -PassThru
+        $respuestaInicio = $null
+        for ($intento = 0; $intento -lt 20; $intento++) {
+            Start-Sleep -Milliseconds 250
+            try { $respuestaInicio = Invoke-WebRequest -UseBasicParsing -Uri ('http://127.0.0.1:' + $puerto + '/') -ErrorAction Stop; break } catch { }
+        }
+        Test-Asercion -Id 'panelWeb.estaticos' -Condicion ($null -ne $respuestaInicio -and $respuestaInicio.StatusCode -eq 200) -DetalleExito 'El servidor entrega el frontend por loopback.' -DetalleFallo 'El servidor no entregó index.html.'
+        if ($null -eq $respuestaInicio) { return }
+
+        $fuentesValidas = $true
+        foreach ($nombreFuente in @('Poppins-Regular.ttf', 'Poppins-SemiBold.ttf', 'Poppins-Bold.ttf')) {
+            try {
+                $respuestaFuente = Invoke-WebRequest -UseBasicParsing -Uri ('http://127.0.0.1:' + $puerto + '/fonts/' + $nombreFuente) -ErrorAction Stop
+                if ($respuestaFuente.StatusCode -ne 200 -or $respuestaFuente.Headers['Content-Type'] -notmatch '^font/ttf') { $fuentesValidas = $false }
+            } catch { $fuentesValidas = $false }
+        }
+        Test-Asercion -Id 'panelWeb.fuentesAllowlist' -Condicion $fuentesValidas -DetalleExito 'El servidor entrega únicamente las tres fuentes Poppins allowlisted.' -DetalleFallo 'El servidor no entregó correctamente alguna fuente Poppins allowlisted.'
+
+        $rechazoFuente = $false
+        try { Invoke-WebRequest -UseBasicParsing -Uri ('http://127.0.0.1:' + $puerto + '/fonts/Poppins-Regular.txt') -ErrorAction Stop | Out-Null } catch { $rechazoFuente = $_.Exception.Response.StatusCode.value__ -in @(400, 404) }
+        Test-Asercion -Id 'panelWeb.fuentesRutaNoPermitida' -Condicion $rechazoFuente -DetalleExito 'El servidor rechaza rutas de fuentes fuera de la allowlist.' -DetalleFallo 'Una ruta de fuente no permitida no fue rechazada.'
+
+        $tokenMatch = [regex]::Match($respuestaInicio.Content, 'window\.PANEL_TOKEN="([a-f0-9]+)"')
+        Test-Asercion -Id 'panelWeb.tokenSesion' -Condicion $tokenMatch.Success -DetalleExito 'El token de sesión se inyecta en el HTML.' -DetalleFallo 'No se encontró el token de sesión inyectado.'
+        if (-not $tokenMatch.Success) { return }
+        $token = $tokenMatch.Groups[1].Value
+        $headersPanel = @{ 'X-Panel-Token' = $token }
+        $estadoPanel = Invoke-RestMethod -Uri ('http://127.0.0.1:' + $puerto + '/api/estado')
+        Test-Asercion -Id 'panelWeb.estado' -Condicion ([bool]$estadoPanel.ok -and $null -eq $estadoPanel.data.context) -DetalleExito 'El servidor inicia sin activar un contexto automáticamente.' -DetalleFallo 'El estado inicial activó un contexto o no respondió correctamente.'
+        $contextosPanel = Invoke-RestMethod -Uri ('http://127.0.0.1:' + $puerto + '/api/contextos')
+        Test-Asercion -Id 'panelWeb.contextos' -Condicion ([bool]$contextosPanel.ok -and @($contextosPanel.data.contextos).Count -ge 2) -DetalleExito 'La API lista los contextos configurados.' -DetalleFallo 'La API no listó los contextos configurados.'
+
+        $etapaPanel = 'activar contexto'
+        $activacionPanel = Invoke-WebRequest -Method Post -UseBasicParsing -Uri ('http://127.0.0.1:' + $puerto + '/api/contexto/activar') -Headers $headersPanel -ContentType 'application/json' -Body '{"clienteId":"trunk","ambienteId":"testing"}'
+        $activacionDatos = $activacionPanel.Content | ConvertFrom-Json
+        Test-Asercion -Id 'panelWeb.activacion' -Condicion ($activacionPanel.StatusCode -in @(200, 202) -and $activacionDatos.data.contextId -eq 'trunk/testing') -DetalleExito 'La activación valida y establece el contexto solicitado.' -DetalleFallo 'La activación contextual falló.'
+        $estadoActivoPanel = Invoke-RestMethod -Uri ('http://127.0.0.1:' + $puerto + '/api/estado')
+Test-Asercion -Id 'panelWeb.dashboard' -Condicion (
+            [bool]$estadoActivoPanel.ok -and
+            $estadoActivoPanel.data.dashboard.contexto.ContextId -eq 'trunk/testing' -and
+            $estadoActivoPanel.data.dashboard.xpz.PSObject.Properties['disponibles'] -and
+            $estadoActivoPanel.data.dashboard.xpz.PSObject.Properties['sha256'] -and
+            $estadoActivoPanel.data.dashboard.documentos.PSObject.Properties['total'] -and
+            $estadoActivoPanel.data.dashboard.documentos.PSObject.Properties['ultimaActualizacion'] -and
+            $estadoActivoPanel.data.dashboard.PSObject.Properties['validaciones'] -and
+            @($estadoActivoPanel.data.dashboard.validaciones).Count -ge 1 -and
+            $estadoActivoPanel.data.dashboard.PSObject.Properties['herramientas'] -and
+            $estadoActivoPanel.data.dashboard.PSObject.Properties['trabajo']
+        ) -DetalleExito 'El estado agrega los datos operativos del Dashboard para el contexto activo.' -DetalleFallo 'El estado no contiene todos los datos agregados del Dashboard.'
+        $etapaPanel = 'listar XPZ'
+        $xpzPanel = Invoke-RestMethod -Uri ('http://127.0.0.1:' + $puerto + '/api/xpz')
+        $xpzPrincipales = @($xpzPanel.data.xpz | Where-Object { $_.principal -eq $true })
+        Test-Asercion -Id 'panelWeb.xpzPrincipales' -Condicion (
+            [bool]$xpzPanel.ok -and
+            @($xpzPanel.data.xpz).Count -ge 1 -and
+            $xpzPrincipales.Count -eq 1
+        ) -DetalleExito 'La API XPZ lista archivos principales del contexto activo y marca uno como principal vigente.' -DetalleFallo 'La API XPZ incluyó complementos o no marcó correctamente el principal vigente.'
+        $xpzPrincipalNombre = @($xpzPanel.data.xpz | Where-Object { $_.principal -eq $true })[0].nombre
+        $etapaPanel = 'activar XPZ'
+        $activacionXpzPanel = Invoke-WebRequest -Method Post -UseBasicParsing -Uri ('http://127.0.0.1:' + $puerto + '/api/xpz/activar') -Headers $headersPanel -ContentType 'application/json' -Body ('{"nombre":"' + $xpzPrincipalNombre + '"}')
+        $activacionXpzDatos = $activacionXpzPanel.Content | ConvertFrom-Json
+        Test-Asercion -Id 'panelWeb.seleccionXpzPasiva' -Condicion ($activacionXpzPanel.StatusCode -eq 200 -and [bool]$activacionXpzDatos.ok -and [string]::IsNullOrWhiteSpace([string]$activacionXpzDatos.jobId)) -DetalleExito 'Seleccionar XPZ activa la sesión sin iniciar validación ni regeneración.' -DetalleFallo 'Seleccionar XPZ inició un trabajo o no confirmó la activación pasiva.'
+        $respuestaCompletarInvalido = $null
+        try { $respuestaCompletarInvalido = Invoke-WebRequest -Method Post -UseBasicParsing -Uri ('http://127.0.0.1:' + $puerto + '/api/exportar') -Headers $headersPanel -ContentType 'application/json' -Body '{"modo":"completar","nombre":"no-existe.xpz"}' -ErrorAction Stop } catch { }
+        Test-Asercion -Id 'panelWeb.exportarRecuperable' -Condicion ($null -eq $respuestaCompletarInvalido) -DetalleExito 'La operación de completitud exige un XPZ perteneciente al contexto activo.' -DetalleFallo 'La operación de completitud aceptó un XPZ ajeno al contexto.'
+
+        $etapaPanel = 'listar endpoints'
+        $inventarioPanel = Invoke-RestMethod -Uri ('http://127.0.0.1:' + $puerto + '/api/endpoints')
+        Test-Asercion -Id 'panelWeb.inventario' -Condicion ([bool]$inventarioPanel.ok -and $null -ne $inventarioPanel.data) -DetalleExito 'La API devuelve el estado del inventario contextual.' -DetalleFallo 'La API no devolvió el inventario contextual.'
+        $etapaPanel = 'listar servicios'
+        $serviciosPanel = Invoke-RestMethod -Uri ('http://127.0.0.1:' + $puerto + '/api/servicios')
+        $servicioProductor = @($serviciosPanel.data.servicios)[0]
+        Test-Asercion -Id 'panelWeb.serviciosEnriquecidos' -Condicion (
+            [bool]$serviciosPanel.ok -and
+            $null -ne $servicioProductor -and
+            $servicioProductor.proceso -eq $servicioProductor.fullyQualifiedName -and
+            $servicioProductor.endpoint -match '^glmsuit\.comercial\.apiglm\.' -and
+$servicioProductor.PSObject.Properties['versionDisponible'] -and
+            $servicioProductor.PSObject.Properties['observacion'] -and
+            $servicioProductor.PSObject.Properties['pdf'] -and
+            -not $servicioProductor.PSObject.Properties['ruta']
+        ) -DetalleExito 'La API devuelve servicios enriquecidos sin exponer rutas fisicas.' -DetalleFallo 'La API no correlaciono correctamente inventario y artefactos documentales.'
+        $etapaPanel = 'leer configuracion'
+        $configuracionPanel = Invoke-RestMethod -Uri ('http://127.0.0.1:' + $puerto + '/api/configuracion')
+        Test-Asercion -Id 'panelWeb.configHash' -Condicion ([bool]$configuracionPanel.ok -and [string]$configuracionPanel.data.configHash -match '^[0-9a-f]{64}$') -DetalleExito 'La configuración expone el hash SHA-256 actual.' -DetalleFallo 'El hash de configuración no es válido.'
+
+        $rechazoRuta = $false
+        try { Invoke-WebRequest -UseBasicParsing -Uri ('http://127.0.0.1:' + $puerto + '/api/documentos/..%2Fconfiguracion.json') -ErrorAction Stop | Out-Null } catch { $rechazoRuta = $_.Exception.Response.StatusCode.value__ -in @(400, 404) }
+        Test-Asercion -Id 'panelWeb.seguridadRutas' -Condicion $rechazoRuta -DetalleExito 'La API rechaza traversal en identificadores lógicos.' -DetalleFallo 'Una ruta de traversal no fue rechazada.'
+
+        $etapaPanel = 'iniciar validacion'
+        $trabajoPanel = Invoke-WebRequest -Method Post -UseBasicParsing -Uri ('http://127.0.0.1:' + $puerto + '/api/validar') -Headers $headersPanel -ContentType 'application/json' -Body '{}'
+        $trabajoDatos = $trabajoPanel.Content | ConvertFrom-Json
+        Test-Asercion -Id 'panelWeb.trabajo202' -Condicion ($trabajoPanel.StatusCode -eq 202 -and [string]$trabajoDatos.data.jobId) -DetalleExito 'La validación se acepta como trabajo asincrónico.' -DetalleFallo 'La validación no devolvió un trabajo 202.'
+    } catch {
+        $detalleErrorPanel = $_.Exception.Message
+        if ($_.Exception.Response) {
+            try {
+                $lectorRespuestaPanel = New-Object System.IO.StreamReader($_.Exception.Response.GetResponseStream())
+                $detalleErrorPanel = $detalleErrorPanel + ' | ' + $lectorRespuestaPanel.ReadToEnd()
+                $lectorRespuestaPanel.Dispose()
+            } catch { }
+        }
+        Registrar-Caso -Id 'panelWeb.error' -Estado 'FAIL' -Detalle ($etapaPanel + ': ' + $detalleErrorPanel)
+    } finally {
+        if ($procesoPanel -and -not $procesoPanel.HasExited) {
+            try { & taskkill.exe /PID $procesoPanel.Id /T /F | Out-Null } catch { try { Stop-Process -Id $procesoPanel.Id -Force -ErrorAction SilentlyContinue } catch { } }
+        }
+    }
+}
+
 try {
     Ejecutar-CasosFinalesLineaArchivosCmd
     foreach ($rutaModulo in Cargar-ModulosProduccion) {
@@ -2835,10 +3422,14 @@ try {
     # Los grupos de casos se incorporan en los pasos 5 a 10 del plan.
     Ejecutar-CasosConfiguracion
     Ejecutar-CasosConfiguracionMulticliente
+    Ejecutar-CasosConfiguracionPanelTemporal
+    Ejecutar-CasosFixturesPanelWeb
+    Ejecutar-CasosEstadosOperacionPanel
     Ejecutar-CasosMulticontexto
     Ejecutar-CasosIntegridadTransaccional
     Ejecutar-CasosUtilidades
     Ejecutar-CasosProceso
+    Ejecutar-CasosPanelWeb
     Ejecutar-CasosHistorial
     Ejecutar-CasosEstadoControl
     Ejecutar-CasosValidacionEstado

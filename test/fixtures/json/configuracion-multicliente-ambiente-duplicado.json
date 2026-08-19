@@ -18,11 +18,13 @@
         {
           "id": "testing",
           "nombre": "Testing",
+          "tipo": "test",
           "kbPath": "C:/KBs/SEGUROS_COMERCIAL_TRUNK"
         },
         {
           "id": "testing",
           "nombre": "Testing Duplicado",
+          "tipo": "prod",
           "kbPath": "C:/KBs/SEGUROS_COMERCIAL_PROD"
         }
       ]

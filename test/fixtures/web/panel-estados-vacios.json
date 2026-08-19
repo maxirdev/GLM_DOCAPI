@@ -1,0 +1,7 @@
+{
+    "sinContexto": "Selecciona un cliente y un ambiente para comenzar.",
+    "sinXpz": "No hay XPZ disponible para este ambiente.",
+    "sinInventario": "El inventario de endpoints todavía no fue generado.",
+    "sinDocumentos": "No hay documentos publicados en este contexto.",
+    "sinLogs": "No hay logs disponibles para este contexto."
+}

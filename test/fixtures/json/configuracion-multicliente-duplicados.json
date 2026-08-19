@@ -18,6 +18,7 @@
         {
           "id": "testing",
           "nombre": "Testing",
+          "tipo": "test",
           "kbPath": "C:/KBs/SEGUROS_COMERCIAL_TRUNK"
         }
       ]
@@ -31,6 +32,7 @@
         {
           "id": "otro",
           "nombre": "Otro",
+          "tipo": "test",
           "kbPath": "C:/KBs/OTRA"
         }
       ]

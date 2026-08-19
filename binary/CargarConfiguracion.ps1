@@ -22,6 +22,24 @@ function Test-NombreSlugValido {
     return ($Valor -cmatch '^[a-z0-9][a-z0-9-]*$')
 }
 
+function Clasificar-TipoAmbiente {
+    <#
+    .SYNOPSIS
+    Normaliza el tipo de ambiente declarado en configuracion.json.
+    .DESCRIPTION
+    Acepta unicamente test y prod (sin distinguir mayusculas, con espacios
+    recortados) y devuelve el valor canonico en minusculas. Cualquier otro
+    valor devuelve nulo para que el validador lo rechace con un mensaje claro.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)][AllowEmptyString()][string]$Tipo
+    )
+    $normalizado = ([string]$Tipo).Trim().ToLowerInvariant()
+    if ($normalizado -in @('test', 'prod')) { return $normalizado }
+    return $null
+}
+
 function Validar-ConfiguracionMulticliente {
     <#
     .SYNOPSIS
@@ -51,6 +69,14 @@ function Validar-ConfiguracionMulticliente {
             throw ("La configuracion no define herramientas." + $propiedadHerramienta + ".")
         }
     }
+    $perfilExportacion = 'GX18'
+    $propiedadPerfil = $ConfiguracionRaw.herramientas.PSObject.Properties['geneXusExportProfile']
+    if ($null -ne $propiedadPerfil -and -not [string]::IsNullOrWhiteSpace([string]$propiedadPerfil.Value)) {
+        $perfilExportacion = [string]$propiedadPerfil.Value
+    }
+    if ($perfilExportacion -notin @('GX18', 'Evo3')) {
+        throw "El perfil de exportacion '$perfilExportacion' no es valido. Use GX18 o Evo3."
+    }
     if ($null -eq $ConfiguracionRaw.clientes -or @($ConfiguracionRaw.clientes).Count -eq 0) {
         throw 'La configuracion no define la coleccion clientes.'
     }
@@ -77,7 +103,11 @@ function Validar-ConfiguracionMulticliente {
         if ($null -eq $cliente.ambientes -or @($cliente.ambientes).Count -eq 0) {
             throw ("El cliente '" + $clienteId + "' no define ambientes.")
         }
+        if (@($cliente.ambientes).Count -gt 2) {
+            throw ("El cliente '" + $clienteId + "' no puede tener mas de dos ambientes (un TEST y un PROD).")
+        }
         $ambientesVistos = @{}
+        $tiposAmbiente = @{}
         foreach ($ambiente in @($cliente.ambientes)) {
             $ambienteId = [string]$ambiente.id
             if (-not (Test-NombreSlugValido -Valor $ambienteId)) {
@@ -101,6 +131,15 @@ function Validar-ConfiguracionMulticliente {
                 throw ("Dos ambientes apuntan a la misma ruta de Knowledge Base: " + $kbPathResuelto)
             }
             $kbPathsVistos[$claveKb] = $true
+
+            $tipoAmbiente = Clasificar-TipoAmbiente -Tipo ([string]$ambiente.tipo)
+            if ($null -eq $tipoAmbiente) {
+                throw ("El ambiente '" + $ambienteId + "' del cliente '" + $clienteId + "' no define un tipo valido (test o prod).")
+            }
+            if ($tiposAmbiente.ContainsKey($tipoAmbiente)) {
+                throw ("El cliente '" + $clienteId + "' no puede tener mas de un ambiente de tipo " + $tipoAmbiente + ".")
+            }
+            $tiposAmbiente[$tipoAmbiente] = $true
         }
     }
     return $ConfiguracionRaw
@@ -201,9 +240,16 @@ function Resolver-ContextoConfiguracion {
         $serviciosIgnorados = @($cliente.serviciosIgnorados | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } | ForEach-Object { [string]$_ })
     }
 
+    $perfilExportacion = 'GX18'
+    $propiedadPerfil = $ConfiguracionRaw.herramientas.PSObject.Properties['geneXusExportProfile']
+    if ($null -ne $propiedadPerfil -and -not [string]::IsNullOrWhiteSpace([string]$propiedadPerfil.Value)) {
+        $perfilExportacion = [string]$propiedadPerfil.Value
+    }
+
     $herramientas = [pscustomobject]@{
         GeneXusProgramDir = [string]$ConfiguracionRaw.herramientas.geneXusProgramDir
         MsbuildPath = [string]$ConfiguracionRaw.herramientas.msbuildPath
+        GeneXusExportProfile = $perfilExportacion
         PandocPath = [string]$ConfiguracionRaw.herramientas.pandocPath
         TypstPath = [string]$ConfiguracionRaw.herramientas.typstPath
     }
@@ -216,6 +262,7 @@ function Resolver-ContextoConfiguracion {
         ClienteNombre = [string]$cliente.nombre
         AmbienteId = $AmbienteId
         AmbienteNombre = [string]$ambiente.nombre
+        AmbienteTipo = Clasificar-TipoAmbiente -Tipo ([string]$ambiente.tipo)
         ContextId = $ClienteId + '/' + $AmbienteId
         DirectorioContexto = $directorioContexto
         KbPath = Resolver-RutaRepositorio -Ruta ([string]$ambiente.kbPath) -Raiz $RaizRepositorio

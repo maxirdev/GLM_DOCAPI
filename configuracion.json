@@ -1,57 +1,54 @@
 {
-    "rutas": {
-        "clientesRoot": "clientes"
-    },
-    "exportacion": {
-        "onlyModuleAPIGLM": true
-    },
-    "herramientas": {
-        "geneXusProgramDir": "C:/Program Files (x86)/GeneXus/GeneXus18",
-        "msbuildPath": "C:/Windows/Microsoft.NET/Framework/v4.0.30319/MSBuild.exe",
-        "pandocPath": "binary/tools/pandoc.exe",
-        "typstPath": "binary/tools/typst.exe"
-    },
-    "clientes": [
-        {
-            "id": "trunk",
-            "nombre": "Trunk",
-            "packagename": "glmsuit.comercial.",
-            "serviciosIgnorados": [
-                "APIGLM.WSRedireccionHome",
-                "APIGLM.Comun.WSLiberarSolicitud",
-                "APIGLM.Test.WSTestMaxi",
-                "APIGLM.WSEjemplo"
-            ],
-            "ambientes": [
-                {
-                    "id": "testing",
-                    "nombre": "Testing",
-                    "kbPath": "C:/Users/Teltron/Desktop/OpenCode/Models/TRUNK"
-                }
-            ]
-        },
-		{
-            "id": "lps",
-            "nombre": "LPS",
-            "packagename": "glmsuit.comercial.",
-            "serviciosIgnorados": [
-                "APIGLM.WSRedireccionHome",
-                "APIGLM.Comun.WSLiberarSolicitud",
-                "APIGLM.Test.WSTestMaxi",
-                "APIGLM.WSEjemplo"
-            ],
-            "ambientes": [
-                {
-                    "id": "prue",
-                    "nombre": "Testing",
-                    "kbPath": "C:/Users/Teltron/Desktop/OpenCode/Models/TRUNK/testing"
-                },
-				 {
-                    "id": "prod",
-                    "nombre": "PROD",
-                    "kbPath": "C:/Users/Teltron/Desktop/OpenCode/Models/TRUNK/prod"
-                }
-            ]
-        }
-    ]
+    "rutas":  {
+                  "clientesRoot":  "clientes"
+              },
+    "exportacion":  {
+                        "onlyModuleAPIGLM":  true
+                    },
+    "herramientas":  {
+                         "geneXusProgramDir":  "C:/Program Files (x86)/GeneXus/GeneXus18",
+                         "msbuildPath":  "C:/Windows/Microsoft.NET/Framework/v4.0.30319/MSBuild.exe",
+                         "pandocPath":  "binary/tools/pandoc.exe",
+                         "typstPath":  "binary/tools/typst.exe"
+                     },
+    "clientes":  [
+                     {
+                         "id":  "lps",
+                         "nombre":  "LPS",
+                         "packagename":  "glmsuit.comercial.",
+                         "serviciosIgnorados":  [
+                                                    "APIGLM.WSRedireccionHome",
+                                                    "APIGLM.Comun.WSLiberarSolicitud",
+                                                    "APIGLM.Test.WSTestMaxi",
+                                                    "APIGLM.WSEjemplo"
+                                                ],
+                         "ambientes":  [
+                                           {
+                                               "id":  "prod",
+                                               "nombre":  "PROD",
+                                               "tipo":  "prod",
+                                               "kbPath":  "C:/Users/Teltron/Desktop/OpenCode/Models/TRUNK/prod"
+                                           }
+                                       ]
+                     },
+                     {
+                         "id":  "trunk",
+                         "nombre":  "Trunk",
+                         "packagename":  "glmsuit.comercial.",
+                         "serviciosIgnorados":  [
+                                                    "APIGLM.WSRedireccionHome",
+                                                    "APIGLM.Comun.WSLiberarSolicitud",
+                                                    "APIGLM.Test.WSTestMaxi",
+                                                    "APIGLM.WSEjemplo"
+                                                ],
+                         "ambientes":  [
+                                           {
+                                               "id":  "testing",
+                                               "nombre":  "Testing",
+                                               "tipo":  "test",
+                                               "kbPath":  "C:/Users/Teltron/Desktop/OpenCode/Models/TRUNK"
+                                           }
+                                       ]
+                     }
+                 ]
 }

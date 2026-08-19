@@ -1,4 +1,5 @@
 @echo off
+chcp 65001 >nul
 setlocal DisableDelayedExpansion
 set "Repositorio=%~dp0"
 if "%Repositorio:~-1%"=="\" set "Repositorio=%Repositorio:~0,-1%"
