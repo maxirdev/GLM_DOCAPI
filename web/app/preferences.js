@@ -10,14 +10,14 @@ const defaultUiPreferences = {
     },
     filters: {
         documentacion: '',
-        logs: 'todos'
+        logs: 'ok'
     }
 };
 
 const uiPreferencesStorageKey = 'glm-panel-ui:v1';
 const validTabs = ['estado', 'exportar', 'endpoints', 'documentacion', 'logs', 'configuracion'];
 const validViewModes = ['cards', 'list'];
-const validLogFilters = ['todos', 'error', 'ok', 'advertencia', 'review', 'validacion'];
+const validLogFilters = ['error', 'ok', 'advertencia'];
 const validPageSizes = [25, 50, 100];
 
 function createDefaultUiPreferences() {

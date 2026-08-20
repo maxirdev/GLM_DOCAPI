@@ -6,9 +6,16 @@ function escapeMarkup(value) {
 
 function environmentTypePill(type) {
     const normalizedType = String(type || '').toLowerCase();
-    if (normalizedType === 'prod') { return '<span class="tag tag-produccion">Producción</span>'; }
-    if (normalizedType === 'test') { return '<span class="tag tag-testing">Testing</span>'; }
+    if (normalizedType === 'prod') { return '<span class="tag tag-produccion">PROD</span>'; }
+    if (normalizedType === 'test') { return '<span class="tag tag-testing">TEST</span>'; }
     return '';
+}
+
+function canonicalEnvironmentName(type, fallback) {
+    const normalizedType = String(type || '').toLowerCase();
+    if (normalizedType === 'prod') { return 'PROD'; }
+    if (normalizedType === 'test') { return 'TEST'; }
+    return String(fallback || '');
 }
 
 function actionButton(icon, title, action, clientId, environmentId) {
@@ -56,7 +63,7 @@ class GlmCrudList extends HTMLElement {
             const types = environments.map(function (environment) { return String(environment.tipo || '').toLowerCase(); });
             const canAddEnvironment = !(types.indexOf('test') >= 0 && types.indexOf('prod') >= 0);
             const environmentsMarkup = environments.map(function (environment) {
-                return '<div class="config-row config-environment"><span class="config-env-name"><strong>' + escapeMarkup(environment.nombre) + '</strong>' + environmentTypePill(environment.tipo) + '<small>' + escapeMarkup(environment.id) + ' | KB: ' + escapeMarkup(environment.kbPath) + '</small></span><span class="config-row-actions">' + actionButton('edit', 'Editar ambiente', 'edit-environment', client.id, environment.id) + actionButton('trash', 'Eliminar ambiente', 'delete-environment', client.id, environment.id) + '</span></div>';
+                return '<div class="config-row config-environment"><span class="config-env-name"><strong>' + escapeMarkup(canonicalEnvironmentName(environment.tipo, environment.nombre)) + '</strong>' + environmentTypePill(environment.tipo) + '<small>' + escapeMarkup(environment.id) + ' | KB: ' + escapeMarkup(environment.kbPath) + '</small></span><span class="config-row-actions">' + actionButton('edit', 'Editar ambiente', 'edit-environment', client.id, environment.id) + actionButton('trash', 'Eliminar ambiente', 'delete-environment', client.id, environment.id) + '</span></div>';
             }).join('');
             const addEnvironment = canAddEnvironment ? actionButton('plus', 'Agregar ambiente', 'add-environment', client.id, '') : '';
             return '<section class="config-client"><div class="config-row config-client-heading"><span><strong>' + escapeMarkup(client.nombre) + '</strong><small>' + escapeMarkup(client.id) + ' | ' + escapeMarkup(client.packagename || 'Sin package name') + '</small></span><span class="config-row-actions">' + actionButton('edit', 'Editar cliente', 'edit-client', client.id, '') + actionButton('trash', 'Eliminar cliente', 'delete-client', client.id, '') + addEnvironment + '</span></div><div class="configuration-environments">' + (environmentsMarkup || '<div class="empty-state">No hay ambientes configurados.</div>') + '</div></section>';

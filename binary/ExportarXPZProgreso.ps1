@@ -20,6 +20,18 @@ Inicializar-ConsolaUtf8
 
 $onlyModuleAPIGLM = ($TargetName -eq 'ExportarAPIGLM')
 
+function Obtener-TimeoutMsbuildSegundos {
+    $defaultTimeout = 300
+    $rutaConfiguracion = Join-Path $PSScriptRoot '..\configuracion.json'
+    if (-not (Test-Path -LiteralPath $rutaConfiguracion -PathType Leaf)) { return $defaultTimeout }
+    try {
+        $raw = Get-Content -LiteralPath $rutaConfiguracion -Raw -Encoding UTF8 | ConvertFrom-Json
+        $value = 0
+        if ($raw.panel -and [int]::TryParse([string]$raw.panel.timeoutMsbuildSegundos, [ref]$value) -and $value -gt 0) { return $value }
+    } catch { }
+    return $defaultTimeout
+}
+
 Avisar-InstanciasGeneXus
 
 function Start-Phase {
@@ -65,6 +77,7 @@ function Update-ProcessOutput {
         }
 
         [void]$Buffer.AppendLine($line)
+        $State.LastActivity = Get-Date
         $State.Task = $State.Reader.ReadLineAsync()
     }
 }
@@ -142,6 +155,7 @@ $lastProgressNoticeAt = $processStartedAt
 $progressNoticeInterval = [TimeSpan]::FromMinutes(3)
 $processId = 0
 $scriptExitCode = 1
+$timeoutMsbuild = Obtener-TimeoutMsbuildSegundos
 
 try {
     Start-Phase -Number $phaseNumber -Name $phaseNames[$phaseNumber - 1]
@@ -165,15 +179,22 @@ try {
     $stdoutState = [pscustomobject]@{
         Reader = $process.StandardOutput
         Task = $process.StandardOutput.ReadLineAsync()
+        LastActivity = Get-Date
     }
     $stderrState = [pscustomobject]@{
         Reader = $process.StandardError
         Task = $process.StandardError.ReadLineAsync()
+        LastActivity = Get-Date
     }
 
     while (-not $process.HasExited) {
         Update-ProcessOutput -State $stdoutState -Buffer $processOutput
         Update-ProcessOutput -State $stderrState -Buffer $processOutput
+
+        $lastMsbuildActivity = @($stdoutState.LastActivity, $stderrState.LastActivity) | Sort-Object | Select-Object -Last 1
+        if (((Get-Date) - $lastMsbuildActivity).TotalSeconds -ge $timeoutMsbuild) {
+            throw ('MSBuild supero el timeout de inactividad configurado de ' + $timeoutMsbuild + ' segundos.')
+        }
 
         if (-not $onlyModuleAPIGLM) {
             $elapsed = (Get-Date) - $processStartedAt

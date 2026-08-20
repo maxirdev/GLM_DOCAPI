@@ -19,6 +19,7 @@ $fechaHistorial = (Get-Date).ToString('yyyy-MM-dd')
 $lockActualizacion = $null
 
 . (Join-Path $PSScriptRoot 'GLMUtilidades.ps1')
+. (Join-Path $PSScriptRoot 'ContratoAnalisis.ps1')
 . (Join-Path $PSScriptRoot 'CargarConfiguracion.ps1')
 . (Join-Path $PSScriptRoot 'AnalizarServicio.ps1')
 . (Join-Path $PSScriptRoot 'CargarMultiXPZ.ps1')
@@ -303,7 +304,7 @@ function Obtener-RegistroServicioActual {
         [Parameter(Mandatory = $true)][string]$FullyQualifiedName,
         [Parameter(Mandatory = $true)]$Indice,
         [Parameter(Mandatory = $true)]$Documentacion,
-        [Parameter(Mandatory = $true)]$ServicioAnterior
+        [Parameter(Mandatory = $false)][AllowNull()]$ServicioAnterior
     )
 
     $wrapper = $Indice.PorFqn[$FullyQualifiedName]
@@ -457,6 +458,7 @@ function Marcar-ServicioSinPublicar {
 
 try {
     $lockActualizacion = Adquirir-LockActualizacion -RutaLock $rutaLockActualizacion
+    Limpiar-LogsEjecucion -DirectorioLogs $directorioLogs
 
     $parametrosConfiguracion = @{ ConfigPath = $ConfigPath; ClienteId = $contexto.ClienteId; AmbienteId = $contexto.AmbienteId }
     $configuracion = Cargar-Configuracion @parametrosConfiguracion
@@ -630,7 +632,7 @@ try {
             if (-not $nombresCandidatos.Contains($nombreServicio)) { [void]$nombresCandidatos.Add($nombreServicio) }
         }
         Write-Host 'Regeneracion completa solicitada: se procesaran todos los servicios del inventario.' -ForegroundColor Yellow
-        Write-Host ('Generando documentacion Markdown (.md): ' + $nombresCandidatos.Count + ' servicio(s). Aguarde...') -ForegroundColor Cyan
+        Write-Host ('Generando documentacion Markdown (.md): ' + $nombresCandidatos.Count + ' servicio(s). Aguarde... Continua la generacion de los documentos.') -ForegroundColor Cyan
     }
 
     $nombresManifiesto = @($manifiestoEjecucion.fullyQualifiedNames | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } | Select-Object -Unique)
@@ -645,7 +647,14 @@ try {
 
     $serviciosActuales = @{}
     $analisisActuales = @{}
+    $ultimoHeartbeatAnalisis = Get-Date
+    $indiceServicioAnalisis = 0
     foreach ($servicioInventario in $serviciosInventario) {
+        $indiceServicioAnalisis++
+        if (((Get-Date) - $ultimoHeartbeatAnalisis).TotalSeconds -ge 30) {
+            Write-Host ('Continua el analisis de servicios para Markdown (' + $indiceServicioAnalisis + '/' + $serviciosInventario.Count + '). Aguarde...') -ForegroundColor Cyan
+            $ultimoHeartbeatAnalisis = Get-Date
+        }
         $fullyQualifiedName = [string]$servicioInventario.proceso
         $servicioAnterior = if ($serviciosAnteriores.ContainsKey($fullyQualifiedName)) { $serviciosAnteriores[$fullyQualifiedName] } else { $null }
         if (-not $nombresCandidatos.Contains($fullyQualifiedName)) {
@@ -683,7 +692,7 @@ try {
         $analisisActuales[$fullyQualifiedName] = [pscustomobject]@{ Documentacion = $null; Documento = ''; Error = '' }
     }
 
-    $controlObjetivo = New-ControlVersiones -LineageId $lineageId -SourceFingerprint $sourceFingerprint -ProfileFingerprint $profileFingerprint -Objects @{} -Services $serviciosActuales -Pendientes @{}
+    $controlObjetivo = New-ControlVersiones -LineageId $lineageId -SourceFingerprint $sourceFingerprint -ProfileFingerprint $profileFingerprint -XpzSha256 (Obtener-Sha256Archivo -Ruta $XpzPath) -Objects @{} -Services $serviciosActuales -Pendientes @{}
     foreach ($objetoEfectivo in $indice.ObjetosEfectivos.GetEnumerator()) {
         $controlObjetivo['objects'][$objetoEfectivo.Key] = $objetoEfectivo.Value.Checksum
     }
@@ -729,8 +738,24 @@ try {
     $erroresGeneracion = @{}
     $codigoSalidaOperacion = 0
     if ($nombresParaRegenerar.Count -gt 0) {
+        $registrosContratoAnalisis = New-Object System.Collections.Generic.List[object]
+        foreach ($fullyQualifiedNameContrato in $nombresParaRegenerar) {
+            if (-not $analisisActuales.ContainsKey($fullyQualifiedNameContrato)) { throw ('No existe resultado de analisis para el servicio candidato: ' + $fullyQualifiedNameContrato) }
+            $analisisContrato = $analisisActuales[$fullyQualifiedNameContrato]
+            $servicioContrato = $serviciosActuales[$fullyQualifiedNameContrato]
+            $esIgnoradoContrato = $configuracion.ServiciosIgnorados -contains $fullyQualifiedNameContrato
+            $documentacionContrato = if ($esIgnoradoContrato) { $null } elseif ($analisisContrato.Error) { $null } else { $analisisContrato.Documentacion }
+            $estadoContrato = if ($esIgnoradoContrato) { 'OMITIDO' } elseif ($analisisContrato.Error) { 'ERROR' } else { 'OK' }
+            $mensajeErrorContrato = if ($esIgnoradoContrato) { 'El servicio esta en la lista de serviciosIgnorados de configuracion.json. No se documenta.' } elseif ($analisisContrato.Error) { [string]$analisisContrato.Error } else { '' }
+            $dependenciasContrato = if ($servicioContrato) { @(Obtener-DependenciasServicioControlVersiones -Servicio $servicioContrato) } else { @() }
+            $registroContrato = New-RegistroContratoAnalisis -FullyQualifiedName $fullyQualifiedNameContrato -Documentacion $documentacionContrato -WrapperGuid $(if ($servicioContrato) { [string](Obtener-PropiedadControlVersiones -Objeto $servicioContrato -Nombre 'wrapperGuid') } else { '' }) -DocumentHash $(if ($servicioContrato) { [string](Obtener-PropiedadControlVersiones -Objeto $servicioContrato -Nombre 'documentHash') } else { '' }) -Dependencias $dependenciasContrato -EstadoAnalisis $estadoContrato -MensajeError $mensajeErrorContrato
+            [void]$registrosContratoAnalisis.Add($registroContrato)
+        }
+        $envelopeAnalisisPrevio = New-EnvelopeContratoAnalisis -EjecucionId ([string]$datosManifiestoEjecucion.ejecucionId) -ContextId ([string]$datosManifiestoEjecucion.contextId) -Xpz ([string]$datosManifiestoEjecucion.xpz) -SourceFingerprint $sourceFingerprint -ProfileFingerprint $profileFingerprint -FullyQualifiedNames @($nombresParaRegenerar.ToArray()) -Servicios @($registrosContratoAnalisis.ToArray())
+        Validar-EnvelopeContratoAnalisis -Envelope $envelopeAnalisisPrevio -EjecucionId ([string]$datosManifiestoEjecucion.ejecucionId) -ContextId ([string]$datosManifiestoEjecucion.contextId) -Xpz ([string]$datosManifiestoEjecucion.xpz) -SourceFingerprint $sourceFingerprint -ProfileFingerprint $profileFingerprint -FullyQualifiedNames @($nombresParaRegenerar.ToArray()) | Out-Null
+        Escribir-ArchivoAtomico -Ruta $rutaReviewGeneracion -Contenido (Convertir-EnvelopeContratoAnalisisAJson -Envelope $envelopeAnalisisPrevio) | Out-Null
         if (-not $ForzarRegeneracionCompleta) {
-            Write-Host ('Generando documentacion Markdown (.md): ' + $nombresParaRegenerar.Count + ' servicio(s). Aguarde...') -ForegroundColor Cyan
+        Write-Host ('Generando documentacion Markdown (.md): ' + $nombresParaRegenerar.Count + ' servicio(s). Aguarde... Continua la generacion de los documentos.') -ForegroundColor Cyan
         }
         $argumentosGenerador = @('-ConfigPath', $ConfigPath, '-ManifiestoPath', $rutaManifiestoEjecucion, '-NoInteractivo', '-RutaReview', $rutaReviewGeneracion)
         if ($XpzPath) { $argumentosGenerador += @('-XpzPath', $XpzPath) }
@@ -751,6 +776,9 @@ try {
         } elseif ($resultadoGeneracion -and $resultadoGeneracion.CodigoSalida -eq 2) {
             $codigoSalidaOperacion = 2
         }
+        Write-Host ('Generacion de documentos Markdown finalizada. Resultado: ' + $(if ($resultadoGeneracion) { $resultadoGeneracion.CodigoSalida } else { 'ERROR' }) + '.') -ForegroundColor $(if ($erroresGeneracion.Count -gt 0) { 'Yellow' } else { 'Green' })
+    } else {
+        Write-Host 'No hay documentos Markdown para regenerar; se continua con la validacion de artefactos.' -ForegroundColor DarkGray
     }
 
     $reviewGeneracion = if ($resultadoGeneracion) { [System.IO.File]::ReadAllText($rutaReviewGeneracion) | ConvertFrom-Json } else { $null }
@@ -799,7 +827,7 @@ try {
     $controlObjetivo['pendientes'] = $pendientesObjetivo
 
     if ($rutasMarkdown.Count -gt 0) {
-        Write-Host ('Generando documentos PDF: ' + $nombresParaPdf.Count + ' archivo(s). Aguarde...') -ForegroundColor Cyan
+        Write-Host ('Generando documentos PDF: ' + $nombresParaPdf.Count + ' archivo(s). Aguarde... Continua la generacion de los documentos PDF.') -ForegroundColor Cyan
         $rutaGeneradorPdf = Join-Path $PSScriptRoot 'GenerarPdfServicios.ps1'
         try {
             Establecer-FullyQualifiedNamesManifiesto -RutaManifiesto $rutaManifiestoEjecucion -FullyQualifiedNames @($nombresParaPdf.ToArray()) | Out-Null
@@ -809,6 +837,7 @@ try {
                 Write-Host '  [WARNING] Fallo la regeneracion de uno o mas PDF; se conservaron los PDF vigentes.' -ForegroundColor Yellow
                 if ($codigoSalidaOperacion -eq 0) { $codigoSalidaOperacion = 2 }
             }
+            Write-Host ('Generacion de documentos PDF finalizada. Resultado: ' + $resultadoPdf.CodigoSalida + '.') -ForegroundColor $(if ($resultadoPdf.CodigoSalida -eq 0) { 'Green' } else { 'Yellow' })
         } catch {
             Write-Host ('  [WARNING] No se pudo iniciar la regeneracion PDF: ' + $_.Exception.Message) -ForegroundColor Yellow
             if ($codigoSalidaOperacion -eq 0) { $codigoSalidaOperacion = 1 }
@@ -817,8 +846,9 @@ try {
 
     $entradasHistorial = New-Object System.Collections.Generic.List[object]
     if ($nombresParaPdf.Count -gt 0) {
-        Write-Host 'Validando y publicando Markdown y PDF... aguarde.' -ForegroundColor Cyan
+        Write-Host 'Generacion finalizada. Validando y publicando Markdown y PDF... aguarde.' -ForegroundColor Cyan
     }
+
     foreach ($fullyQualifiedName in @($nombresParaPdf.ToArray())) {
         $nombreArchivo = Obtener-NombreArchivoServicio -FullyQualifiedName $fullyQualifiedName -FqnsInventario $nombresInventario
         $rutaMarkdownStaging = Join-Path ([string]$datosManifiestoEjecucion.staging) ('markdown\' + $nombreArchivo + '.md')
@@ -872,6 +902,8 @@ try {
             Write-Host ('  [CONSERVADO] ' + $fullyQualifiedName + ' | ' + $mensajeError) -ForegroundColor Yellow
         }
     }
+
+    Write-Host ('Publicacion de artefactos finalizada. Se validaron ' + $promocionesExitosas.Count + ' servicio(s).') -ForegroundColor Green
 
     $controlObjetivo['services'] = $serviciosObjetivo
     $controlObjetivo['pendientes'] = $pendientesObjetivo

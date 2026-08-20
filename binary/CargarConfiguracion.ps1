@@ -40,6 +40,39 @@ function Clasificar-TipoAmbiente {
     return $null
 }
 
+function Obtener-IdAmbienteCanonico {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][ValidateSet('test', 'prod')][string]$Tipo
+    )
+    if ($Tipo -eq 'prod') { return 'produccion' }
+    return 'testing'
+}
+
+function Obtener-NombreAmbienteCanonico {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][ValidateSet('test', 'prod')][string]$Tipo
+    )
+    if ($Tipo -eq 'prod') { return 'PROD' }
+    return 'TEST'
+}
+
+function Validar-RutaKnowledgeBase {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$Ruta,
+        [Parameter(Mandatory = $false)][string]$Contexto = 'La Knowledge Base'
+    )
+    if (-not (Test-Path -LiteralPath $Ruta -PathType Container)) {
+        throw ($Contexto + ' no existe: ' + $Ruta)
+    }
+    if (@(Get-ChildItem -LiteralPath $Ruta -Filter '*.gxw' -File -ErrorAction SilentlyContinue).Count -eq 0) {
+        throw ($Contexto + ' debe contener al menos un archivo .gxw: ' + $Ruta)
+    }
+    return $true
+}
+
 function Validar-ConfiguracionMulticliente {
     <#
     .SYNOPSIS
@@ -55,7 +88,8 @@ function Validar-ConfiguracionMulticliente {
     param(
         [Parameter(Mandatory = $true)]$ConfiguracionRaw,
         [Parameter(Mandatory = $true)][string]$RaizRepositorio,
-        [Parameter(Mandatory = $false)][string]$ConfigPath
+        [Parameter(Mandatory = $false)][string]$ConfigPath,
+        [Parameter(Mandatory = $false)][switch]$ValidarContenidoKnowledgeBase
     )
 
     if ($null -eq $ConfiguracionRaw.rutas -or [string]::IsNullOrWhiteSpace([string]$ConfiguracionRaw.rutas.clientesRoot)) {
@@ -126,6 +160,9 @@ function Validar-ConfiguracionMulticliente {
             $ambientesVistos[$claveAmbiente] = $true
 
             $kbPathResuelto = Resolver-RutaRepositorio -Ruta ([string]$ambiente.kbPath) -Raiz $RaizRepositorio
+            if ($ValidarContenidoKnowledgeBase) {
+                Validar-RutaKnowledgeBase -Ruta $kbPathResuelto -Contexto ("La Knowledge Base del ambiente '" + $ambienteId + "' del cliente '" + $clienteId + "'") | Out-Null
+            }
             $claveKb = $kbPathResuelto.ToLowerInvariant()
             if ($kbPathsVistos.ContainsKey($claveKb)) {
                 throw ("Dos ambientes apuntan a la misma ruta de Knowledge Base: " + $kbPathResuelto)
@@ -261,7 +298,7 @@ function Resolver-ContextoConfiguracion {
         ClienteId = $ClienteId
         ClienteNombre = [string]$cliente.nombre
         AmbienteId = $AmbienteId
-        AmbienteNombre = [string]$ambiente.nombre
+        AmbienteNombre = Obtener-NombreAmbienteCanonico -Tipo (Clasificar-TipoAmbiente -Tipo ([string]$ambiente.tipo))
         AmbienteTipo = Clasificar-TipoAmbiente -Tipo ([string]$ambiente.tipo)
         ContextId = $ClienteId + '/' + $AmbienteId
         DirectorioContexto = $directorioContexto

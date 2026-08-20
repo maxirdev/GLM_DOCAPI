@@ -12,7 +12,8 @@ param(
     [Parameter(Mandatory = $true)][string]$Repositorio,
     [Parameter(Mandatory = $true)][string]$XpzActivo,
     [Parameter(Mandatory = $true)][string]$ManifiestoPath,
-    [ValidateSet('abort', 'continue')][string]$PoliticaPendientes = 'abort'
+    [ValidateSet('abort', 'continue')][string]$PoliticaPendientes = 'abort',
+    [ValidateSet('FULL', 'SELECTIVE')][string]$Scope = 'FULL'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -29,6 +30,8 @@ $script:objetosPendientes = @()
 . (Join-Path $PSScriptRoot 'GLMUtilidades.ps1')
 . (Join-Path $PSScriptRoot 'ManifiestoEjecucion.ps1')
 . (Join-Path $PSScriptRoot 'CargarConfiguracion.ps1')
+. (Join-Path $PSScriptRoot 'AnalizarServicio.ps1')
+. (Join-Path $PSScriptRoot 'CargarMultiXPZ.ps1')
 
 Inicializar-ConsolaUtf8
 
@@ -62,6 +65,24 @@ function Obtener-DetalleSinReporte {
     $lineasUltimas = @($script:ultimaSalida | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Last 3)
     if ($lineasUltimas.Count -gt 0) { return (' Salida: ' + ($lineasUltimas -join ' | ')) }
     return ''
+}
+
+function Test-ReporteValidacionReutilizable {
+    param(
+        [Parameter(Mandatory = $true)]$Reporte,
+        [Parameter(Mandatory = $true)][string]$Xpz,
+        [Parameter(Mandatory = $true)][string]$RutaConfiguracion,
+        [Parameter(Mandatory = $true)][string]$Raiz
+    )
+    if ($null -eq $Reporte -or $null -eq $Reporte.Datos -or $null -eq $Reporte.Datos.ejecucion) { return $false }
+    if ([string]$Reporte.Datos.ejecucion.scope -ne 'FULL') { return $false }
+    if ([int]$Reporte.Datos.ejecucion.pendientes -ne 0) { return $false }
+    if ([string]$Reporte.Datos.ejecucion.sourceFingerprint -notmatch '^[0-9a-fA-F]{64}$') { return $false }
+    if ([string]$Reporte.Datos.ejecucion.configurationFingerprint -notmatch '^[0-9a-fA-F]{64}$') { return $false }
+    $indiceFuente = Cargar-IndiceMultiXPZ -RutaXpzPrincipal $Xpz
+    $sourceFingerprint = Obtener-Sha256TextoNormalizado -Texto ((@($indiceFuente.Manifiesto | Sort-Object Orden | ForEach-Object { '{0}|{1}|{2}' -f $_.Orden, $_.RutaRelativa, $_.Sha256 }) -join "`n") + "`n")
+    $configurationFingerprint = Obtener-Sha256ArchivoNormalizado -Ruta $RutaConfiguracion
+    return ([string]$Reporte.Datos.ejecucion.sourceFingerprint -ceq $sourceFingerprint -and [string]$Reporte.Datos.ejecucion.configurationFingerprint -ceq $configurationFingerprint)
 }
 
 function Preguntar-Continuar {
@@ -100,6 +121,7 @@ try {
     $rutaConfiguracion = [System.IO.Path]::GetFullPath([string]$manifiestoEjecucion.configPath)
     $rutaDirectorioLogs = [System.IO.Path]::GetFullPath([string]$manifiestoEjecucion.logsDirectory)
     Asegurar-Directorio -Ruta $rutaDirectorioLogs
+    Limpiar-LogsEjecucion -DirectorioLogs $rutaDirectorioLogs
     if (-not (Test-Path -LiteralPath $rutaConfiguracion -PathType Leaf)) {
         throw ('No existe la configuracion del manifiesto: ' + $rutaConfiguracion)
     }
@@ -130,7 +152,13 @@ try {
 
     Write-Host ''
     Write-Host 'Validando completitud del XPZ...' -ForegroundColor Cyan
-    $codigoValidacion = Invocar-Script -RutaScript $rutaScriptValidacion -Argumentos @('-ConfigPath', $rutaConfiguracion, '-XpzPath', $XpzActivo, '-ManifiestoPath', $rutaManifiestoEjecucion)
+    $reporteSeleccionado = Obtener-ReporteValidacionMasReciente -DirectorioLogs $rutaDirectorioLogs -RutaXpz $XpzActivo -RaizRepositorio $raizRepositorio
+    $reporteReutilizable = if ($null -ne $reporteSeleccionado) { Test-ReporteValidacionReutilizable -Reporte $reporteSeleccionado -Xpz $XpzActivo -RutaConfiguracion $rutaConfiguracion -Raiz $raizRepositorio } else { $false }
+    if ($reporteReutilizable) {
+        Write-Host 'El XPZ ya cuenta con una validacion completa vigente; se reutiliza el reporte.' -ForegroundColor Green
+        exit 0
+    }
+    $codigoValidacion = Invocar-Script -RutaScript $rutaScriptValidacion -Argumentos @('-ConfigPath', $rutaConfiguracion, '-XpzPath', $XpzActivo, '-ManifiestoPath', $rutaManifiestoEjecucion, '-Scope', $Scope)
     $reporteSeleccionado = Obtener-ReporteValidacionMasReciente -DirectorioLogs $rutaDirectorioLogs -RutaXpz $XpzActivo -RaizRepositorio $raizRepositorio -EjecucionId ([string]$manifiestoEjecucion.ejecucionId)
     if ($codigoValidacion -eq 0) {
         Write-Host ''
@@ -180,7 +208,7 @@ try {
 
         Write-Host ''
         Write-Host ("Revalidando completitud (ciclo " + $ciclo + " de " + $maximoCiclos + ")...") -ForegroundColor Cyan
-        $codigoRevalidacion = Invocar-Script -RutaScript $rutaScriptValidacion -Argumentos @('-ConfigPath', $rutaConfiguracion, '-XpzPath', $XpzActivo, '-ManifiestoPath', $rutaManifiestoEjecucion)
+        $codigoRevalidacion = Invocar-Script -RutaScript $rutaScriptValidacion -Argumentos @('-ConfigPath', $rutaConfiguracion, '-XpzPath', $XpzActivo, '-ManifiestoPath', $rutaManifiestoEjecucion, '-Scope', $Scope)
         $nuevoReporte = Obtener-ReporteValidacionMasReciente -DirectorioLogs $rutaDirectorioLogs -RutaXpz $XpzActivo -RaizRepositorio $raizRepositorio -EjecucionId ([string]$manifiestoEjecucion.ejecucionId)
         if ($codigoRevalidacion -eq 0) {
             Write-Host ''

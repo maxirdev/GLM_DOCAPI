@@ -5,32 +5,19 @@
     "exportacion":  {
                         "onlyModuleAPIGLM":  true
                     },
+    "panel":  {
+                  "timeoutOperacionSegundos":  600,
+                  "timeoutMsbuildSegundos":  300,
+                  "maxPdfConcurrentProcesses":  2
+              },
     "herramientas":  {
                          "geneXusProgramDir":  "C:/Program Files (x86)/GeneXus/GeneXus18",
                          "msbuildPath":  "C:/Windows/Microsoft.NET/Framework/v4.0.30319/MSBuild.exe",
+                         "geneXusExportProfile":  "Gx18",
                          "pandocPath":  "binary/tools/pandoc.exe",
                          "typstPath":  "binary/tools/typst.exe"
                      },
     "clientes":  [
-                     {
-                         "id":  "lps",
-                         "nombre":  "LPS",
-                         "packagename":  "glmsuit.comercial.",
-                         "serviciosIgnorados":  [
-                                                    "APIGLM.WSRedireccionHome",
-                                                    "APIGLM.Comun.WSLiberarSolicitud",
-                                                    "APIGLM.Test.WSTestMaxi",
-                                                    "APIGLM.WSEjemplo"
-                                                ],
-                         "ambientes":  [
-                                           {
-                                               "id":  "prod",
-                                               "nombre":  "PROD",
-                                               "tipo":  "prod",
-                                               "kbPath":  "C:/Users/Teltron/Desktop/OpenCode/Models/TRUNK/prod"
-                                           }
-                                       ]
-                     },
                      {
                          "id":  "trunk",
                          "nombre":  "Trunk",
@@ -44,9 +31,9 @@
                          "ambientes":  [
                                            {
                                                "id":  "testing",
-                                               "nombre":  "Testing",
+                                               "nombre":  "TEST",
                                                "tipo":  "test",
-                                               "kbPath":  "C:/Users/Teltron/Desktop/OpenCode/Models/TRUNK"
+                                               "kbPath":  "C:/KBs/SEGUROS_COMERCIAL_TRUNK"
                                            }
                                        ]
                      }

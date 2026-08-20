@@ -474,7 +474,7 @@ function Escribir-HistorialVersionado {
         [Parameter(Mandatory = $true)][string]$RutaHistorial,
         [Parameter(Mandatory = $true)][string]$LineageId,
         [Parameter(Mandatory = $true)][string]$Creado,
-        [Parameter(Mandatory = $true)][object[]]$Entradas,
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][object[]]$Entradas,
         [Parameter(Mandatory = $false)][switch]$Reemplazar
     )
 

@@ -9,7 +9,7 @@ import {
 import { escapeHtml, getProperty, normalize, renderTextList } from './render-utils.js';
 import { registerBaseStateComponents } from './components/base-states.js';
 import { registerServiceComponents } from './components/service-components.js';
-import { registerOperationConsole } from './components/operation-console.js';
+import { registerOperationConsole } from './components/operation-console.js?v=20260820-pdf-oneclick-v6';
 import { registerCrudList } from './components/crud-list.js';
 import { createPanelViews } from './views/index.js';
 import { registerAppShell } from './components/app-shell.js';
@@ -37,6 +37,6 @@ document.documentElement.setAttribute('data-theme', loadedUiPreferences.theme);
 window.panelUiPreferences.current = loadedUiPreferences;
 
 const legacyApplicationScript = document.createElement('script');
-legacyApplicationScript.src = 'app.js?v=20260820-modular';
+legacyApplicationScript.src = 'app.js?v=20260820-pdf-oneclick-v6';
 legacyApplicationScript.async = false;
 document.body.appendChild(legacyApplicationScript);

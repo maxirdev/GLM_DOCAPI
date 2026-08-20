@@ -153,8 +153,10 @@ try {
 Escribir-Estado -Estado OK -Mensaje ("Contexto: " + $contexto.ContextId + " (" + $contexto.ClienteNombre + " / " + $contexto.AmbienteNombre + ")")
 Escribir-Estado -Estado OK -Mensaje ("Knowledge Base: " + $contexto.KbPath)
 
-if (-not (Test-Path -LiteralPath $contexto.KbPath -PathType Container)) {
-    Escribir-Estado -Estado ERROR -Mensaje ("No existe la Knowledge Base del ambiente " + $contexto.AmbienteId + ": " + $contexto.KbPath)
+try {
+    Validar-RutaKnowledgeBase -Ruta $contexto.KbPath -Contexto ("La Knowledge Base del ambiente " + $contexto.AmbienteId) | Out-Null
+} catch {
+    Escribir-Estado -Estado ERROR -Mensaje $_.Exception.Message
     exit 1
 }
 

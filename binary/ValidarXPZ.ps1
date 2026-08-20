@@ -7,7 +7,8 @@
 param(
     [string]$ConfigPath,
     [string]$XpzPath,
-    [string]$ManifiestoPath
+    [string]$ManifiestoPath,
+    [ValidateSet('FULL', 'SELECTIVE')][string]$Scope = 'FULL'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -422,7 +423,10 @@ function Write-ReporteValidacion {
         [Parameter(Mandatory = $true)]$IndiceUnificado,
         [Parameter(Mandatory = $true)][string]$EjecucionId,
         [Parameter(Mandatory = $false)][string]$RutaManifiesto = '',
-        [Parameter(Mandatory = $false)][AllowEmptyString()][string]$ContextId = ''
+        [Parameter(Mandatory = $false)][AllowEmptyString()][string]$ContextId = '',
+        [Parameter(Mandatory = $false)][AllowEmptyString()][string]$SourceFingerprint = '',
+        [Parameter(Mandatory = $false)][AllowEmptyString()][string]$ConfigurationFingerprint = '',
+        [Parameter(Mandatory = $false)][string]$Scope = 'FULL'
     )
 
     $pendientes = @($Resultados | Where-Object { $_.esPendiente })
@@ -438,8 +442,11 @@ function Write-ReporteValidacion {
         ejecucion = [pscustomobject]@{
             id = $EjecucionId
             contextId = $ContextId
+            scope = $Scope
             xpz = $xpzPrincipal
             manifiesto = $RutaManifiesto
+            sourceFingerprint = $SourceFingerprint
+            configurationFingerprint = $ConfigurationFingerprint
             inicio = $StartTime.ToString('s')
             fin = $FinEjecucion.ToString('s')
             total = $Resultados.Count
@@ -485,12 +492,19 @@ try {
         $cargarConfiguracionParametros.AmbienteId = $ambienteId
     }
     $configuracion = Cargar-Configuracion @cargarConfiguracionParametros
+    if (-not $ManifiestoPath) {
+        Limpiar-LogsEjecucion -DirectorioLogs $configuracion.DirectorioLogs
+    }
     if (-not $XpzPath) { $XpzPath = $configuracion.XpzPath }
 
     $ignoradosConfig = @($configuracion.ServiciosIgnorados)
     $indiceUnificado = Cargar-IndiceMultiXPZ -RutaXpzPrincipal $XpzPath
     $endpointsInventario = @(Obtener-ServiciosHttpDesdeIndice -Indice $indiceUnificado)
     $endpointsEfectivos = @($endpointsInventario | Where-Object { $ignoradosConfig -notcontains $_.proceso })
+    if ($Scope -eq 'SELECTIVE' -and $manifiestoEjecucion -and @($manifiestoEjecucion.fullyQualifiedNames).Count -gt 0) {
+        $seleccionados = @($manifiestoEjecucion.fullyQualifiedNames | ForEach-Object { [string]$_ })
+        $endpointsEfectivos = @($endpointsEfectivos | Where-Object { $_.proceso -in $seleccionados })
+    }
     $endpointsIgnorados = @($endpointsInventario | Where-Object { $ignoradosConfig -contains $_.proceso })
 
     if ($endpointsIgnorados.Count -gt 0) {
@@ -525,7 +539,9 @@ try {
     $marcaTemporal = $finEjecucion.ToString('yyyyMMdd-HHmmss')
     $rutaReporte = Join-Path $DirectorioLogs ($ejecucionId + '-validacion-xpz.json')
 
-    Write-ReporteValidacion -Resultados $resultados -RutaReporte $rutaReporte -StartTime $StartTime -FinEjecucion $finEjecucion -IndiceUnificado $indiceUnificado -EjecucionId $ejecucionId -RutaManifiesto $ManifiestoPath -ContextId $contextId
+    $sourceFingerprint = Obtener-Sha256TextoNormalizado -Texto ((@($indiceUnificado.Manifiesto | Sort-Object Orden | ForEach-Object { '{0}|{1}|{2}' -f $_.Orden, $_.RutaRelativa, $_.Sha256 }) -join "`n") + "`n")
+    $configurationFingerprint = Obtener-Sha256ArchivoNormalizado -Ruta $cargarConfiguracionParametros.ConfigPath
+    Write-ReporteValidacion -Resultados $resultados -RutaReporte $rutaReporte -StartTime $StartTime -FinEjecucion $finEjecucion -IndiceUnificado $indiceUnificado -EjecucionId $ejecucionId -RutaManifiesto $ManifiestoPath -ContextId $contextId -SourceFingerprint $sourceFingerprint -ConfigurationFingerprint $configurationFingerprint -Scope $Scope
 
     $ok = @($resultados | Where-Object { -not $_.esPendiente }).Count
     $pendientes = @($resultados | Where-Object { $_.esPendiente }).Count

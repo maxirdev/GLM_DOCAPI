@@ -82,7 +82,16 @@ function Obtener-Sha256Archivo {
         [Parameter(Mandatory = $true)][string]$Ruta
     )
 
-    return (Get-FileHash -LiteralPath $Ruta -Algorithm SHA256).Hash.ToLowerInvariant()
+    $flujo = $null
+    $sha256 = $null
+    try {
+        $flujo = [System.IO.File]::OpenRead($Ruta)
+        $sha256 = [System.Security.Cryptography.SHA256]::Create()
+        return (([System.BitConverter]::ToString($sha256.ComputeHash($flujo))) -replace '-', '').ToLowerInvariant()
+    } finally {
+        if ($null -ne $flujo) { $flujo.Dispose() }
+        if ($null -ne $sha256) { $sha256.Dispose() }
+    }
 }
 
 function Asegurar-Directorio {
@@ -93,6 +102,22 @@ function Asegurar-Directorio {
 
     if (-not (Test-Path -LiteralPath $Ruta -PathType Container)) {
         New-Item -ItemType Directory -Path $Ruta -Force | Out-Null
+    }
+}
+
+function Limpiar-LogsEjecucion {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$DirectorioLogs
+    )
+
+    if ([string]::IsNullOrWhiteSpace($DirectorioLogs)) {
+        throw 'No se puede limpiar un directorio de logs vacio.'
+    }
+    $rutaCompleta = [System.IO.Path]::GetFullPath($DirectorioLogs)
+    Asegurar-Directorio -Ruta $rutaCompleta
+    foreach ($entrada in @(Get-ChildItem -LiteralPath $rutaCompleta -Force -ErrorAction Stop)) {
+        Remove-Item -LiteralPath $entrada.FullName -Recurse -Force -ErrorAction Stop
     }
 }
 
@@ -301,26 +326,77 @@ function Invocar-ScriptHijo {
     $lineas = New-Object System.Collections.Generic.List[string]
     $preferenciaErrorPrevia = $ErrorActionPreference
     $colorBase = [Console]::ForegroundColor
-    $ErrorActionPreference = 'Continue'
+    $proceso = $null
+    $salidaBuilder = New-Object System.Text.StringBuilder
+    $errorBuilder = New-Object System.Text.StringBuilder
+    $inicio = Get-Date
+    $ultimoHeartbeat = $inicio
+    $codigoProceso = 1
     try {
-        & $rutaPowerShell -NoProfile -ExecutionPolicy Bypass -File $RutaScript @Argumentos 2>&1 | ForEach-Object {
-            $texto = $_.ToString()
-            $lineas.Add($texto)
-            if (-not $NoImprimir) {
-                if ($_ -is [System.Management.Automation.ErrorRecord]) {
-                    Write-Host $texto -ForegroundColor Red
-                } elseif ($texto -match '(?i)^\s*error\s*:') {
-                    Write-Host $texto -ForegroundColor Red
-                } else {
-                    Write-Host $texto
+        $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+        $startInfo.FileName = $rutaPowerShell
+        $startInfo.Arguments = ((@('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $RutaScript) + @($Argumentos)) | ForEach-Object { Quote-ProcessArgument -Valor ([string]$_) }) -join ' '
+        $startInfo.UseShellExecute = $false
+        $startInfo.CreateNoWindow = $true
+        $startInfo.RedirectStandardOutput = $true
+        $startInfo.RedirectStandardError = $true
+        $proceso = New-Object System.Diagnostics.Process
+        $proceso.StartInfo = $startInfo
+        if (-not $proceso.Start()) { throw ('No se pudo iniciar el script hijo: ' + $RutaScript) }
+        $stdout = [pscustomobject]@{ Reader = $proceso.StandardOutput; Task = $proceso.StandardOutput.ReadLineAsync(); LastLine = '' }
+        $stderr = [pscustomobject]@{ Reader = $proceso.StandardError; Task = $proceso.StandardError.ReadLineAsync(); LastLine = '' }
+        $leer = {
+            param($estado, [System.Text.StringBuilder]$buffer, [bool]$esError)
+            while ($null -ne $estado.Task -and $estado.Task.IsCompleted) {
+                $texto = $estado.Task.GetAwaiter().GetResult()
+                if ($null -eq $texto) { $estado.Task = $null; break }
+                [void]$buffer.AppendLine($texto)
+                [void]$lineas.Add($texto)
+                $estado.LastLine = $texto
+                if (-not $NoImprimir) {
+                    Write-Host $texto -ForegroundColor $(if ($esError -or $texto -match '(?i)^\s*error\s*:') { 'Red' } else { $colorBase })
                 }
+                $estado.Task = $estado.Reader.ReadLineAsync()
             }
         }
+        while (-not $proceso.HasExited) {
+            & $leer $stdout $salidaBuilder $false
+            & $leer $stderr $errorBuilder $true
+            if (((Get-Date) - $ultimoHeartbeat).TotalSeconds -ge 30) {
+                $nombreScript = [System.IO.Path]::GetFileName($RutaScript)
+                $mensajeHeartbeat = switch -Regex ($nombreScript) {
+                    '^ValidarXPZ\.ps1$' { 'Validando XPZ... se continua con la validacion.'; break }
+                    '^GenerarDocumento\.ps1$' { 'Continua la generacion de los documentos Markdown. Aguarde...'; break }
+                    '^GenerarPdfServicios\.ps1$' { 'Continua la generacion de los documentos PDF. Aguarde...'; break }
+                    default { 'El proceso continua en ejecucion. Aguarde...'; break }
+                }
+                Write-Host $mensajeHeartbeat -ForegroundColor Cyan
+                $ultimoHeartbeat = Get-Date
+            }
+            Start-Sleep -Milliseconds 250
+            $proceso.Refresh()
+        }
+        $proceso.WaitForExit()
+        while ($null -ne $stdout.Task -or $null -ne $stderr.Task) {
+            & $leer $stdout $salidaBuilder $false
+            & $leer $stderr $errorBuilder $true
+            if ($null -ne $stdout.Task -or $null -ne $stderr.Task) { Start-Sleep -Milliseconds 10 }
+        }
     } finally {
+        if ($proceso) {
+            try {
+                if (-not $proceso.HasExited) {
+                    & "$env:SystemRoot\System32\taskkill.exe" /PID $proceso.Id /T /F 2>&1 | Out-Null
+                    $proceso.WaitForExit(5000) | Out-Null
+                }
+            } catch { }
+            try { $codigoProceso = [int]$proceso.ExitCode } catch { $codigoProceso = 1 }
+            $proceso.Dispose()
+        }
         $ErrorActionPreference = $preferenciaErrorPrevia
         Restaurar-ColorConsola -ColorBase $colorBase
     }
-    $codigoSalida = [int]$LASTEXITCODE
+    $codigoSalida = $codigoProceso
     if ($NormalizarCodigo) {
         if ($codigoSalida -notin @(0, 1, 2, 3)) { $codigoSalida = 1 }
     }

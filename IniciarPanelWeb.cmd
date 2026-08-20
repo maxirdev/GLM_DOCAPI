@@ -10,7 +10,7 @@ if not exist "%PowerShell%" (
 )
 set "Puerto=8123"
 set "UrlPanel=http://127.0.0.1:%Puerto%/"
-"%PowerShell%" -NoProfile -Command "$ErrorActionPreference='Stop'; $apiOk=$false; try { $r=Invoke-WebRequest -UseBasicParsing -Uri '%UrlPanel%api/estado' -TimeoutSec 2; $apiOk=$r.StatusCode -eq 200 -and $r.Content -match '\"ok\":true' } catch {}; if(-not $apiOk){ exit 1 }; try { $m=Invoke-WebRequest -UseBasicParsing -Uri '%UrlPanel%app/main.js?v=20260819' -TimeoutSec 2; if($m.StatusCode -eq 200 -and $m.Content -match 'panelApiClient'){ exit 0 } } catch {}; exit 2"
+"%PowerShell%" -NoProfile -Command "$ErrorActionPreference='Stop'; $apiOk=$false; try { $r=Invoke-WebRequest -UseBasicParsing -Uri '%UrlPanel%api/estado' -TimeoutSec 2; $apiOk=$r.StatusCode -eq 200 -and $r.Content -match '\"ok\":true' } catch {}; if(-not $apiOk){ exit 1 }; if($r.Content -match '20260820-client-export-profile'){ exit 0 }; exit 2"
 set "EstadoPanel=%ERRORLEVEL%"
 if "%EstadoPanel%"=="2" (
     "%PowerShell%" -NoProfile -Command "$ErrorActionPreference='Stop'; $repo=[System.IO.Path]::GetFullPath('%Repositorio%'); $procesos=Get-CimInstance Win32_Process -Filter \"Name = 'powershell.exe'\" | Where-Object { $_.CommandLine -and $_.CommandLine -match 'ServidorPanelWeb\.ps1' -and $_.CommandLine -like ('*' + $repo + '*') }; foreach($proceso in $procesos){ Stop-Process -Id $proceso.ProcessId -Force }"

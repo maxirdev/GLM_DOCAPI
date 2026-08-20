@@ -317,7 +317,7 @@ function Ejecutar-CasosConfiguracionMulticliente {
         $contextoTrunk.ClienteId -eq 'trunk' -and
         $contextoTrunk.ClienteNombre -eq 'Trunk' -and
         $contextoTrunk.AmbienteId -eq 'testing' -and
-        $contextoTrunk.AmbienteNombre -eq 'Testing' -and
+        $contextoTrunk.AmbienteNombre -eq 'TEST' -and
         $contextoTrunk.DirectorioContexto -eq $directorioContextoEsperado -and
         $contextoTrunk.KbPath -eq 'C:\KBs\SEGUROS_COMERCIAL_TRUNK' -and
         $contextoTrunk.PackageName -eq 'glmsuit.comercial.' -and
@@ -708,6 +708,9 @@ function Ejecutar-CasosMulticontexto {
         $resultadoPreflight = Invocar-ScriptHijo -RutaScript $rutaValidador -Argumentos @('-Repositorio', $RaizRepositorio, '-ConfigPath', $rutaConfiguracionMulti, '-ClienteId', $contextoPrueba.ClienteId, '-AmbienteId', $contextoPrueba.AmbienteId) -NoImprimir
         if ($resultadoPreflight.CodigoSalida -ne 0) { $preflightsOk = $false }
         $contexto = Cargar-Configuracion -ConfigPath $rutaConfiguracionMulti -ClienteId $contextoPrueba.ClienteId -AmbienteId $contextoPrueba.AmbienteId
+        # El preflight productivo crea este arbol; se asegura la carpeta de
+        # destino para que el fixture no falle antes de probar el pipeline.
+        New-DirectorioSiNoExiste -Directorio $contexto.DirectorioXpz | Out-Null
         Copy-Item -LiteralPath $contextoPrueba.Xpz -Destination (Join-Path $contexto.DirectorioXpz ([System.IO.Path]::GetFileName($contextoPrueba.Xpz))) -Force
         $contextosResueltos[$contextoPrueba.ClienteId + '/' + $contextoPrueba.AmbienteId] = $contexto
     }
@@ -3051,6 +3054,11 @@ function Ejecutar-CasosConfiguracionPanelTemporal {
     $rutaConfiguracionTemporal = Join-Path $directorioPruebaPanel 'configuracion.json'
     New-DirectorioSiNoExiste -Directorio $directorioPruebaPanel | Out-Null
     Copy-Item -LiteralPath $rutaFixtureConfiguracion -Destination $rutaConfiguracionTemporal -Force
+    $configuracionTemporal = Get-Content -LiteralPath $rutaConfiguracionTemporal -Raw | ConvertFrom-Json
+    $rutaKbExistente = Join-Path $directorioPruebaPanel 'kb-cliente-existente'
+    New-DirectorioSiNoExiste -Directorio $rutaKbExistente | Out-Null
+    $configuracionTemporal.clientes[0].ambientes[0].kbPath = ($rutaKbExistente -replace '\\', '/')
+    Escribir-TextoUtf8SinBom -Ruta $rutaConfiguracionTemporal -Contenido ($configuracionTemporal | ConvertTo-Json -Depth 10)
 
     $puerto = 8240 + (Get-Random -Minimum 0 -Maximum 100)
     $rutaPowerShell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
@@ -3082,18 +3090,23 @@ function Ejecutar-CasosConfiguracionPanelTemporal {
         $contenidoInicial = [System.IO.File]::ReadAllBytes($rutaConfiguracionTemporal)
         Test-Asercion -Id 'configuracionPanelTemporal.lectura' -Condicion ([bool]$respuestaConfiguracion.ok -and $hashInicial -match '^[0-9a-f]{64}$' -and $contenidoInicial.Length -gt 0) -DetalleExito 'La API lee el hash y el contenido de la copia temporal.' -DetalleFallo 'La API no leyo correctamente la configuracion temporal.'
 
+        # La API valida que la KB declarada exista. El fixture debe preparar una
+        # ruta temporal valida para probar la mutacion, no una ruta de maquina.
+        $rutaKbNueva = Join-Path $directorioPruebaPanel 'kb-nuevo-cliente'
+        New-DirectorioSiNoExiste -Directorio $rutaKbNueva | Out-Null
         $payloadCliente = [ordered]@{
             configHash = $hashInicial
             data = [ordered]@{
                 id = 'nuevo-cliente'
                 nombre = 'Nuevo cliente'
                 packagename = 'nuevo.'
+                geneXusExportProfile = 'Gx18'
                 serviciosIgnorados = @()
                 ambientes = @([ordered]@{
                     id = 'testing'
                     nombre = 'Testing'
                     tipo = 'test'
-                    kbPath = 'C:/KBs/NUEVO_CLIENTE'
+                    kbPath = ($rutaKbNueva -replace '\\', '/')
                 })
             }
         }
@@ -3102,11 +3115,12 @@ function Ejecutar-CasosConfiguracionPanelTemporal {
         $datosAlta = $respuestaAlta.Content | ConvertFrom-Json
         $contenidoPosterior = [System.IO.File]::ReadAllBytes($rutaConfiguracionTemporal)
         $configuracionPosterior = Get-Content -LiteralPath $rutaConfiguracionTemporal -Raw | ConvertFrom-Json
-        $clienteNuevo = @($configuracionPosterior.clientes | Where-Object { $_.id -eq 'nuevo-cliente' })
-        Test-Asercion -Id 'configuracionPanelTemporal.escritura' -Condicion (
-            $respuestaAlta.StatusCode -eq 200 -and
-            [bool]$datosAlta.ok -and
-            $clienteNuevo.Count -eq 1 -and
+            $clienteNuevo = @($configuracionPosterior.clientes | Where-Object { $_.id -eq 'nuevo-cliente' })
+            Test-Asercion -Id 'configuracionPanelTemporal.escritura' -Condicion (
+                $respuestaAlta.StatusCode -eq 200 -and
+                [bool]$datosAlta.ok -and
+                [string]$configuracionPosterior.herramientas.geneXusExportProfile -eq 'Gx18' -and
+                $clienteNuevo.Count -eq 1 -and
             @($clienteNuevo[0].ambientes).Count -eq 1 -and
             $clienteNuevo[0].serviciosIgnorados.Count -eq 0 -and
             -not [System.Linq.Enumerable]::SequenceEqual($contenidoInicial, $contenidoPosterior)
@@ -3150,7 +3164,19 @@ function Ejecutar-CasosConfiguracionPanelTemporal {
         $codigoErrorKb = if ($respuestaErrorKb -and $respuestaErrorKb.Exception.Response) { [int]$respuestaErrorKb.Exception.Response.StatusCode.value__ } else { 200 }
         Test-Asercion -Id 'configuracionPanelTemporal.kbDuplicadaAtomica' -Condicion ($codigoErrorKb -eq 400 -and [System.Linq.Enumerable]::SequenceEqual($contenidoAntesError, $contenidoDespuesKb)) -DetalleExito 'Una KB duplicada se rechaza antes de escribir y conserva el archivo.' -DetalleFallo 'Una KB duplicada modifico el archivo o no devolvio 400.'
     } catch {
-        Registrar-Caso -Id 'configuracionPanelTemporal.error' -Estado 'FAIL' -Detalle ($etapaPrueba + ': ' + $_.Exception.Message)
+        $detalleError = $etapaPrueba + ': ' + $_.Exception.Message
+        try {
+            if ($_.Exception.Response) {
+                $stream = $_.Exception.Response.GetResponseStream()
+                if ($stream) {
+                    $reader = New-Object System.IO.StreamReader($stream)
+                    $bodyError = $reader.ReadToEnd()
+                    $reader.Dispose()
+                    if ($bodyError) { $detalleError += ' | respuesta: ' + $bodyError }
+                }
+            }
+        } catch { }
+        Registrar-Caso -Id 'configuracionPanelTemporal.error' -Estado 'FAIL' -Detalle $detalleError
     } finally {
         if ($procesoPanel -and -not $procesoPanel.HasExited) {
             try { & taskkill.exe /PID $procesoPanel.Id /T /F | Out-Null } catch { try { Stop-Process -Id $procesoPanel.Id -Force -ErrorAction SilentlyContinue } catch { } }
@@ -3274,13 +3300,14 @@ function Ejecutar-CasosPanelWeb {
     ) -DetalleExito 'Los trabajos escriben manifiesto y salida completa en Logs/operaciones sin exponer rutas físicas.' -DetalleFallo 'Falta la persistencia contextual del manifiesto o la captura completa de stdout/stderr.'
     Test-Asercion -Id 'panelWeb.catalogoLogsOperaciones' -Condicion (
         $contenidoServidorPanel -match 'function Get-OperationLogCatalog' -and
+        $contenidoServidorPanel -match 'function Get-ContextLogCatalog' -and
         $contenidoServidorPanel -match 'function Get-QueryValue' -and
         $contenidoServidorPanel -match 'Group-Object tipo' -and
         $contenidoServidorPanel -match 'historial' -and
         $contenidoServidorPanel -match 'severidad' -and
-        $contenidoServidorPanel -match 'resumen = \$operationLogs' -and
+        $contenidoServidorPanel -match 'resumen = \$logs' -and
         $contenidoServidorPanel -notmatch 'ruta = \$logPath'
-    ) -DetalleExito 'GET /api/logs resume por tipo, filtra por operación y severidad y devuelve nombres lógicos.' -DetalleFallo 'El catálogo de Logs no implementa resumen, historial, filtros o aislamiento de rutas.'
+    ) -DetalleExito 'GET /api/logs resume por tipo, filtra por operación y severidad, expone los archivos de contexto (errores, reportes) y devuelve nombres lógicos.' -DetalleFallo 'El catálogo de Logs no implementa resumen, historial, filtros, archivos de contexto o aislamiento de rutas.'
     Test-Asercion -Id 'panelWeb.trazabilidadMutaciones' -Condicion (
         $contenidoServidorPanel -match "Write-PanelMutationOperation -Operation 'ACTIVAR_CONTEXTO'" -and
         $contenidoServidorPanel -match "Write-PanelMutationOperation -Operation 'ACTIVAR_XPZ'" -and
