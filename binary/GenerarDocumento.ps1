@@ -23,6 +23,7 @@ $DirectorioLogs = Join-Path $PSScriptRoot '..\Logs'
 $diagnosticosIA = New-Object System.Collections.Generic.List[object]
 $faseActual = 'inicio'
 . (Join-Path $PSScriptRoot 'GLMUtilidades.ps1')
+. (Join-Path $PSScriptRoot 'ContratoAnalisis.ps1')
 . (Join-Path $PSScriptRoot 'DiagnosticoIA.ps1')
 
 Inicializar-ConsolaUtf8
@@ -47,13 +48,21 @@ function Procesar-Servicio {
         [Parameter(Mandatory = $true)][string]$RaizRepositorio,
         [Parameter(Mandatory = $false)][string]$Version = '1.0',
         [Parameter(Mandatory = $false)][string]$NombreArchivo = '',
+        [Parameter(Mandatory = $false)][AllowNull()]$DocumentacionPrevia,
+        [Parameter(Mandatory = $false)][switch]$UsarAnalisisPrevio,
         [switch]$Silencioso
     )
 
     $faseServicio = 'analisis'
     try {
-        if (-not $Silencioso) { Write-Step 3 'Analizando el servicio desde el XPZ...' }
-        $documentacion = Analizar-Servicio -Xml $Xml -NombreCompletoWrapper $Endpoint.proceso -PackageName $PackageName -Indice $Indice
+        if ($UsarAnalisisPrevio) {
+            if ($null -eq $DocumentacionPrevia) { throw ('El servicio ' + $Endpoint.proceso + ' no contiene documentacion en el ANALISIS_PREVIO.') }
+            $documentacion = $DocumentacionPrevia
+            if (-not $Silencioso) { Write-Step 3 'Reutilizando el analisis tecnico previo...' }
+        } else {
+            if (-not $Silencioso) { Write-Step 3 'Analizando el servicio desde el XPZ...' }
+            $documentacion = Analizar-Servicio -Xml $Xml -NombreCompletoWrapper $Endpoint.proceso -PackageName $PackageName -Indice $Indice
+        }
         if (-not $Silencioso) {
             Write-Host ("  Programa principal: " + $documentacion.ProgramaPrincipal) -ForegroundColor DarkGray
             Write-Host ("  Metodo HTTP: " + $documentacion.MetodoHttp) -ForegroundColor DarkGray
@@ -110,6 +119,30 @@ function Obtener-VersionDocumentoServicio {
     if ($VersionesManifiesto.ContainsKey($FullyQualifiedName)) { return [string]$VersionesManifiesto[$FullyQualifiedName] }
     if ($VersionesPublicadas.ContainsKey($FullyQualifiedName)) { return [string]$VersionesPublicadas[$FullyQualifiedName] }
     return '1.0'
+}
+
+function Obtener-FingerprintFuenteGenerador {
+    param([Parameter(Mandatory = $true)][object[]]$Manifiesto)
+    $componentes = @($Manifiesto | Sort-Object Orden | ForEach-Object { '{0}|{1}|{2}' -f $_.Orden, $_.RutaRelativa, $_.Sha256 })
+    return Obtener-Sha256TextoNormalizado -Texto (($componentes -join "`n") + "`n")
+}
+
+function Obtener-FingerprintPerfilGenerador {
+    param(
+        [Parameter(Mandatory = $true)][string]$PackageName,
+        [Parameter(Mandatory = $true)][string]$RaizRepositorio,
+        [Parameter(Mandatory = $false)][string[]]$ServiciosIgnorados = @()
+    )
+    $rutasPerfil = @('normativas/analisisXPZ.md','normativas/reglasEditoriales.md','normativas/templateDoc.md','binary/AnalizarServicio.ps1','binary/RedactarDocumento.ps1','binary/EscribirSalidas.ps1','binary/CargarMultiXPZ.ps1','binary/GLMUtilidades.ps1')
+    $componentes = New-Object System.Collections.Generic.List[string]
+    [void]$componentes.Add('packagename=' + $PackageName)
+    [void]$componentes.Add('serviciosIgnorados=' + ((@($ServiciosIgnorados) | Sort-Object) -join ','))
+    foreach ($rutaRelativa in $rutasPerfil) {
+        $ruta = Join-Path $RaizRepositorio ($rutaRelativa -replace '/', '\')
+        if (-not (Test-Path -LiteralPath $ruta -PathType Leaf)) { throw ('No se encontro un componente del perfil documental: ' + $rutaRelativa) }
+        [void]$componentes.Add($rutaRelativa + '=' + (Obtener-Sha256ArchivoNormalizado -Ruta $ruta))
+    }
+    return Obtener-Sha256TextoNormalizado -Texto (($componentes -join "`n") + "`n")
 }
 
 $DirectorioSalida = Join-Path $PSScriptRoot '..\documentacionServicios'
@@ -218,6 +251,28 @@ try {
     Write-Host ("  XPZ abierto y " + $xmlAnalisis.SelectNodes('//Object').Count + " objetos indexados") -ForegroundColor DarkGray
     if (@($indices.NombresXpz).Count -gt 1) {
         Write-Host ("  Complementos incluidos: " + ((@($indices.NombresXpz) | Select-Object -Skip 1) -join ', ')) -ForegroundColor DarkGray
+    }
+
+    $usarAnalisisPrevio = $false
+    $analisisPrevioPorFqn = @{}
+    $analisisPrevioInvalidosPorFqn = @{}
+    if ($ManifiestoPath -and $RutaReview -and (Test-Path -LiteralPath $RutaReview -PathType Leaf)) {
+        $rutaReviewAnalisisPrevio = [System.IO.Path]::GetFullPath($RutaReview)
+        $rutaLogsManifiesto = [System.IO.Path]::GetFullPath([string]$manifiestoEjecucion.logsDirectory)
+        $rutaReviewEsperada = [System.IO.Path]::GetFullPath((Join-Path $rutaLogsManifiesto ($manifiestoEjecucion.ejecucionId + '-actualizacion-review.json')))
+        if (-not [System.StringComparer]::OrdinalIgnoreCase.Equals($rutaReviewAnalisisPrevio, $rutaReviewEsperada)) { throw 'La ruta del review de analisis no coincide con el Logs contextual de la ejecucion.' }
+        try { $envelopeAnalisisPrevio = Convertir-JsonAEnvelopeContratoAnalisis -Json ([System.IO.File]::ReadAllText($rutaReviewAnalisisPrevio)) }
+        catch { throw ('No se pudo leer el ANALISIS_PREVIO: ' + $_.Exception.Message) }
+        $sourceFingerprintGenerador = Obtener-FingerprintFuenteGenerador -Manifiesto @($indices.Manifiesto)
+        $profileFingerprintGenerador = Obtener-FingerprintPerfilGenerador -PackageName $configuracion.PackageName -RaizRepositorio $RaizRepositorio -ServiciosIgnorados $configuracion.ServiciosIgnorados
+        Validar-EnvelopeContratoAnalisis -Envelope $envelopeAnalisisPrevio -EjecucionId ([string]$manifiestoEjecucion.ejecucionId) -ContextId ([string]$manifiestoEjecucion.contextId) -Xpz ([string]$manifiestoEjecucion.xpz) -SourceFingerprint $sourceFingerprintGenerador -ProfileFingerprint $profileFingerprintGenerador -FullyQualifiedNames @($manifiestoEjecucion.fullyQualifiedNames) -PermitirRegistrosInvalidos | Out-Null
+        foreach ($registroAnalisisPrevio in @($envelopeAnalisisPrevio.contratoAnalisis.servicios)) {
+            $fqnAnalisisPrevio = [string]$registroAnalisisPrevio.fullyQualifiedName
+            try { Validar-RegistroContratoAnalisis -Registro $registroAnalisisPrevio | Out-Null; $analisisPrevioPorFqn[$fqnAnalisisPrevio] = $registroAnalisisPrevio }
+            catch { $analisisPrevioInvalidosPorFqn[$fqnAnalisisPrevio] = $_.Exception.Message; $analisisPrevioPorFqn[$fqnAnalisisPrevio] = $registroAnalisisPrevio }
+        }
+        $usarAnalisisPrevio = $true
+        Write-Host ('  ANALISIS_PREVIO validado: ' + $analisisPrevioPorFqn.Count + ' servicio(s).') -ForegroundColor DarkGray
     }
 
     $faseActual = 'seleccion-servicios'
@@ -346,15 +401,47 @@ try {
     }
     $totalServicios = $serviciosParaProcesar.Count
     $contador = 0
+    $inicioProcesamiento = Get-Date
+    $ultimoHeartbeatProcesamiento = $inicioProcesamiento
 
+    $mostrarProgreso = ($modoSeleccionado -ne 1) -and -not [Console]::IsOutputRedirected
     foreach ($servicio in $serviciosParaProcesar) {
         $faseActual = 'procesamiento-servicios'
         $contador++
-        if ($modoSeleccionado -ne 1) {
+        if (((Get-Date) - $ultimoHeartbeatProcesamiento).TotalSeconds -ge 30) {
+            $transcurrido = ((Get-Date) - $inicioProcesamiento).TotalSeconds
+            $promedio = if ($contador -gt 0) { $transcurrido / $contador } else { 0 }
+            $restante = [math]::Max(0, $totalServicios - $contador)
+            $estimado = [math]::Round($promedio * $restante)
+            Write-Host ('Continua la generacion de los documentos Markdown. Aguarde... (' + $contador + '/' + $totalServicios + ', estimado restante: ' + $estimado + ' s)') -ForegroundColor Cyan
+            $ultimoHeartbeatProcesamiento = Get-Date
+        }
+        if ($mostrarProgreso) {
             $progreso = [math]::Floor(($contador / $totalServicios) * 100)
             Write-Progress -Activity 'Generando documentacion de servicio' -PercentComplete $progreso -Status "Procesando $contador de $totalServicios"
         }
-        $resultado = Procesar-Servicio -Endpoint $servicio -PackageName $configuracion.PackageName -Xml $xmlAnalisis -Indice $indices -DirectorioSalida $DirectorioSalida -ListaDiagnosticos $diagnosticosIA -RaizRepositorio $RaizRepositorio -Version (Obtener-VersionDocumentoServicio -FullyQualifiedName $servicio.proceso -VersionesManifiesto $versionesManifiesto -VersionesPublicadas $versionesPublicadas) -NombreArchivo (Obtener-NombreArchivoServicio -FullyQualifiedName ([string]$servicio.proceso) -FqnsInventario $nombresInventario) -Silencioso:($modoSeleccionado -ne 1)
+        $registroAnalisisPrevioServicio = $null
+        if ($usarAnalisisPrevio) {
+            if (-not $analisisPrevioPorFqn.ContainsKey([string]$servicio.proceso)) { throw ('El ANALISIS_PREVIO no contiene el servicio esperado: ' + $servicio.proceso) }
+            $registroAnalisisPrevioServicio = $analisisPrevioPorFqn[[string]$servicio.proceso]
+        }
+        if ($registroAnalisisPrevioServicio -and $analisisPrevioInvalidosPorFqn.ContainsKey([string]$servicio.proceso)) {
+            $resultado = [pscustomobject]@{ FullyQualifiedName = $servicio.proceso; Estado = 'ERROR'; Documento = ''; Pendientes = @(); Mensajes = @('El registro ANALISIS_PREVIO es invalido: ' + $analisisPrevioInvalidosPorFqn[[string]$servicio.proceso]) }
+        } elseif ($registroAnalisisPrevioServicio -and [string]$registroAnalisisPrevioServicio.estadoAnalisis -eq 'ERROR') {
+            $mensajeAnalisisPrevio = [string]$registroAnalisisPrevioServicio.mensajeError
+            if (-not $mensajeAnalisisPrevio) { $mensajeAnalisisPrevio = 'El analisis previo marco el servicio como ERROR.' }
+            $resultado = [pscustomobject]@{ FullyQualifiedName = $servicio.proceso; Estado = 'ERROR'; Documento = ''; Pendientes = @(); Mensajes = @($mensajeAnalisisPrevio) }
+        } else {
+            $parametrosProcesarServicio = @{
+                Endpoint = $servicio; PackageName = $configuracion.PackageName; Xml = $xmlAnalisis; Indice = $indices
+                DirectorioSalida = $DirectorioSalida; ListaDiagnosticos = $diagnosticosIA; RaizRepositorio = $RaizRepositorio
+                Version = (Obtener-VersionDocumentoServicio -FullyQualifiedName $servicio.proceso -VersionesManifiesto $versionesManifiesto -VersionesPublicadas $versionesPublicadas)
+                NombreArchivo = (Obtener-NombreArchivoServicio -FullyQualifiedName ([string]$servicio.proceso) -FqnsInventario $nombresInventario)
+                Silencioso = ($modoSeleccionado -ne 1)
+            }
+            if ($usarAnalisisPrevio) { $parametrosProcesarServicio.DocumentacionPrevia = $registroAnalisisPrevioServicio.documentacion; $parametrosProcesarServicio.UsarAnalisisPrevio = $true }
+            $resultado = Procesar-Servicio @parametrosProcesarServicio
+        }
         [void]$resultados.Add($resultado)
         if ($resultado.Estado -eq 'OK') {
             $okCount++

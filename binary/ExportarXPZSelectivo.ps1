@@ -40,6 +40,43 @@ function Obtener-RutaXpzReportada {
     return Resolver-RutaRepositorio -Ruta ([string]$Reporte.ejecucion.xpz) -Raiz $Configuracion.RaizRepositorio
 }
 
+function Obtener-NombreLocalObjeto {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$Valor
+    )
+
+    $nombre = $Valor.Trim()
+    if ($nombre.Contains(':')) { $nombre = $nombre.Split(':', 2)[1].Trim() }
+    if ($nombre.Contains('.')) { $nombre = $nombre.Split('.')[-1] }
+    return $nombre
+}
+
+function Escribir-TrazaExportacionSelectiva {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$RutaLog,
+        [Parameter(Mandatory = $true)][string]$Mensaje
+    )
+
+    try {
+        $linea = '[' + (Get-Date).ToString('yyyy-MM-dd HH:mm:ss.fff') + '] ' + $Mensaje + [Environment]::NewLine
+        [System.IO.File]::AppendAllText($RutaLog, $linea, (New-Object System.Text.UTF8Encoding($false)))
+    } catch { }
+}
+
+function Obtener-TimeoutMsbuildSegundos {
+    param([string]$RutaConfiguracion)
+    $defaultTimeout = 300
+    if ([string]::IsNullOrWhiteSpace($RutaConfiguracion) -or -not (Test-Path -LiteralPath $RutaConfiguracion -PathType Leaf)) { return $defaultTimeout }
+    try {
+        $raw = Get-Content -LiteralPath $RutaConfiguracion -Raw -Encoding UTF8 | ConvertFrom-Json
+        $value = 0
+        if ($raw.panel -and [int]::TryParse([string]$raw.panel.timeoutMsbuildSegundos, [ref]$value) -and $value -gt 0) { return $value }
+    } catch { }
+    return $defaultTimeout
+}
+
 function Obtener-ObjetosDeReporte {
     [CmdletBinding()]
     param(
@@ -51,7 +88,7 @@ function Obtener-ObjetosDeReporte {
     if ($Reporte.solicitudes) {
         foreach ($solicitud in @($Reporte.solicitudes)) {
             foreach ($objeto in @($solicitud.exportar)) {
-                $valor = ([string]$objeto).Trim()
+                $valor = Obtener-NombreLocalObjeto -Valor ([string]$objeto)
                 if ($valor -and $objetos -notcontains $valor) {
                     [void]$objetos.Add($valor)
                 }
@@ -65,7 +102,7 @@ function Obtener-ObjetosDeReporte {
 
     if ($Reporte.objectList) {
         foreach ($objeto in ([string]$Reporte.objectList -split ',')) {
-            $nombre = $objeto.Trim()
+            $nombre = Obtener-NombreLocalObjeto -Valor $objeto.Trim()
             if ($nombre -and $objetos -notcontains $nombre) {
                 [void]$objetos.Add($nombre)
             }
@@ -76,7 +113,7 @@ function Obtener-ObjetosDeReporte {
         foreach ($solicitud in @($Reporte.solicitudes)) {
             foreach ($selector in @($solicitud.selectores)) {
                 $partes = ([string]$selector).Split(':', 2)
-                $nombre = if ($partes.Count -eq 2) { $partes[1].Trim().Split('.')[-1] } else { ([string]$selector).Trim() }
+                $nombre = Obtener-NombreLocalObjeto -Valor (if ($partes.Count -eq 2) { $partes[1].Trim() } else { ([string]$selector).Trim() })
                 if ($nombre -and $objetos -notcontains $nombre) {
                     [void]$objetos.Add($nombre)
                 }
@@ -233,7 +270,7 @@ function Validar-RutasEjecucion {
         [Parameter(Mandatory = $true)][string]$RutaMsbuild,
         [Parameter(Mandatory = $true)][string]$RutaProyecto,
         [Parameter(Mandatory = $true)][string]$DirectorioGeneXus,
-        [Parameter(Mandatory = $true)][string]$RutaKnowledgeBase,
+        [string]$RutaKnowledgeBase,
         [Parameter(Mandatory = $true)][string]$RutaXpzSalida,
         [Parameter(Mandatory = $true)][string]$RutaLog
     )
@@ -272,7 +309,7 @@ function Crear-ProyectoMsbuildTemporal {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)][string]$RutaProyectoBase,
-        [Parameter(Mandatory = $true)][string[]]$Selectores
+        [Parameter(Mandatory = $true)][string[]]$NombresObjetos
     )
 
     $contenido = Get-Content -LiteralPath $RutaProyectoBase -Raw -Encoding UTF8
@@ -282,7 +319,9 @@ function Crear-ProyectoMsbuildTemporal {
         throw ('El proyecto MSBuild no tiene una etiqueta Project valida: ' + $RutaProyectoBase)
     }
 
-    $listaEscapada = [System.Security.SecurityElement]::Escape(($Selectores -join ','))
+    $nombresLocales = @($NombresObjetos | ForEach-Object { Obtener-NombreLocalObjeto -Valor ([string]$_) } | Where-Object { $_ } | Select-Object -Unique)
+    if ($nombresLocales.Count -eq 0) { throw 'La receta no contiene nombres locales para ObjectList.' }
+    $listaEscapada = [System.Security.SecurityElement]::Escape(($nombresLocales -join ','))
     $propiedades = "`r`n  <PropertyGroup>`r`n    <ObjectList>$listaEscapada</ObjectList>`r`n  </PropertyGroup>"
     $contenido = $contenido.Insert($posicionCierreProyecto + 1, $propiedades)
 
@@ -298,15 +337,24 @@ function Ejecutar-ExportacionSelectiva {
         [Parameter(Mandatory = $true)][string]$RutaMsbuild,
         [Parameter(Mandatory = $true)][string]$RutaProyecto,
         [Parameter(Mandatory = $true)][string]$DirectorioGeneXus,
-        [Parameter(Mandatory = $true)][string]$RutaKnowledgeBase,
-        [Parameter(Mandatory = $true)][string[]]$Selectores,
+        [string]$RutaKnowledgeBase,
+        [Parameter(Mandatory = $true)][string[]]$NombresObjetos,
         [Parameter(Mandatory = $true)][string]$RutaXpzSalida,
         [Parameter(Mandatory = $true)][string]$RutaLog,
+        [string]$RutaConfiguracion,
         [ValidateSet('GX18', 'Evo3')]
         [string]$GeneXusExportProfile = 'GX18'
     )
 
-    $rutaProyectoTemporal = Crear-ProyectoMsbuildTemporal -RutaProyectoBase $RutaProyecto -Selectores $Selectores
+    if ([string]::IsNullOrWhiteSpace($RutaKnowledgeBase)) {
+        throw 'No se indico la ruta de la Knowledge Base para la exportacion selectiva.'
+    }
+
+    Escribir-TrazaExportacionSelectiva -RutaLog $RutaLog -Mensaje 'Comenzando armado del proyecto temporal.'
+    Write-Host 'Armando proyecto temporal para la exportacion selectiva...' -ForegroundColor Gray
+    $rutaProyectoTemporal = Crear-ProyectoMsbuildTemporal -RutaProyectoBase $RutaProyecto -NombresObjetos $NombresObjetos
+    Escribir-TrazaExportacionSelectiva -RutaLog $RutaLog -Mensaje 'Proyecto temporal armado correctamente.'
+    Write-Host 'Proyecto temporal de exportacion armado.' -ForegroundColor Gray
     $argumentos = @(
         (Quote-ProcessArgument -Valor $rutaProyectoTemporal),
         '/t:ExportarObjetosSelectivos',
@@ -320,32 +368,67 @@ function Ejecutar-ExportacionSelectiva {
         (Quote-ProcessArgument -Valor ("/flp:logfile=$RutaLog;verbosity=normal"))
     )
 
-    $informacionInicio = New-Object System.Diagnostics.ProcessStartInfo
-    $informacionInicio.FileName = $RutaMsbuild
-    $informacionInicio.Arguments = $argumentos -join ' '
-    $informacionInicio.WorkingDirectory = Split-Path -Parent $RutaProyecto
-    $informacionInicio.UseShellExecute = $false
-    $informacionInicio.CreateNoWindow = $true
-    $informacionInicio.RedirectStandardOutput = $true
-    $informacionInicio.RedirectStandardError = $true
-
-    $proceso = New-Object System.Diagnostics.Process
-    $proceso.StartInfo = $informacionInicio
+    $proceso = $null
     $idProceso = 0
     $horaInicio = Get-Date
     $salida = ''
     $errorSalida = ''
+    $timeoutMsbuild = Obtener-TimeoutMsbuildSegundos -RutaConfiguracion $RutaConfiguracion
+    $salidaBuilder = New-Object System.Text.StringBuilder
+    $errorBuilder = New-Object System.Text.StringBuilder
 
     try {
+        Escribir-TrazaExportacionSelectiva -RutaLog $RutaLog -Mensaje 'Iniciando proceso MSBuild.'
         Write-Host 'Iniciando exportacion selectiva en GeneXus...' -ForegroundColor Gray
         $horaInicio = Get-Date
+        $informacionInicio = New-Object System.Diagnostics.ProcessStartInfo
+        $informacionInicio.FileName = $RutaMsbuild
+        $informacionInicio.Arguments = $argumentos -join ' '
+        $informacionInicio.WorkingDirectory = Split-Path -Parent $RutaProyecto
+        $informacionInicio.UseShellExecute = $false
+        $informacionInicio.CreateNoWindow = $true
+        $informacionInicio.RedirectStandardOutput = $true
+        $informacionInicio.RedirectStandardError = $true
+        $proceso = New-Object System.Diagnostics.Process
+        $proceso.StartInfo = $informacionInicio
         if (-not $proceso.Start()) { throw 'No se pudo iniciar MSBuild.' }
         $idProceso = $proceso.Id
-        $tareaSalida = $proceso.StandardOutput.ReadToEndAsync()
-        $tareaError = $proceso.StandardError.ReadToEndAsync()
+        Escribir-TrazaExportacionSelectiva -RutaLog $RutaLog -Mensaje ('MSBuild iniciado. PID ' + $idProceso + '.')
+
+        $estadoSalida = [pscustomobject]@{ Reader = $proceso.StandardOutput; Task = $proceso.StandardOutput.ReadLineAsync(); Builder = $salidaBuilder; LastActivity = Get-Date }
+        $estadoError = [pscustomobject]@{ Reader = $proceso.StandardError; Task = $proceso.StandardError.ReadLineAsync(); Builder = $errorBuilder; LastActivity = Get-Date }
+        $leerSalida = {
+            param($estado)
+            while ($null -ne $estado.Task -and $estado.Task.IsCompleted) {
+                $linea = $estado.Task.GetAwaiter().GetResult()
+                if ($null -eq $linea) {
+                    $estado.Task = $null
+                    break
+                }
+                [void]$estado.Builder.AppendLine($linea)
+                $estado.LastActivity = Get-Date
+                $estado.Task = $estado.Reader.ReadLineAsync()
+            }
+        }
+        while (-not $proceso.HasExited) {
+            & $leerSalida $estadoSalida
+            & $leerSalida $estadoError
+            $ultimaActividadMsbuild = @($estadoSalida.LastActivity, $estadoError.LastActivity) | Sort-Object | Select-Object -Last 1
+            if (((Get-Date) - $ultimaActividadMsbuild).TotalSeconds -ge $timeoutMsbuild) {
+                throw ('MSBuild supero el timeout de inactividad configurado de ' + $timeoutMsbuild + ' segundos.')
+            }
+            Start-Sleep -Milliseconds 500
+            $proceso.Refresh()
+        }
         $proceso.WaitForExit()
-        $salida = $tareaSalida.GetAwaiter().GetResult()
-        $errorSalida = $tareaError.GetAwaiter().GetResult()
+        while ($null -ne $estadoSalida.Task -or $null -ne $estadoError.Task) {
+            & $leerSalida $estadoSalida
+            & $leerSalida $estadoError
+            if ($null -ne $estadoSalida.Task -or $null -ne $estadoError.Task) { Start-Sleep -Milliseconds 20 }
+        }
+        Escribir-TrazaExportacionSelectiva -RutaLog $RutaLog -Mensaje ('MSBuild finalizo con codigo ' + $proceso.ExitCode + '.')
+        $salida = $salidaBuilder.ToString()
+        $errorSalida = $errorBuilder.ToString()
 
         $textoLog = @($salida, $errorSalida, (Get-Content -LiteralPath $RutaLog -Raw -ErrorAction SilentlyContinue)) -join "`n"
         $validacionXpz = Test-XpzValido -Ruta $RutaXpzSalida
@@ -368,6 +451,7 @@ function Ejecutar-ExportacionSelectiva {
             throw ('La exportacion selectiva fallo: ' + $detalle)
         }
 
+        Write-Host 'Exportacion selectiva finalizada correctamente.' -ForegroundColor Green
         return $validacionXpz
     } finally {
         if ($idProceso -gt 0) {
@@ -383,7 +467,7 @@ function Ejecutar-ExportacionSelectiva {
                 Stop-Process -Id $idDescendiente -Force -ErrorAction SilentlyContinue
             }
         }
-        $proceso.Dispose()
+        if ($proceso) { $proceso.Dispose() }
         if (Test-Path -LiteralPath $rutaProyectoTemporal -PathType Leaf) {
             Remove-Item -LiteralPath $rutaProyectoTemporal -Force -ErrorAction SilentlyContinue
         }
@@ -442,8 +526,9 @@ try {
     Avisar-InstanciasGeneXus
     Write-Host ('Complemento de salida: ' + $rutaXpzSalida) -ForegroundColor DarkGray
     Write-Host ('Log de ejecucion: ' + $rutaLogEfectiva) -ForegroundColor DarkGray
-    Write-Host ('Selectores tipo:FQN: ' + ($seleccion.Selectores -join ',')) -ForegroundColor DarkGray
-    Ejecutar-ExportacionSelectiva -RutaMsbuild $rutaMsbuildEfectiva -RutaProyecto $rutaProyectoEfectiva -DirectorioGeneXus $GxProgramDir -RutaKnowledgeBase $KbPath -Selectores $seleccion.Selectores -RutaXpzSalida $rutaXpzSalida -RutaLog $rutaLogEfectiva -GeneXusExportProfile $GeneXusExportProfile | Out-Null
+    Write-Host ('ObjectList (nombres GeneXus): ' + ($seleccion.Objetos -join ',')) -ForegroundColor DarkGray
+    Escribir-TrazaExportacionSelectiva -RutaLog $rutaLogEfectiva -Mensaje ('ObjectList recibido: ' + ($seleccion.Objetos -join ','))
+    Ejecutar-ExportacionSelectiva -RutaMsbuild $rutaMsbuildEfectiva -RutaProyecto $rutaProyectoEfectiva -DirectorioGeneXus $GxProgramDir -RutaKnowledgeBase $KbPath -NombresObjetos $seleccion.Objetos -RutaXpzSalida $rutaXpzSalida -RutaLog $rutaLogEfectiva -RutaConfiguracion $ConfigPath -GeneXusExportProfile $GeneXusExportProfile | Out-Null
     Write-Host ('XPZ complementario generado correctamente: ' + $rutaXpzSalida) -ForegroundColor Green
     exit 0
 } catch {

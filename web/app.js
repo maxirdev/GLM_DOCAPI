@@ -141,9 +141,16 @@
         return (t === 'test' || t === 'prod') ? t : null;
     }
 
+    function nombreAmbienteCanonico(tipo, fallback) {
+        var normalized = clasificarTipo(tipo);
+        if (normalized === 'prod') { return 'PROD'; }
+        if (normalized === 'test') { return 'TEST'; }
+        return fallback || '';
+    }
+
     function tipoInfo(tipo) {
-        if (tipo === 'prod') { return { etiqueta: 'Producción', cls: 'tag-produccion' }; }
-        if (tipo === 'test') { return { etiqueta: 'Testing', cls: 'tag-testing' }; }
+        if (tipo === 'prod') { return { etiqueta: 'PROD', cls: 'tag-produccion' }; }
+        if (tipo === 'test') { return { etiqueta: 'TEST', cls: 'tag-testing' }; }
         return { etiqueta: String(tipo || ''), cls: '' };
     }
 
@@ -159,8 +166,8 @@
         status = String(status || '').toUpperCase();
         if (['QUEUED', 'RUNNING', 'PROCESSING', 'EN PROCESO', 'EN_PROCESO'].indexOf(status) >= 0) { return 'badge-progress'; }
         if (['COMPLETED', 'COMPLETADO', 'OK', 'ACTIVO'].indexOf(status) >= 0) { return 'badge-ok'; }
-        if (['PARTIAL', 'COMPLETADO PARCIALMENTE', 'WARNING', 'ADVERTENCIA', 'OBSOLETO', 'PENDIENTE'].indexOf(status) >= 0) { return 'badge-warning'; }
-        if (['FAILED', 'ERROR', 'ELIMINADO', 'ABORTED', 'ABORTADO'].indexOf(status) >= 0) { return 'badge-danger'; }
+        if (['PARTIAL', 'COMPLETADO PARCIALMENTE', 'WARNING', 'ADVERTENCIA', 'OBSOLETO', 'PENDIENTE', 'CANCELLED', 'CANCELADO', 'ABORTED', 'ABORTADO'].indexOf(status) >= 0) { return 'badge-warning'; }
+        if (['FAILED', 'ERROR', 'ELIMINADO'].indexOf(status) >= 0) { return 'badge-danger'; }
         return 'badge-muted';
     }
 
@@ -170,7 +177,8 @@
         if (['COMPLETED', 'COMPLETADO'].indexOf(status) >= 0) { return 'Completado'; }
         if (['OK', 'ACTIVO'].indexOf(status) >= 0) { return 'Ok'; }
         if (['PARTIAL', 'COMPLETADO PARCIALMENTE', 'WARNING', 'ADVERTENCIA', 'OBSOLETO'].indexOf(status) >= 0) { return 'Advertencia'; }
-        if (['FAILED', 'ERROR', 'ELIMINADO', 'ABORTED', 'ABORTADO'].indexOf(status) >= 0) { return 'Error'; }
+        if (['FAILED', 'ERROR', 'ELIMINADO'].indexOf(status) >= 0) { return 'Error'; }
+        if (['CANCELLED', 'CANCELADO', 'ABORTED', 'ABORTADO'].indexOf(status) >= 0) { return 'Cancelado'; }
         if (status === 'OMITIDO') { return 'Omitido'; }
         if (status === 'PENDIENTE') { return 'Pendiente'; }
         if (!status) { return 'Sin estado'; }
@@ -182,7 +190,7 @@
     }
 
     function isError(status) {
-        return ['FAILED', 'ERROR', 'ELIMINADO', 'ABORTED', 'ABORTADO'].indexOf(String(status || '').toUpperCase()) >= 0;
+        return ['FAILED', 'ERROR', 'ELIMINADO'].indexOf(String(status || '').toUpperCase()) >= 0;
     }
 
     function formatDateTime(value) {
@@ -210,16 +218,19 @@
         var options = [];
         var onChange = null;
 
-        function tagPills(tags) {
+        function tagPills(tags, label) {
             if (!tags || !tags.length) { return ''; }
-            return tags.map(function (t) { return tipoPill(t); }).join('');
+            return tags.map(function (t) {
+                var info = tipoInfo(t);
+                return info.etiqueta === label ? '' : tipoPill(t);
+            }).join('');
         }
 
         function renderTrigger() {
             var selected = null;
             for (var i = 0; i < options.length; i++) { if (options[i].value === value) { selected = options[i]; break; } }
             if (selected) {
-                labelEl.innerHTML = '<span class="dropdown-label-text">' + escapeHtml(selected.label) + '</span>' + tagPills(selected.tags);
+                labelEl.innerHTML = '<span class="dropdown-label-text">' + escapeHtml(selected.label) + '</span>' + tagPills(selected.tags, selected.label);
             } else {
                 labelEl.textContent = config.placeholder || 'Seleccionar';
             }
@@ -230,7 +241,7 @@
         function renderMenu() {
             var html = options.map(function (opt) {
                 var active = opt.value === value ? ' is-active' : '';
-                return '<button class="dropdown-option' + active + '" type="button" role="option" aria-selected="' + (opt.value === value ? 'true' : 'false') + '" data-value="' + escapeHtml(opt.value) + '"><span class="dropdown-option-label">' + escapeHtml(opt.label) + '</span>' + tagPills(opt.tags) + '</button>';
+                return '<button class="dropdown-option' + active + '" type="button" role="option" aria-selected="' + (opt.value === value ? 'true' : 'false') + '" data-value="' + escapeHtml(opt.value) + '"><span class="dropdown-option-label">' + escapeHtml(opt.label) + '</span>' + tagPills(opt.tags, opt.label) + '</button>';
             }).join('');
             menu.innerHTML = html || '<div class="dropdown-empty">Sin opciones</div>';
             menu.querySelectorAll('.dropdown-option').forEach(function (btn) {
@@ -299,7 +310,7 @@
             var clients = {};
             payload.data.contextos.forEach(function (context) {
                 clients[context.clienteId] = clients[context.clienteId] || { name: context.clienteNombre, environments: [] };
-                clients[context.clienteId].environments.push({ id: context.ambienteId, name: context.ambienteNombre, tipo: context.ambienteTipo });
+                clients[context.clienteId].environments.push({ id: context.ambienteId, name: nombreAmbienteCanonico(context.ambienteTipo, context.ambienteNombre), tipo: context.ambienteTipo });
             });
             clientDropdown.setOptions(Object.keys(clients).map(function (clientId) {
                 var tipos = [];
@@ -320,7 +331,7 @@
 
     function selectEnvironment() {
         var options = (environments[clientDropdown.value] || []).map(function (environment) {
-            return { value: environment.id, label: environment.name, tags: [environment.tipo] };
+            return { value: environment.id, label: nombreAmbienteCanonico(environment.tipo, environment.name), tags: [environment.tipo] };
         });
         environmentDropdown.setOptions(options);
         environmentDropdown.disabled = options.length === 0;
@@ -392,7 +403,7 @@
         if (state && state.context) {
             var documentedServices = endpointServices.filter(function (service) { return service.pdf && service.pdf.disponible; });
             if (endpointServices.length && documentedServices.length === 0) {
-                notices.push({ type: 'warn', text: 'No hay documentación publicada. Inicia el proceso de generación desde la solapa Exportar.', action: { label: 'Ir a Exportar', tab: 'exportar' } });
+                notices.push({ type: 'warn', text: 'No hay documentación publicada. Inicia el proceso de generación desde la solapa Generar PDF.', action: { label: 'Ir a Generar PDF', tab: 'endpoints' } });
             }
         }
         var work = state && state.work;
@@ -468,8 +479,9 @@
         var activeName = xpz && xpz.activo ? xpz.activo.nombre : '';
         list.innerHTML = candidates.length ? candidates.map(function (candidate) {
             var recent = candidate.principal ? '<span class="tag tag-recent">RECIENTE</span>' : '';
+            var processed = candidate.procesado ? '<span class="tag tag-processed">YA PROCESADO</span>' : '';
             var selected = (candidate.nombre === activeName || (!activeName && candidate.principal)) ? ' is-selected' : '';
-            return '<div class="file-row pdf-xpz-option' + selected + '"><span class="pdf-xpz-meta"><strong>' + escapeHtml(candidate.nombre) + '</strong><span class="pdf-xpz-subtitle"><small>' + escapeHtml(formatDateTime(candidate.fecha)) + '</small>' + recent + '</span></span><span class="pdf-xpz-actions"><button class="choose-pdf-xpz" type="button" data-xpz-name="' + escapeHtml(candidate.nombre) + '">Seleccionar</button></span></div>';
+            return '<div class="file-row pdf-xpz-option' + selected + '"><span class="pdf-xpz-meta"><strong>' + escapeHtml(candidate.nombre) + '</strong><span class="pdf-xpz-subtitle"><small>' + escapeHtml(formatDateTime(candidate.fecha)) + '</small>' + recent + processed + '</span></span><span class="pdf-xpz-actions"><button class="choose-pdf-xpz" type="button" data-xpz-name="' + escapeHtml(candidate.nombre) + '">Seleccionar</button></span></div>';
         }).join('') : '<div class="empty-state">No hay XPZ disponibles en este ambiente.</div>';
         list.querySelectorAll('.choose-pdf-xpz').forEach(function (button) {
             button.addEventListener('click', function () { selectPdfXpz(button.getAttribute('data-xpz-name'), button); });
@@ -488,7 +500,7 @@
         }
         var context = dashboard.contexto;
         var clientName = getProperty(context, 'clienteNombre', 'ClienteNombre') || getProperty(context, 'clienteId', 'ClienteId');
-        var environmentName = getProperty(context, 'ambienteNombre', 'AmbienteNombre') || getProperty(context, 'ambienteId', 'AmbienteId');
+        var environmentName = nombreAmbienteCanonico(getProperty(context, 'ambienteTipo', 'AmbienteTipo'), getProperty(context, 'ambienteNombre', 'AmbienteNombre')) || getProperty(context, 'ambienteId', 'AmbienteId');
         var environmentTipo = getProperty(context, 'ambienteTipo', 'AmbienteTipo');
         var documents = dashboard.documentos || {};
         var processing = dashboard.procesamiento || {};
@@ -597,6 +609,7 @@
                 lockContext();
                 setWorkBusy(false);
                 loadXpz();
+                loadContextArtifacts();
                 if (payload.data.xpz && payload.data.xpz.activo) { loadServices(); } else { endpointServices = []; renderDocumentationServices(document.getElementById('documentation-filter').value); renderDocumentation(document.getElementById('documentation-filter').value); renderGlobalNotices(); }
             } else {
                 unlockContext();
@@ -642,7 +655,8 @@
         var candidates = (data && data.xpz) || [];
         document.getElementById('fallback-xpz-list').innerHTML = candidates.length ? candidates.map(function (xpz) {
             var recent = xpz.principal ? '<span class="tag tag-recent">RECIENTE</span>' : '';
-            return '<div class="file-row xpz-option"><span class="xpz-meta"><strong>' + escapeHtml(xpz.nombre) + '</strong><span class="xpz-subtitle"><small>' + escapeHtml(new Date(xpz.fecha).toLocaleString('es-AR')) + '</small>' + recent + '</span></span><span class="xpz-actions"><button class="choose-xpz" type="button" data-xpz-name="' + escapeHtml(xpz.nombre) + '">Seleccionar</button><button class="validate-xpz-option" type="button" data-xpz-name="' + escapeHtml(xpz.nombre) + '"><span class="btn-spinner" aria-hidden="true"></span><span class="label-idle">Validar XPZ</span><span class="label-busy">Validando…</span></button></span></div>';
+            var processed = xpz.procesado ? '<span class="tag tag-processed">YA PROCESADO</span>' : '';
+            return '<div class="file-row xpz-option"><span class="xpz-meta"><strong>' + escapeHtml(xpz.nombre) + '</strong><span class="xpz-subtitle"><small>' + escapeHtml(new Date(xpz.fecha).toLocaleString('es-AR')) + '</small>' + recent + processed + '</span></span><span class="xpz-actions"><button class="choose-xpz" type="button" data-xpz-name="' + escapeHtml(xpz.nombre) + '">Seleccionar</button><button class="validate-xpz-option" type="button" data-xpz-name="' + escapeHtml(xpz.nombre) + '"><span class="btn-spinner" aria-hidden="true"></span><span class="label-idle">Validar XPZ</span><span class="label-busy">Validando…</span></button></span></div>';
         }).join('') : '<div class="empty-state">No hay XPZ disponibles en este ambiente.</div>';
         if (!candidates.length) { return; }
         document.querySelectorAll('.choose-xpz').forEach(function (button) {
@@ -689,6 +703,26 @@
             showToast('Exportación iniciada.', 'info');
             pollWork();
         }).catch(function (error) { setButtonLoading(exportButton, false); setButtonLoading(updateServicesButton, false); setButtonLoading(document.getElementById('continue-operation'), false); showExportFallback(true); loadXpz(); showToast(error.message, 'err'); });
+    }
+
+    function abortOperation(jobId) {
+        if (!useServerApi() || !currentJobId || String(currentJobId) !== String(jobId)) { return; }
+        window.clearTimeout(pollingTimer);
+        pollingTimer = null;
+        fetch('/api/trabajos/' + encodeURIComponent(jobId) + '/cancelar', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-Panel-Token': window.PANEL_TOKEN || '' },
+            body: '{}'
+        }).then(function (response) { return response.json(); }).then(function (payload) {
+            if (!payload.ok) { throw new Error(payload.error || 'No se pudo cancelar la operación.'); }
+            renderWork(payload.data);
+            handleWorkResult(payload.data);
+            showToast('Operación cancelada. Se terminó el árbol de procesos.', 'warn');
+            pollWork();
+        }).catch(function (error) {
+            showToast(error.message, 'err');
+            pollWork();
+        });
     }
 
     /* ============ SERVICIOS / DOCUMENTACIÓN ============ */
@@ -875,7 +909,9 @@
             var finalStatus = payload.data.estadoVisible || payload.data.estado;
             var finalMessage = 'Trabajo finalizado: ' + finalStatus + ' (' + payload.data.contextId + ').';
             if (payload.data.error) { finalMessage += ' ' + payload.data.error; }
-            showToast(finalMessage, isError(finalStatus) ? 'err' : (String(finalStatus).indexOf('PARCIAL') >= 0 ? 'warn' : 'ok'));
+            var normalizedFinalStatus = String(finalStatus || '').toUpperCase();
+            var isWarningStatus = normalizedFinalStatus.indexOf('PARCIAL') >= 0 || ['CANCELADO', 'CANCELLED', 'ABORTED', 'ABORTADO', 'ADVERTENCIA'].indexOf(normalizedFinalStatus) >= 0;
+            showToast(finalMessage, isError(finalStatus) ? 'err' : (isWarningStatus ? 'warn' : 'ok'));
         }).catch(function () {
             pollingTimer = window.setTimeout(pollWork, 2000);
         });
@@ -908,20 +944,29 @@
 
     function confirmPdfGeneration() {
         if (!useServerApi() || currentJobId) { return; }
+        var confirmButton = document.getElementById('confirm-pdf-generation');
         var dashboardXpz = lastState && lastState.dashboard && lastState.dashboard.xpz;
         var activeXpz = dashboardXpz && dashboardXpz.activo;
         var activeXpzHash = dashboardXpz && dashboardXpz.sha256;
         if (!activeXpz || !activeXpzHash) { showToast('No hay un XPZ activo confirmado.', 'err'); return; }
         pdfConsoleVisible = true;
-        fetch('/api/generar-pdf', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Panel-Token': window.PANEL_TOKEN || '' }, body: JSON.stringify({ confirmRestart: true, xpz: { nombre: activeXpz.nombre, sha256: activeXpzHash } }) }).then(function (response) { return response.json(); }).then(function (payload) {
+        document.getElementById('pdf-work-card').setAttribute('operation', 'generarPdf');
+        operationResults.generarPdf = null;
+        document.getElementById('pdf-warning').hidden = true;
+        setButtonLoading(confirmButton, true);
+        renderOperationConsole('generarPdf');
+        fetch('/api/generar-pdf', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Panel-Token': window.PANEL_TOKEN || '' }, body: JSON.stringify({ scope: 'BATCH', confirmRestart: true, xpz: { nombre: activeXpz.nombre, sha256: activeXpzHash } }) }).then(function (response) { return response.json(); }).then(function (payload) {
             if (!payload.ok) { throw new Error(payload.error || 'No se pudo iniciar la generación de PDF.'); }
-            document.getElementById('pdf-warning').hidden = true;
             currentJobId = payload.data.jobId;
             setWorkBusy(true);
             setButtonLoading(document.getElementById('generate-pdf'), true);
             showToast('Generación de PDF iniciada.', 'info');
             pollWork();
-        }).catch(function (error) { showToast(error.message, 'err'); });
+        }).catch(function (error) {
+            document.getElementById('pdf-warning').hidden = false;
+            setButtonLoading(confirmButton, false);
+            showToast(error.message, 'err');
+        });
     }
 
     function showToast(message, type) {
@@ -1013,9 +1058,10 @@
                     contextActivationPending = false;
                     setContextActivationBusy(false);
                     setWorkBusy(false);
-                    showToast('Contexto activo: ' + payload.data.clienteNombre + ' / ' + payload.data.ambienteNombre, 'ok');
+                    var selectedEnvironment = (environments[clientDropdown.value] || []).filter(function (item) { return item.id === environmentDropdown.value; })[0];
+                    var activeEnvironmentType = payload.data.ambienteTipo || (selectedEnvironment && selectedEnvironment.tipo);
+                    showToast('Contexto activo: ' + payload.data.clienteNombre + ' / ' + nombreAmbienteCanonico(activeEnvironmentType, payload.data.ambienteNombre), 'ok');
                     if (payload.data && payload.data.xpz && payload.data.xpz.activo) { loadServices(); } else { endpointServices = []; renderDocumentationServices(''); renderDocumentation(''); }
-                    loadContextArtifacts();
                     loadState();
                     if (payload.jobId) { currentJobId = payload.jobId; setWorkBusy(true); pollWork(); }
                 } else {
@@ -1044,7 +1090,12 @@
     }
 
     function classifyLog(file) {
-        if (file.categoria) { return file.categoria; }
+        if (file.categoria) {
+            var category = String(file.categoria).toLowerCase();
+            if (category === 'info') { return 'ok'; }
+            if (category === 'warning') { return 'advertencia'; }
+            return category;
+        }
         var name = normalize(file.nombre);
         if (name.indexOf('review') >= 0) { return 'review'; }
         if (name.indexOf('validacion') >= 0) { return 'validacion'; }
@@ -1053,16 +1104,11 @@
 
     function logButton(file) {
         var label = classifyLog(file);
-        return '<button class="file-row log-button" type="button" data-log-name="' + escapeHtml(file.nombre) + '"><span>' + escapeHtml(file.nombre) + '</span><small>' + escapeHtml(statusLabel(label)) + ' | ' + file.bytes + ' bytes</small></button>';
+        return '<button class="file-row log-button" type="button" data-log-name="' + escapeHtml(file.nombre) + '"><span>' + escapeHtml(file.nombre) + '</span><small>' + escapeHtml(formatDateTime(file.modificado)) + ' | ' + escapeHtml(statusLabel(label)) + ' | ' + file.bytes + ' bytes</small></button>';
     }
 
     function renderLogs(filter) {
         var list = document.getElementById('log-list');
-        if (filter === 'review' || filter === 'validacion') {
-            list.innerHTML = '<button class="file-row report-button" type="button" data-report="' + filter + '">' + (filter === 'review' ? 'Último review' : 'Última validación') + ' <small>Leer inline</small></button>';
-            list.querySelector('.report-button').addEventListener('click', function () { loadReportContent(filter); });
-            return;
-        }
         var logs = contextLogs.filter(function (file) {
             var cat = classifyLog(file);
             return filter === 'todos' || cat === filter;
@@ -1097,7 +1143,14 @@
         fetch(paths[type], { cache: 'no-store' }).then(function (response) { return response.json(); }).then(function (payload) {
             var viewer = document.getElementById('log-viewer');
             viewer.hidden = false;
-            viewer.textContent = payload.ok && payload.data ? (payload.data.contenido || JSON.stringify(payload.data.contenido || payload.data, null, 2)) : 'No hay contenido disponible.';
+            var reportContent = payload.ok && payload.data ? payload.data.contenido : null;
+            if (typeof reportContent === 'string') {
+                viewer.textContent = reportContent;
+            } else if (reportContent && typeof reportContent === 'object') {
+                viewer.textContent = JSON.stringify(reportContent, null, 2);
+            } else {
+                viewer.textContent = 'No hay contenido disponible.';
+            }
         }).catch(function (error) { showToast(error.message, 'err'); });
     }
 
@@ -1134,23 +1187,27 @@
         configurationModalOrigin = document.activeElement;
         document.getElementById('configuration-original-id').value = values.originalId || '';
         document.getElementById('configuration-client-id').value = values.clientId || '';
-        document.getElementById('configuration-id').value = values.id || '';
+        document.getElementById('configuration-id').value = (values.id || '').toLowerCase();
         document.getElementById('configuration-id').disabled = Boolean(values.originalId);
         document.getElementById('configuration-name').value = values.name || '';
         document.getElementById('configuration-package').value = values.packageName || '';
-        document.getElementById('configuration-environment-id').value = values.environmentId || values.id || '';
+        var exportProfileField = document.getElementById('configuration-export-profile-field');
+        var exportProfile = values.geneXusExportProfile || (configurationData.configuration && configurationData.configuration.herramientas && configurationData.configuration.herramientas.geneXusExportProfile);
+        setConfigurationExportProfile(exportProfile);
+        var inferredEnvironment = getConfigurationEnvironmentDefaults(values.tipo);
+        document.getElementById('configuration-environment-id').value = values.environmentId || (values.originalId ? values.originalId : inferredEnvironment.id);
         document.getElementById('configuration-environment-id').disabled = Boolean(values.environmentId && values.originalId);
-        document.getElementById('configuration-environment-name').value = values.environmentName || values.name || '';
         document.getElementById('configuration-kb-path').value = values.kbPath || '';
         var clientFields = document.getElementById('configuration-client-fields');
         var environmentFields = document.getElementById('configuration-environment-fields');
-        var tipoSelect = document.getElementById('configuration-tipo');
+        var tipoRadios = document.querySelectorAll('input[name="configuration-tipo"]');
         var isEnvironment = Boolean(values.environment);
         var isNewClient = !isEnvironment && !values.originalId;
         clientFields.hidden = isEnvironment;
+        exportProfileField.hidden = !isNewClient;
         environmentFields.hidden = !(isEnvironment || isNewClient);
-        tipoSelect.value = clasificarTipo(values.tipo) === 'prod' ? 'prod' : 'test';
-        tipoSelect.disabled = Boolean(values.lockedTipo);
+        setConfigurationEnvironmentType(clasificarTipo(values.tipo) === 'prod' ? 'prod' : 'test');
+        tipoRadios.forEach(function (radio) { radio.disabled = Boolean(values.tipoInmutable) || (Boolean(values.lockedTipo) && radio.value !== values.lockedTipo); });
         document.getElementById('configuration-environment-legend').textContent = values.originalId ? 'Editar ambiente' : 'Primer ambiente';
         document.getElementById('configuration-modal-title').textContent = values.environment ? (values.originalId ? 'Editar ambiente' : 'Agregar ambiente') : (values.originalId ? 'Editar cliente' : 'Agregar cliente');
         document.getElementById('configuration-modal-message').textContent = values.environment ? 'Completa los datos del ambiente.' : (values.originalId ? 'Actualiza los datos del cliente.' : 'El cliente y su primer ambiente se guardarán juntos.');
@@ -1158,6 +1215,40 @@
         var modal = document.getElementById('configuration-modal');
         modal.hidden = false;
         focusFirstModalControl(modal);
+    }
+
+    function getConfigurationEnvironmentDefaults(tipo) {
+        return clasificarTipo(tipo) === 'prod' ? { id: 'produccion', name: 'PROD' } : { id: 'testing', name: 'TEST' };
+    }
+
+    function getConfigurationEnvironmentType() {
+        var selected = document.querySelector('input[name="configuration-tipo"]:checked');
+        return selected ? selected.value : '';
+    }
+
+    function setConfigurationEnvironmentType(tipo) {
+        document.querySelectorAll('input[name="configuration-tipo"]').forEach(function (radio) { radio.checked = radio.value === tipo; });
+    }
+
+    function normalizarPerfilExportacion(perfil) {
+        return String(perfil || '').trim().toLowerCase() === 'evo3' ? 'Evo3' : 'Gx18';
+    }
+
+    function getConfigurationExportProfile() {
+        var selected = document.querySelector('input[name="configuration-export-profile"]:checked');
+        return selected ? selected.value : '';
+    }
+
+    function setConfigurationExportProfile(perfil) {
+        var normalized = normalizarPerfilExportacion(perfil);
+        document.querySelectorAll('input[name="configuration-export-profile"]').forEach(function (radio) { radio.checked = radio.value === normalized; });
+    }
+
+    function syncInferredConfigurationEnvironment() {
+        var environmentId = document.getElementById('configuration-environment-id');
+        if (environmentId.disabled) { return; }
+        var defaults = getConfigurationEnvironmentDefaults(getConfigurationEnvironmentType());
+        environmentId.value = defaults.id;
     }
 
     function focusFirstModalControl(modal) {
@@ -1206,8 +1297,6 @@
 
     function validateConfigurationForm(isEnvironment, isEditing) {
         var fields = isEnvironment ? [
-            ['configuration-environment-id', 'El ambiente requiere un id.'],
-            ['configuration-environment-name', 'El ambiente requiere un nombre.'],
             ['configuration-kb-path', 'El ambiente requiere una ruta de KB.']
         ] : [
             ['configuration-id', 'El cliente requiere un id.'],
@@ -1216,8 +1305,6 @@
         ];
         if (!isEnvironment && !isEditing) {
             fields = fields.concat([
-                ['configuration-environment-id', 'El primer ambiente requiere un id.'],
-                ['configuration-environment-name', 'El primer ambiente requiere un nombre.'],
                 ['configuration-kb-path', 'El primer ambiente requiere una ruta de KB.']
             ]);
         }
@@ -1305,7 +1392,11 @@
             button.addEventListener('click', function () {
                 var client = findClient(button.dataset.clientId);
                 var environment = client ? (client.ambientes || []).filter(function (item) { return item.id === button.dataset.environmentId; })[0] : null;
-                if (environment) { openConfigurationModal({ environment: true, originalId: environment.id, environmentId: environment.id, environmentName: environment.nombre, kbPath: environment.kbPath, clientId: client.id, tipo: environment.tipo, lockedTipo: null }); }
+                if (environment) {
+                    var environmentTypes = (client.ambientes || []).map(function (item) { return clasificarTipo(item.tipo); });
+                    var hasBothEnvironmentTypes = environmentTypes.indexOf('test') >= 0 && environmentTypes.indexOf('prod') >= 0;
+                    openConfigurationModal({ environment: true, originalId: environment.id, environmentId: environment.id, kbPath: environment.kbPath, clientId: client.id, tipo: environment.tipo, lockedTipo: null, tipoInmutable: hasBothEnvironmentTypes });
+                }
             });
         });
         document.querySelectorAll('[data-action="delete-environment"]').forEach(function (button) {
@@ -1345,6 +1436,12 @@
 
     /* ============ EVENTOS ============ */
     function bindEvents() {
+        document.addEventListener('operation-abort', function (event) {
+            abortOperation(event.detail && event.detail.jobId);
+        });
+        document.addEventListener('operation-go-pdf', function () {
+            selectTab('endpoints');
+        });
         clientDropdown.setOnChange(function () {
             if (contextLocked) { return; }
             environmentDropdown.value = '';
@@ -1394,6 +1491,9 @@
         document.getElementById('confirm-pdf-generation').addEventListener('click', confirmPdfGeneration);
         document.getElementById('cancel-pdf-generation').addEventListener('click', function () { document.getElementById('pdf-warning').hidden = true; });
         document.getElementById('log-filter').addEventListener('change', function (event) {
+            var viewer = document.getElementById('log-viewer');
+            viewer.hidden = true;
+            viewer.textContent = '';
             renderLogs(event.target.value);
             if (window.panelUiPreferences) {
                 var logPreferences = window.panelUiPreferences.read();
@@ -1422,8 +1522,10 @@
             event.preventDefault();
             var originalId = document.getElementById('configuration-original-id').value;
             var clientId = document.getElementById('configuration-client-id').value;
-            var id = document.getElementById('configuration-id').value.trim();
+            var id = document.getElementById('configuration-id').value.trim().toLowerCase();
             var name = document.getElementById('configuration-name').value.trim();
+            var environmentType = getConfigurationEnvironmentType();
+            syncInferredConfigurationEnvironment();
             var configHash = configurationData.configHash || '';
             if (!configHash) { showToast('No hay configuración vigente.', 'err'); return; }
             var isEnvironment = Boolean(clientId);
@@ -1434,20 +1536,23 @@
             if (isEnvironment) {
                 url = '/api/configuracion/clientes/' + encodeURIComponent(clientId) + '/ambientes' + (isEditing ? '/' + encodeURIComponent(originalId) : '');
                 method = isEditing ? 'PUT' : 'POST';
-                body = { configHash: configHash, data: { id: document.getElementById('configuration-environment-id').value.trim(), nombre: document.getElementById('configuration-environment-name').value.trim(), tipo: document.getElementById('configuration-tipo').value, kbPath: document.getElementById('configuration-kb-path').value.trim() } };
+                body = { configHash: configHash, data: { tipo: environmentType, kbPath: document.getElementById('configuration-kb-path').value.trim() } };
             } else {
                 url = '/api/configuracion/clientes' + (isEditing ? '/' + encodeURIComponent(originalId) : '');
                 method = isEditing ? 'PUT' : 'POST';
                 var existingClient = ((configurationSnapshot && configurationSnapshot.clientes) || []).filter(function (item) { return item.id === (clientId || originalId); })[0];
                 var clientData = { id: id, nombre: name, packagename: document.getElementById('configuration-package').value.trim(), serviciosIgnorados: existingClient ? existingClient.serviciosIgnorados : [] };
                 if (!isEditing) {
-                    clientData.ambientes = [{ id: document.getElementById('configuration-environment-id').value.trim(), nombre: document.getElementById('configuration-environment-name').value.trim(), tipo: document.getElementById('configuration-tipo').value, kbPath: document.getElementById('configuration-kb-path').value.trim() }];
+                    clientData.geneXusExportProfile = getConfigurationExportProfile();
+                    clientData.ambientes = [{ tipo: environmentType, kbPath: document.getElementById('configuration-kb-path').value.trim() }];
                 }
                 body = { configHash: configHash, data: clientData };
             }
             if (!validateConfigurationForm(isEnvironment, isEditing)) { return; }
             configurationRequest(url, method, body).catch(function () { });
         });
+        document.getElementById('configuration-id').addEventListener('input', function (event) { event.target.value = event.target.value.toLowerCase(); });
+        document.querySelectorAll('input[name="configuration-tipo"]').forEach(function (radio) { radio.addEventListener('change', syncInferredConfigurationEnvironment); });
         document.getElementById('theme-toggle').addEventListener('click', function () {
             var nextTheme = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
             document.documentElement.setAttribute('data-theme', nextTheme);

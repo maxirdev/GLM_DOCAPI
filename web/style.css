@@ -57,6 +57,7 @@
     --del-bg: #efe9f7; --del-fg: #6b3fa0; --del-bd: #d5c6ec;
     --nochg-bg: #e7edf2; --nochg-fg: #45607a; --nochg-bd: #c2d0dc;
     --stale-bg: #f0e6fb; --stale-fg: #7b3fd1; --stale-bd: #dcc6f5;
+    --processed-bg: #f3e8ff; --processed-fg: #7c3aed; --processed-bd: #d8b4fe;
 
     --shadow: 0 1px 2px rgba(16, 24, 40, .06), 0 1px 3px rgba(16, 24, 40, .10);
     --shadow-lg: 0 10px 30px rgba(16, 24, 40, .14);
@@ -92,6 +93,7 @@ html[data-theme="dark"] {
     --del-bg: #241a35; --del-fg: #bda0ec; --del-bd: #443464;
     --nochg-bg: #182430; --nochg-fg: #8fb0cc; --nochg-bd: #2c4155;
     --stale-bg: #241633; --stale-fg: #c69cf5; --stale-bd: #46265f;
+    --processed-bg: #2a1a3e; --processed-fg: #c9a4f5; --processed-bd: #55339e;
 
     --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 1px 3px rgba(0, 0, 0, .5);
     --shadow-lg: 0 12px 34px rgba(0, 0, 0, .55);
@@ -387,6 +389,7 @@ body[data-job="on"] .job-indicator { display: inline-flex; }
 .tag-produccion { background: var(--ok-bg); color: var(--ok-fg); border-color: var(--ok-bd); }
 .tag-selected { background: var(--ok-bg); color: var(--ok-fg); border-color: var(--ok-bd); }
 .tag-recent { background: var(--brand-weak); color: var(--brand); border-color: var(--brand); }
+.tag-processed { background: var(--processed-bg); color: var(--processed-fg); border-color: var(--processed-bd); }
 
 /* ============ DASHBOARD ============ */
 .summary-grid { display: grid; gap: 14px; grid-template-columns: repeat(4, minmax(0, 1fr)); margin-bottom: 18px; }
@@ -482,6 +485,7 @@ body[data-job="on"] .job-indicator { display: inline-flex; }
     white-space: pre-wrap;
 }
 .work-card pre .spin-line { display: inline-flex; align-items: center; gap: 8px; }
+#log-viewer { white-space: pre; overflow-x: auto; overflow-y: auto; }
 
 /* ============ SPINNERS ============ */
 .spinner {
@@ -714,6 +718,10 @@ code { color: var(--brand); font-size: 12px; overflow-wrap: anywhere; }
 .form-grid label { color: var(--text-muted); display: grid; font-size: 12px; font-weight: 600; gap: 5px; }
 .form-grid fieldset { border: 1px solid var(--border); border-radius: var(--radius-sm); display: grid; gap: 13px; margin: 0; padding: 13px; }
 .form-grid legend { color: var(--text); font-size: 12px; font-weight: 700; padding: 0 5px; }
+.form-grid #configuration-tipo-field, .form-grid #configuration-export-profile-field { align-items: center; display: flex; gap: 13px; padding: 8px 13px; }
+.form-grid #configuration-tipo-field legend, .form-grid #configuration-export-profile-field legend { margin-right: 2px; }
+.form-grid #configuration-tipo-field label, .form-grid #configuration-export-profile-field label { align-items: center; display: inline-flex; gap: 6px; white-space: nowrap; }
+.form-grid #configuration-tipo-field input[type="radio"], .form-grid #configuration-export-profile-field input[type="radio"] { accent-color: var(--brand); height: 15px; margin: 0; min-height: 15px; padding: 0; width: 15px; }
 .modal-actions { align-items: center; display: flex; gap: 8px; justify-content: flex-end; margin-top: auto; padding-top: 18px; }
 .modal-actions button { border-color: transparent; }
 .modal > .action-card { justify-content: flex-end; margin-top: auto; }
@@ -781,19 +789,41 @@ code { color: var(--brand); font-size: 12px; overflow-wrap: anywhere; }
 .service-details dd { margin: 0; overflow-wrap: anywhere; }
 .service-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 17px; }
 .example-console { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); color: var(--text); display: flex; flex-direction: column; margin-top: 18px; max-height: min(560px, 60vh); overflow: hidden; padding: 0; }
-.example-console .work-card-heading { border-bottom: 1px solid var(--border); margin-bottom: 0; padding: 14px 17px; }
-.example-console .console-body { min-height: 0; overflow-x: hidden; overflow-y: auto; }
-.example-console p { color: inherit; padding: 14px 17px 0; }
-.example-console .console-error-message { color: var(--err-fg); padding-top: 10px; }
-.example-console .console-progress-label { color: var(--text-muted); font-size: 11px; padding-top: 10px; }
-.example-console pre { background: transparent; border: 0; border-radius: 0; color: var(--text-muted); font: 12px/1.7 var(--font-mono); margin: 0; max-height: none; min-height: 130px; overflow: visible; padding: 16px 17px; white-space: pre-wrap; }
-.example-console glm-progress { display: block; margin: 0 17px 14px; }
+.example-console .work-card-heading { align-items: stretch; border-bottom: 1px solid var(--border); flex-direction: column; margin-bottom: 0; padding: 10px 14px; }
+.example-console .work-card-heading { position: sticky; top: 0; z-index: 2; background: var(--surface); }
+.example-console-header-main { align-items: center; display: flex; gap: 10px; justify-content: space-between; min-width: 0; }
+.example-console-progress { margin-top: 6px; }
+.example-console-progress-label { align-items: center; color: var(--text-muted); display: flex; font-size: 11px; justify-content: space-between; margin-bottom: 3px; }
+.example-console-progress-label strong { color: var(--text); font-size: 12px; }
+.example-console-progress glm-progress { display: block; margin: 0; }
+.example-console .console-body { flex: 1 1 auto; min-height: 0; overflow-x: hidden; overflow-y: auto; }
+.example-console p { color: inherit; line-height: 1.35; margin: 0; padding: 9px 14px 0; }
+.example-console .console-error-message, .example-console .console-warning-message { padding-top: 6px; }
+.example-console .console-error-message { color: var(--err-fg); }
+.example-console .console-warning-message { color: var(--warn-fg); }
+.example-console .console-success-message { align-items: center; color: var(--ok-fg); display: flex; flex-wrap: wrap; gap: 10px; line-height: 1.35; padding: 7px 14px 0; }
+.example-console .console-success-message strong { color: var(--ok-fg); }
+.example-console .console-pdf-button { border-color: var(--ok-fg); color: var(--ok-fg); min-height: 30px; padding: 4px 10px; }
+.example-console .console-pdf-button:hover { background: color-mix(in srgb, var(--ok-fg) 10%, transparent); }
+.example-console pre { background: transparent; border: 0; border-radius: 0; color: var(--text-muted); font: 12px/1.5 var(--font-mono); margin: 0; max-height: none; min-height: 100px; min-width: 0; overflow: visible; overflow-wrap: anywhere; padding: 8px 14px 11px; white-space: pre-wrap; width: 100%; box-sizing: border-box; }
+.example-console .console-output-line { display: block; max-width: 100%; overflow-wrap: anywhere; white-space: pre-wrap; }
+.example-console .console-line-step { color: var(--brand); font-weight: 700; }
+.example-console .console-line-meta { color: var(--text-faint); }
+.example-console .console-line-success { color: var(--ok-fg); }
+.example-console .console-line-warning { color: var(--warn-fg); }
+.example-console .console-line-error { color: var(--err-fg); font-weight: 700; }
+.example-console .console-actions { border-top: 1px solid var(--border); flex: 0 0 auto; display: flex; justify-content: flex-end; padding: 8px 14px; }
+.example-console .console-abort-button { border-color: var(--err-fg); color: var(--err-fg); }
+.example-console .console-abort-button:hover { background: color-mix(in srgb, var(--err-fg) 10%, transparent); }
 .example-console .component-progress-track { background: var(--surface-3); }
 .example-console .component-progress-value { background: var(--brand); }
+.example-console .console-progress-error .component-progress-value { background: var(--err-fg); }
+.example-console .console-progress-warning .component-progress-value { background: var(--warn-fg); }
 html[data-theme="dark"] .example-console { background: #11161d; border-color: #293241; color: #d9e2ef; }
 html[data-theme="dark"] .example-console .work-card-heading { border-bottom-color: #293241; }
 html[data-theme="dark"] .example-console pre { color: #a9b8cb; }
 html[data-theme="dark"] .example-console .console-error-message { color: #ff9b9b; }
+html[data-theme="dark"] .example-console .console-actions { border-top-color: #293241; }
 html[data-theme="dark"] .example-console .component-progress-track { background: #293241; }
 .example-dialog { border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); color: var(--text); box-shadow: var(--shadow-lg); max-width: 560px; padding: 22px; width: calc(100% - 32px); }
 .example-dialog::backdrop { background: rgba(10, 15, 24, .56); }

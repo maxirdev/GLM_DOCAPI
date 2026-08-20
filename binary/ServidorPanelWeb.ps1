@@ -18,6 +18,7 @@ if ([string]::IsNullOrWhiteSpace($ConfigPath)) {
     $ConfigPath = Join-Path $RepositoryRoot 'configuracion.json'
 }
 
+. (Join-Path $PSScriptRoot 'GLMUtilidades.ps1')
 . (Join-Path $PSScriptRoot 'CargarConfiguracion.ps1')
 . (Join-Path $PSScriptRoot 'AnalizarServicio.ps1')
 . (Join-Path $PSScriptRoot 'CargarMultiXPZ.ps1')
@@ -27,6 +28,7 @@ if ([string]::IsNullOrWhiteSpace($ConfigPath)) {
 Inicializar-ConsolaUtf8
 
 $script:SessionToken = [Guid]::NewGuid().ToString('N')
+$script:PanelServerVersion = '20260820-msbuild-timeout-cleanup-v4'
 $script:ConfigurationRaw = $null
 $script:ConfigurationErrors = New-Object System.Collections.Generic.List[string]
 $script:ActiveContext = $null
@@ -35,6 +37,8 @@ $script:XpzOverride = $false
 $script:CurrentWork = $null
 $script:LastFinishedWork = $null
 $script:Listener = $null
+$script:WorkOutputTimestampCache = @{}
+$script:XpzSha256ProcesadoCache = $null
 
 function Read-PanelConfiguration {
     try {
@@ -59,7 +63,7 @@ function Get-ConfiguredContexts {
                 clienteId = [string]$client.id
                 clienteNombre = [string]$client.nombre
                 ambienteId = [string]$environment.id
-                ambienteNombre = [string]$environment.nombre
+                ambienteNombre = Obtener-NombreAmbienteCanonico -Tipo (Clasificar-TipoAmbiente -Tipo ([string]$environment.tipo))
                 ambienteTipo = Clasificar-TipoAmbiente -Tipo ([string]$environment.tipo)
                 contextId = ([string]$client.id + '/' + [string]$environment.id)
             })
@@ -73,19 +77,137 @@ function Get-ActiveXpzCandidates {
     return @(Obtener-XpzPrincipalesDesdeDirectorio -DirectorioXpz $script:ActiveContext.DirectorioXpz)
 }
 
+function Get-XpzSha256Procesado {
+    if ($null -eq $script:ActiveContext) { return '' }
+    $rutaControl = $script:ActiveContext.RutaControl
+    if ([string]::IsNullOrWhiteSpace($rutaControl) -or -not (Test-Path -LiteralPath $rutaControl -PathType Leaf)) { return '' }
+    try {
+        $marca = (Get-Item -LiteralPath $rutaControl).LastWriteTimeUtc.Ticks
+        if ($script:XpzSha256ProcesadoCache -and $script:XpzSha256ProcesadoCache.Marca -eq $marca) {
+            return $script:XpzSha256ProcesadoCache.Valor
+        }
+        $control = Leer-ControlVersiones -RutaControl $rutaControl
+        $sha = [string](Obtener-PropiedadControlVersiones -Objeto $control -Nombre 'xpzSha256')
+        if ([string]::IsNullOrWhiteSpace($sha)) { $sha = '' }
+        $script:XpzSha256ProcesadoCache = @{ Marca = $marca; Valor = $sha }
+        return $sha
+    } catch { return '' }
+}
+
 function Convert-XpzForResponse {
     param([Parameter(Mandatory = $true)]$Xpz)
+    $procesado = $false
+    $shaProcesado = Get-XpzSha256Procesado
+    if (-not [string]::IsNullOrWhiteSpace($shaProcesado) -and -not [string]::IsNullOrWhiteSpace([string]$Xpz.Ruta) -and (Test-Path -LiteralPath $Xpz.Ruta -PathType Leaf)) {
+        try { $procesado = (Obtener-Sha256Archivo -Ruta $Xpz.Ruta) -ceq $shaProcesado } catch { $procesado = $false }
+    }
     return [pscustomobject]@{
         nombre = $Xpz.Nombre
         ruta = $Xpz.Ruta
         fecha = $Xpz.Fecha.ToUniversalTime().ToString('o')
         principal = [bool]$Xpz.EsPrincipal
         activo = ($null -ne $script:ActiveXpz -and $script:ActiveXpz.Ruta -eq $Xpz.Ruta)
+        procesado = $procesado
     }
 }
 
 function Test-WorkInProgress {
     return ($null -ne $script:CurrentWork -and [string]$script:CurrentWork.estado -in @('QUEUED', 'RUNNING'))
+}
+
+function Get-PanelOperationTimeoutSeconds {
+    $defaultTimeout = 300
+    if ($null -eq $script:ConfigurationRaw -or $null -eq $script:ConfigurationRaw.panel) { return $defaultTimeout }
+    $rawValue = $script:ConfigurationRaw.panel.timeoutOperacionSegundos
+    $timeout = 0
+    if ([int]::TryParse([string]$rawValue, [ref]$timeout) -and $timeout -gt 0) { return $timeout }
+    return $defaultTimeout
+}
+
+function Get-PanelProcessTreeIds {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][int]$RootProcessId
+    )
+
+    $ids = New-Object System.Collections.Generic.List[int]
+    $pending = New-Object System.Collections.Generic.Queue[int]
+    $pending.Enqueue($RootProcessId)
+    $processes = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue)
+    $rootExists = @($processes | Where-Object { [int]$_.ProcessId -eq $RootProcessId }).Count -gt 0
+    if ($rootExists) { [void]$ids.Add($RootProcessId) }
+
+    while ($pending.Count -gt 0) {
+        $parentId = $pending.Dequeue()
+        foreach ($process in @($processes | Where-Object { [int]$_.ParentProcessId -eq $parentId })) {
+            $childId = [int]$process.ProcessId
+            if (-not $ids.Contains($childId)) {
+                [void]$ids.Add($childId)
+                $pending.Enqueue($childId)
+            }
+        }
+    }
+
+    return @($ids)
+}
+
+function Stop-PanelProcessTree {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][int]$RootProcessId
+    )
+
+    if ($RootProcessId -le 0) { return @() }
+    $knownIds = @(Get-PanelProcessTreeIds -RootProcessId $RootProcessId)
+    if ($knownIds.Count -eq 0) { return @() }
+
+    try {
+        & taskkill.exe /PID $RootProcessId /T /F 2>&1 | Out-Null
+    } catch { }
+
+    # taskkill termina el arbol en condiciones normales. La segunda pasada
+    # cubre procesos que hayan aparecido entre el relevamiento y el kill.
+    $remainingIds = @()
+    for ($attempt = 0; $attempt -lt 10; $attempt++) {
+        Start-Sleep -Milliseconds 150
+        $remainingIds = @(Get-PanelProcessTreeIds -RootProcessId $RootProcessId | Where-Object { $_ -ne $PID })
+        if ($remainingIds.Count -eq 0) { break }
+        foreach ($processId in ($remainingIds | Sort-Object -Descending)) {
+            Stop-Process -Id $processId -Force -ErrorAction SilentlyContinue
+        }
+    }
+    return @($remainingIds)
+}
+
+function Stop-PanelOrphanedMsbuild {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]$Context
+    )
+
+    $processes = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue)
+    if ($processes.Count -eq 0) { return @() }
+    $liveIds = @{}
+    foreach ($process in $processes) { $liveIds[[int]$process.ProcessId] = $true }
+    $markers = @(
+        [string]$RepositoryRoot,
+        [string]$Context.KbPath,
+        'ExportarXPZ',
+        'GenerarPdfServicios',
+        'GenerarDocumento'
+    ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+    $terminated = New-Object System.Collections.Generic.List[int]
+    foreach ($process in @($processes | Where-Object { [string]$_.Name -ieq 'MSBuild.exe' })) {
+        $commandLine = [string]$process.CommandLine
+        if ([string]::IsNullOrWhiteSpace($commandLine) -or -not (@($markers | Where-Object { $commandLine.IndexOf($_, [System.StringComparison]::OrdinalIgnoreCase) -ge 0 }).Count -gt 0)) { continue }
+        $parentId = [int]$process.ParentProcessId
+        if ($parentId -gt 0 -and $liveIds.ContainsKey($parentId)) { continue }
+        try {
+            & taskkill.exe /PID ([int]$process.ProcessId) /T /F 2>&1 | Out-Null
+            [void]$terminated.Add([int]$process.ProcessId)
+        } catch { }
+    }
+    return @($terminated)
 }
 
 function Get-WorkStatusFromExitCode {
@@ -107,6 +229,7 @@ function Get-VisibleWorkStatus {
     switch ($TechnicalStatus) {
         'COMPLETED' { return 'COMPLETADO' }
         'PARTIAL' { return 'COMPLETADO PARCIALMENTE' }
+        'ABORTED' { return 'CANCELADO' }
         default { return 'ERROR' }
     }
 }
@@ -122,14 +245,32 @@ function Get-LatestValidXpz {
     return $null
 }
 
+function Get-TimestampedWorkLines {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return @() }
+    $rawLines = @(Get-Content -LiteralPath $Path -ErrorAction SilentlyContinue)
+    $key = [System.IO.Path]::GetFullPath($Path)
+    if (-not $script:WorkOutputTimestampCache.ContainsKey($key) -or $script:WorkOutputTimestampCache[$key].Count -gt $rawLines.Count) {
+        $script:WorkOutputTimestampCache[$key] = New-Object System.Collections.Generic.List[string]
+    }
+    $cached = $script:WorkOutputTimestampCache[$key]
+    for ($index = $cached.Count; $index -lt $rawLines.Count; $index++) {
+        $line = [string]$rawLines[$index]
+        if ($line -match '^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}\]') {
+            [void]$cached.Add($line)
+        } else {
+            [void]$cached.Add(('[' + (Get-Date).ToString('yyyy-MM-dd HH:mm') + '] ' + $line))
+        }
+    }
+    return @($cached.ToArray())
+}
+
 function Get-WorkTail {
     param([Parameter(Mandatory = $true)]$Work)
     $lines = New-Object System.Collections.Generic.List[string]
     foreach ($path in @($Work.stdoutPath, $Work.stderrPath)) {
         if ([string]::IsNullOrWhiteSpace([string]$path)) { continue }
-        if (Test-Path -LiteralPath $path -PathType Leaf) {
-            foreach ($line in @(Get-Content -LiteralPath $path -Tail 20 -ErrorAction SilentlyContinue)) { [void]$lines.Add([string]$line) }
-        }
+        foreach ($line in @(Get-TimestampedWorkLines -Path $path | Select-Object -Last 20)) { [void]$lines.Add([string]$line) }
     }
     return @($lines | Select-Object -Last 20)
 }
@@ -143,10 +284,58 @@ function Get-WorkFullOutput {
     )) {
         [void]$sections.Add('===== ' + $definition.Nombre + ' =====')
         if (Test-Path -LiteralPath $definition.Ruta -PathType Leaf) {
-            [void]$sections.Add([System.IO.File]::ReadAllText($definition.Ruta, [System.Text.Encoding]::UTF8))
+            [void]$sections.Add((Get-TimestampedWorkLines -Path $definition.Ruta) -join [Environment]::NewLine)
         }
     }
     return ($sections -join [Environment]::NewLine)
+}
+
+function Get-WorkHeartbeatUtc {
+    param([Parameter(Mandatory = $true)]$Work)
+    $heartbeat = $null
+    try { $heartbeat = [datetime]::Parse([string]$Work.ultimaActividad).ToUniversalTime() } catch { }
+    if ($null -eq $heartbeat) {
+        try { $heartbeat = [datetime]::Parse([string]$Work.inicio).ToUniversalTime() } catch { }
+    }
+    return $heartbeat
+}
+
+function Complete-WorkAsAborted {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]$Work,
+        [Parameter(Mandatory = $true)][string]$Reason
+    )
+
+    $Work.codigoSalida = 3
+    $Work.estado = 'ABORTED'
+    $Work.error = $Reason
+    $Work.fin = (Get-Date).ToUniversalTime().ToString('o')
+    $Work.progreso = [pscustomobject]@{ indeterminado = $false; porcentaje = 100 }
+    $fullOutput = Get-WorkFullOutput -Work $Work
+    if ($Work.PSObject.Properties['operationLogPath'] -and -not [string]::IsNullOrWhiteSpace([string]$Work.operationLogPath)) {
+        [System.IO.File]::WriteAllText($Work.operationLogPath, $fullOutput, (New-Object System.Text.UTF8Encoding($false)))
+    }
+    if ($Work.PSObject.Properties['operationManifestPath'] -and -not [string]::IsNullOrWhiteSpace([string]$Work.operationManifestPath)) {
+        Write-OperationRecord -Work $Work
+    }
+    $script:LastFinishedWork = $Work
+    $script:CurrentWork = $null
+    return $Work
+}
+
+function Get-WorkOutputErrors {
+    param(
+        [Parameter(Mandatory = $true)][string]$Output
+    )
+
+    return @($Output -split "`r?`n" | ForEach-Object { $_.Trim() } | Where-Object {
+        $_ -and (
+            $_ -match '(?i)^\s*(ERROR\b|FATAL\b|EXCEPTION\b|MSB\d{4}\b)' -or
+            $_ -match '(?i)\b(ERROR|FATAL|EXCEPTION)\s*:' -or
+            $_ -match '(?i)\b(RESULTADO|ESTADO)\s*:\s*(ERROR|FAILED|FATAL)\b'
+        )
+    } | Select-Object -Unique)
 }
 
 function Get-OperationType {
@@ -159,6 +348,7 @@ function Get-OperationSeverity {
     switch ($TechnicalStatus) {
         'PARTIAL' { return 'WARNING' }
         'COMPLETED' { return 'INFO' }
+        'ABORTED' { return 'WARNING' }
         'QUEUED' { return 'INFO' }
         'RUNNING' { return 'INFO' }
         default { return 'ERROR' }
@@ -268,6 +458,24 @@ function Update-CurrentWork {
     if ($null -eq $script:CurrentWork) { return }
     $work = $script:CurrentWork
     if ([string]$work.estado -notin @('QUEUED', 'RUNNING')) { return }
+    $ultimaActividad = Get-WorkHeartbeatUtc -Work $work
+    if ($null -ne $ultimaActividad -and ((Get-Date).ToUniversalTime() - $ultimaActividad).TotalSeconds -ge (Get-PanelOperationTimeoutSeconds)) {
+        $rootProcessId = 0
+        try { $rootProcessId = [int]$work.process.Id } catch { }
+        $remainingIds = if ($rootProcessId -gt 0) { @(Stop-PanelProcessTree -RootProcessId $rootProcessId) } else { @(1) }
+        if ($remainingIds.Count -eq 0) {
+            if ($script:ActiveContext) { Stop-PanelOrphanedMsbuild -Context $script:ActiveContext | Out-Null }
+                $timeout = Get-PanelOperationTimeoutSeconds
+                $timeoutReason = ('La operaci' + [char]0xF3 + 'n super' + [char]0xF3 + ' el timeout configurado de ' + $timeout + ' segundos.')
+                Complete-WorkAsAborted -Work $work -Reason $timeoutReason | Out-Null
+            return
+        }
+        # Si todavía queda algún descendiente, se conserva el trabajo activo
+        # para que la siguiente consulta vuelva a intentar el cierre del árbol.
+        $work.estado = 'RUNNING'
+        $work.progreso = [pscustomobject]@{ indeterminado = $true; porcentaje = $null }
+        return
+    }
     if (-not $work.process.HasExited) {
         $work.estado = 'RUNNING'
         $work.progreso = [pscustomobject]@{ indeterminado = $true; porcentaje = $null }
@@ -276,7 +484,24 @@ function Update-CurrentWork {
 
     $work.codigoSalida = [int]$work.process.ExitCode
     $work.estado = Get-WorkStatusFromExitCode -ExitCode $work.codigoSalida
+    $fullOutput = Get-WorkFullOutput -Work $work
+    $outputErrors = @(Get-WorkOutputErrors -Output $fullOutput)
+    if ($outputErrors.Count -gt 0) {
+        if ($work.estado -ne 'FAILED') {
+            $work.codigoSalida = 1
+            $work.estado = 'FAILED'
+        }
+        if ([string]::IsNullOrWhiteSpace([string]$work.error)) {
+            $work.error = ($outputErrors -join ' | ')
+        }
+    }
     if ([string]$work.operacion -eq 'EXPORTAR_XPZ') {
+        $confirmoValidacionFinal = $fullOutput -match '(?im)^XPZ completo y sin exportaciones adicionales\.$'
+        if ($work.codigoSalida -eq 0 -and -not $confirmoValidacionFinal) {
+            $work.codigoSalida = 1
+            $work.estado = 'FAILED'
+            $work.error = 'La exportacion termino sin confirmar la validacion final del XPZ.'
+        }
         $validXpz = if ($work.codigoSalida -eq 0) { Get-LatestValidXpz } else { $null }
         if ($null -ne $validXpz) {
             $script:ActiveXpz = $validXpz
@@ -293,14 +518,38 @@ function Update-CurrentWork {
     }
     $work.fin = (Get-Date).ToUniversalTime().ToString('o')
     $work.progreso = [pscustomobject]@{ indeterminado = $false; porcentaje = 100 }
-    $output = Get-WorkTail -Work $work
-    $header = 'Trabajo ' + $work.id + ' | ' + $work.operacion + ' | codigo ' + $work.codigoSalida
-    [System.IO.File]::WriteAllText($work.operationLogPath, (Get-WorkFullOutput -Work $work), (New-Object System.Text.UTF8Encoding($false)))
+    [System.IO.File]::WriteAllText($work.operationLogPath, $fullOutput, (New-Object System.Text.UTF8Encoding($false)))
     if ($work.codigoSalida -eq 3) { $work.error = 'Operacion abortada.' }
     if ($work.codigoSalida -eq 1 -and [string]::IsNullOrWhiteSpace([string]$work.error)) { $work.error = 'El proceso hijo termino con errores.' }
     Write-OperationRecord -Work $work
     $script:LastFinishedWork = $work
     $script:CurrentWork = $null
+}
+
+function Cancel-CurrentWork {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$JobId
+    )
+
+    Update-CurrentWork
+    $work = $script:CurrentWork
+    if ($null -eq $work -or [string]$work.id -ne $JobId -or [string]$work.estado -notin @('QUEUED', 'RUNNING')) {
+        throw 'No existe una operación activa con ese identificador.'
+    }
+
+    $rootProcessId = 0
+    if ($work.process) {
+        try { $rootProcessId = [int]$work.process.Id } catch { $rootProcessId = 0 }
+    }
+    if ($rootProcessId -le 0) { throw 'La operación no tiene un proceso raíz cancelable.' }
+
+    $remainingIds = @(Stop-PanelProcessTree -RootProcessId $rootProcessId)
+    if ($remainingIds.Count -gt 0) {
+        throw ('No se pudo terminar completamente el árbol de procesos: ' + ($remainingIds -join ', ') + '.')
+    }
+
+    return Complete-WorkAsAborted -Work $work -Reason ('Operaci' + [char]0xF3 + 'n cancelada por el usuario.')
 }
 
 function Quote-ProcessArgument {
@@ -311,6 +560,7 @@ function Quote-ProcessArgument {
 function Start-ValidationWork {
     param([Parameter(Mandatory = $false)]$RequestBody)
     if ($null -eq $script:ActiveContext) { throw 'No hay un contexto activo.' }
+    Limpiar-LogsEjecucion -DirectorioLogs $script:ActiveContext.DirectorioLogs
     if ($RequestBody -and $RequestBody.nombre) {
         $selected = @(Get-ActiveXpzCandidates | Where-Object { $_.Nombre -ceq [string]$RequestBody.nombre })
         if ($selected.Count -ne 1) { throw 'El XPZ indicado no pertenece al contexto activo.' }
@@ -342,9 +592,23 @@ function Start-PdfGenerationWork {
         $confirmedXpzHash -ine $currentXpzHash) {
         throw 'PRECONDICION_XPZ: El XPZ activo o su SHA-256 cambio; confirme nuevamente.'
     }
+    Limpiar-LogsEjecucion -DirectorioLogs $script:ActiveContext.DirectorioLogs
+    $scope = [string]$RequestBody.scope
+    if ([string]::IsNullOrWhiteSpace($scope)) { $scope = 'BATCH' }
+    if ($scope -notin @('BATCH', 'INDIVIDUAL')) { throw 'scope debe ser BATCH o INDIVIDUAL.' }
+    $selectedNames = @()
+    if ($scope -eq 'INDIVIDUAL') {
+        $selectedName = [string]$RequestBody.fullyQualifiedName
+        if ([string]::IsNullOrWhiteSpace($selectedName)) { throw 'INDIVIDUAL requiere fullyQualifiedName.' }
+        $index = Cargar-IndiceMultiXPZ -RutaXpzPrincipal $script:ActiveXpz.Ruta
+        $knownNames = @(Obtener-ServiciosHttpDesdeIndice -Indice $index | ForEach-Object { [string]$_.proceso })
+        if ($knownNames -notcontains $selectedName) { throw ('El FQN no pertenece al inventario activo: ' + $selectedName) }
+        if (@($script:ActiveContext.ServiciosIgnorados) -contains $selectedName) { throw ('El servicio esta ignorado: ' + $selectedName) }
+        $selectedNames = @($selectedName)
+    }
     $jobsDirectory = Join-Path $script:ActiveContext.DirectorioLogs 'panel-jobs'
     New-Item -ItemType Directory -Path $jobsDirectory -Force | Out-Null
-    $manifest = Crear-ManifiestoEjecucion -Xpz $script:ActiveXpz.Ruta -FullyQualifiedNames @() -DirectorioBase (Join-Path $jobsDirectory ('pdf-' + (Get-Date -Format 'yyyyMMdd-HHmmss'))) -Contexto $script:ActiveContext
+    $manifest = Crear-ManifiestoEjecucion -Xpz $script:ActiveXpz.Ruta -FullyQualifiedNames $selectedNames -DirectorioBase (Join-Path $jobsDirectory ('pdf-' + (Get-Date -Format 'yyyyMMdd-HHmmss'))) -Contexto $script:ActiveContext
     $scriptPath = Join-Path $RepositoryRoot 'binary\GenerarPdfPanel.ps1'
     $arguments = @('-File', $scriptPath, '-Repositorio', $RepositoryRoot, '-ConfigPath', $ConfigPath, '-XpzActivo', $script:ActiveXpz.Ruta, '-ManifiestoPath', $manifest.Ruta)
     return Start-PanelChildWork -Operation 'GENERAR_PDF' -ScriptPath $scriptPath -ArgumentValues $arguments -Context $script:ActiveContext
@@ -458,6 +722,7 @@ function Start-EndpointGenerationWork {
         estado = 'RUNNING'
         log = $logPath
         inicio = (Get-Date).ToUniversalTime().ToString('o')
+        ultimaActividad = (Get-Date).ToUniversalTime().ToString('o')
         fin = $null
         codigoSalida = $null
         progreso = [pscustomobject]@{ indeterminado = $true; porcentaje = $null }
@@ -477,6 +742,7 @@ function Start-PanelChildWork {
         [Parameter(Mandatory = $true)][string[]]$ArgumentValues,
         [Parameter(Mandatory = $true)]$Context
     )
+    if ($Context) { Stop-PanelOrphanedMsbuild -Context $Context | Out-Null }
     $jobId = 'panel-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + ([Guid]::NewGuid().ToString('N').Substring(0, 8))
     $jobsDirectory = Join-Path $Context.DirectorioLogs 'panel-jobs'
     $operationsDirectory = Join-Path $Context.DirectorioLogs 'operaciones'
@@ -502,6 +768,7 @@ function Start-PanelChildWork {
         operationManifestPath = $operationManifestPath
         operationLogName = $operationLogName
         inicio = (Get-Date).ToUniversalTime().ToString('o')
+        ultimaActividad = (Get-Date).ToUniversalTime().ToString('o')
         fin = $null
         codigoSalida = $null
         progreso = [pscustomobject]@{ indeterminado = $true; porcentaje = $null }
@@ -520,6 +787,7 @@ function Start-PanelChildWork {
 function Start-ExportWork {
     param([Parameter(Mandatory = $true)]$RequestBody)
     if ($null -eq $script:ActiveContext) { throw 'No hay un contexto activo.' }
+    Limpiar-LogsEjecucion -DirectorioLogs $script:ActiveContext.DirectorioLogs
     $geneXus = Resolver-RutaRepositorio -Ruta ([string]$script:ActiveContext.Herramientas.GeneXusProgramDir) -Raiz $RepositoryRoot
     if ([string]::IsNullOrWhiteSpace($geneXus) -or -not (Test-Path -LiteralPath $geneXus -PathType Container)) {
         throw ('No se encontro GeneXus en: ' + $geneXus + '. Verifique herramientas.geneXusProgramDir en configuracion.json.')
@@ -592,7 +860,7 @@ function Test-SafeLogicalName {
 
 function Get-ContextLogCatalog {
     param(
-        [Parameter(Mandatory = $false)][int]$Limite = 12
+        [Parameter(Mandatory = $false)][int]$Limite = 200
     )
     if ($null -eq $script:ActiveContext -or -not (Test-Path -LiteralPath $script:ActiveContext.DirectorioLogs -PathType Container)) { return @() }
     $archivos = @(Get-ChildItem -LiteralPath $script:ActiveContext.DirectorioLogs -File -ErrorAction SilentlyContinue |
@@ -653,12 +921,18 @@ function Get-OperationLogCatalog {
             if ($Severity -and $Severity -ne 'todos' -and [string]$record.severidad -ine $Severity) { continue }
             $logName = [string]$record.logNombre
             $logPath = if (Test-SafeLogicalName -Name $logName) { Join-Path $operationsDirectory $logName } else { $null }
+            $logItem = if ($logPath -and (Test-Path -LiteralPath $logPath -PathType Leaf)) { Get-Item -LiteralPath $logPath -ErrorAction SilentlyContinue } else { $null }
+            $categoriaSeveridad = switch ([string]$record.severidad) {
+                'ERROR' { 'error' }
+                'WARNING' { 'advertencia' }
+                default { 'ok' }
+            }
             [void]$records.Add([pscustomobject]@{
                 nombre = $logName
                 extension = '.log'
-                bytes = if ($logPath -and (Test-Path -LiteralPath $logPath -PathType Leaf)) { (Get-Item -LiteralPath $logPath).Length } else { 0 }
-                modificado = [string]$record.fin
-                categoria = ([string]$record.severidad).ToLowerInvariant()
+                bytes = if ($logItem) { $logItem.Length } else { 0 }
+                modificado = if (-not [string]::IsNullOrWhiteSpace([string]$record.fin)) { [string]$record.fin } elseif ($record.inicio) { [string]$record.inicio } elseif ($logItem) { $logItem.LastWriteTimeUtc.ToString('o') } else { '' }
+                categoria = $categoriaSeveridad
                 operationId = [string]$record.operationId
                 tipo = [string]$record.tipo
                 severidad = [string]$record.severidad
@@ -744,7 +1018,11 @@ function Get-ContextDocumentPath {
 function Get-ContextLogPath {
     param([Parameter(Mandatory = $true)][string]$Name)
     if (-not (Test-SafeLogicalName -Name $Name) -or [System.IO.Path]::GetExtension($Name).ToLowerInvariant() -notin @('.log', '.json', '.txt')) { return $null }
-    return Join-Path $script:ActiveContext.DirectorioLogs $Name
+    $rutaDirecta = Join-Path $script:ActiveContext.DirectorioLogs $Name
+    if (Test-Path -LiteralPath $rutaDirecta -PathType Leaf) { return $rutaDirecta }
+    $rutaOperaciones = Join-Path $script:ActiveContext.DirectorioLogs ('operaciones\' + $Name)
+    if (Test-Path -LiteralPath $rutaOperaciones -PathType Leaf) { return $rutaOperaciones }
+    return $rutaDirecta
 }
 
 function Get-LatestContextReport {
@@ -768,7 +1046,13 @@ function Get-LatestContextReport {
 
 function Get-ConfigurationHash {
     if (-not (Test-Path -LiteralPath $ConfigPath -PathType Leaf)) { return '' }
-    return (Get-FileHash -LiteralPath $ConfigPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $bytes = [System.IO.File]::ReadAllBytes($ConfigPath)
+        return (([System.BitConverter]::ToString($sha256.ComputeHash($bytes))) -replace '-', '').ToLowerInvariant()
+    } finally {
+        $sha256.Dispose()
+    }
 }
 
 function Test-PanelPortValue {
@@ -781,7 +1065,19 @@ function Test-PanelPortValue {
 function Test-ConfigurationCandidate {
     param([Parameter(Mandatory = $true)]$Candidate)
     if (-not (Test-PanelPortValue -Configuration $Candidate)) { throw 'panel.puerto debe ser un entero entre 1 y 65535.' }
-    Validar-ConfiguracionMulticliente -ConfiguracionRaw $Candidate -RaizRepositorio $RepositoryRoot -ConfigPath $ConfigPath | Out-Null
+    Validar-ConfiguracionMulticliente -ConfiguracionRaw $Candidate -RaizRepositorio $RepositoryRoot -ConfigPath $ConfigPath -ValidarContenidoKnowledgeBase | Out-Null
+}
+
+function Normalize-CandidateEnvironmentNames {
+    param([Parameter(Mandatory = $true)]$Candidate)
+    foreach ($client in @($Candidate.clientes)) {
+        foreach ($environment in @($client.ambientes)) {
+            $environmentType = Clasificar-TipoAmbiente -Tipo ([string]$environment.tipo)
+            if ($null -ne $environmentType) {
+                $environment.nombre = Obtener-NombreAmbienteCanonico -Tipo $environmentType
+            }
+        }
+    }
 }
 
 function Reset-PanelSession {
@@ -797,6 +1093,7 @@ function Write-ConfigurationCandidate {
         [Parameter(Mandatory = $false)][string]$Operation = 'CONFIGURACION_CLIENTE'
     )
     $contextBeforeWrite = $script:ActiveContext
+    Normalize-CandidateEnvironmentNames -Candidate $Candidate
     Test-ConfigurationCandidate -Candidate $Candidate
     $content = Normalizar-SaltosLineaLf -Texto ($Candidate | ConvertTo-Json -Depth 15)
     Escribir-ArchivoAtomico -Ruta $ConfigPath -Contenido $content | Out-Null
@@ -827,6 +1124,15 @@ function Find-ConfiguredEnvironment {
     return @($Client.ambientes | Where-Object { [string]$_.id -ceq $EnvironmentId }) | Select-Object -First 1
 }
 
+function Normalize-GeneXusExportProfile {
+    param([AllowEmptyString()][string]$Value)
+    switch ($Value.Trim().ToLowerInvariant()) {
+        'gx18' { return 'Gx18' }
+        'evo3' { return 'Evo3' }
+        default { throw 'El entorno de exportacion debe ser Gx18 o Evo3.' }
+    }
+}
+
 function Convert-MutationPayloadToNewClient {
     param([Parameter(Mandatory = $true)]$Payload)
 
@@ -835,7 +1141,8 @@ function Convert-MutationPayloadToNewClient {
             throw ('El alta de cliente requiere el campo ' + $propertyName + '.')
         }
     }
-    if (-not (Test-NombreSlugValido -Valor ([string]$Payload.id))) {
+    $clientId = ([string]$Payload.id).Trim().ToLowerInvariant()
+    if (-not (Test-NombreSlugValido -Valor $clientId)) {
         throw 'El id de cliente no es valido. Use minusculas, digitos y guiones.'
     }
     if (-not $Payload.PSObject.Properties['ambientes'] -or @($Payload.ambientes).Count -ne 1) {
@@ -846,27 +1153,26 @@ function Convert-MutationPayloadToNewClient {
     }
 
     $environmentPayload = @($Payload.ambientes)[0]
-    foreach ($propertyName in @('id', 'nombre', 'tipo', 'kbPath')) {
+    foreach ($propertyName in @('tipo', 'kbPath')) {
         if (-not $environmentPayload.PSObject.Properties[$propertyName] -or [string]::IsNullOrWhiteSpace([string]$environmentPayload.$propertyName)) {
             throw ('El primer ambiente requiere el campo ' + $propertyName + '.')
         }
-    }
-    if (-not (Test-NombreSlugValido -Valor ([string]$environmentPayload.id))) {
-        throw 'El id del primer ambiente no es valido. Use minusculas, digitos y guiones.'
     }
     $environmentType = Clasificar-TipoAmbiente -Tipo ([string]$environmentPayload.tipo)
     if ($null -eq $environmentType) {
         throw 'El tipo del primer ambiente debe ser test o prod.'
     }
+    $kbPathResuelto = Resolver-RutaRepositorio -Ruta ([string]$environmentPayload.kbPath) -Raiz $RepositoryRoot
+    Validar-RutaKnowledgeBase -Ruta $kbPathResuelto -Contexto ("La Knowledge Base del primer ambiente del cliente '" + $clientId + "'") | Out-Null
 
     return [pscustomobject]@{
-        id = [string]$Payload.id
+        id = $clientId
         nombre = [string]$Payload.nombre
         packagename = [string]$Payload.packagename
         serviciosIgnorados = @()
         ambientes = @([pscustomobject]@{
-            id = [string]$environmentPayload.id
-            nombre = [string]$environmentPayload.nombre
+            id = Obtener-IdAmbienteCanonico -Tipo $environmentType
+            nombre = Obtener-NombreAmbienteCanonico -Tipo $environmentType
             tipo = $environmentType
             kbPath = [string]$environmentPayload.kbPath
         })
@@ -892,7 +1198,7 @@ function Write-JsonResponse {
         [Parameter(Mandatory = $true)][int]$StatusCode,
         [Parameter(Mandatory = $true)]$Payload
     )
-    $bytes = [System.Text.Encoding]::UTF8.GetBytes(($Payload | ConvertTo-Json -Depth 12 -Compress))
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes((ConvertTo-Json -InputObject $Payload -Depth 12 -Compress))
     $response = $RequestContext.Response
     $response.StatusCode = $StatusCode
     $response.ContentType = 'application/json; charset=utf-8'
@@ -1050,10 +1356,11 @@ function Get-ContextValidaciones {
         }
     }
     [void]$validaciones.Add([pscustomobject]@{ item = 'Contexto'; estado = 'OK'; mensaje = ($script:ActiveContext.ContextId + ' (' + $script:ActiveContext.ClienteNombre + ' / ' + $script:ActiveContext.AmbienteNombre + ')') })
-    if (Test-Path -LiteralPath $script:ActiveContext.KbPath -PathType Container) {
+    try {
+        Validar-RutaKnowledgeBase -Ruta $script:ActiveContext.KbPath -Contexto 'La Knowledge Base del ambiente' | Out-Null
         [void]$validaciones.Add([pscustomobject]@{ item = 'Knowledge Base'; estado = 'OK'; mensaje = $script:ActiveContext.KbPath })
-    } else {
-        [void]$validaciones.Add([pscustomobject]@{ item = 'Knowledge Base'; estado = 'ERROR'; mensaje = ('No existe la Knowledge Base: ' + $script:ActiveContext.KbPath) })
+    } catch {
+        [void]$validaciones.Add([pscustomobject]@{ item = 'Knowledge Base'; estado = 'ERROR'; mensaje = $_.Exception.Message })
     }
     return @($validaciones.ToArray())
 }
@@ -1067,7 +1374,10 @@ function Get-StateData {
         $maximaFecha = $documentFiles | ForEach-Object { [datetime]$_.modificado } | Measure-Object -Maximum
         if ($null -ne $maximaFecha) { $ultimaActualizacion = $maximaFecha.Maximum.ToString('o') }
     }
-    $xpzCandidates = if ($script:ActiveContext) { @(Get-ActiveXpzCandidates | ForEach-Object { Convert-XpzForResponse -Xpz $_ }) } else { @() }
+    $xpzCandidates = @()
+    if ($script:ActiveContext) {
+        $xpzCandidates = @(foreach ($candidatoXpz in @(Get-ActiveXpzCandidates)) { Convert-XpzForResponse -Xpz $candidatoXpz })
+    }
     $activeXpzHash = if ($script:ActiveXpz -and (Test-Path -LiteralPath $script:ActiveXpz.Ruta -PathType Leaf)) { (Obtener-Sha256Archivo -Ruta $script:ActiveXpz.Ruta) } else { $null }
     $lastReview = if ($script:ActiveContext) { Get-LatestContextReport -Type review } else { $null }
     $publicWork = if ($script:CurrentWork) { Get-PublicWork -Work $script:CurrentWork } elseif ($script:LastFinishedWork) { Get-PublicWork -Work $script:LastFinishedWork } else { $null }
@@ -1095,6 +1405,7 @@ function Get-StateData {
         trabajo = $publicWork
     }
     [pscustomobject]@{
+        panelVersion = $script:PanelServerVersion
         configurationValid = ($script:ConfigurationErrors.Count -eq 0)
         configurationErrors = @($script:ConfigurationErrors)
         context = $script:ActiveContext
@@ -1114,6 +1425,12 @@ function Invoke-ApiRequest {
         Write-JsonResponse -RequestContext $RequestContext -StatusCode 403 -Payload @{ ok = $false; error = 'El panel solo acepta solicitudes loopback.' }
         return
     }
+    if ($request.HttpMethod -eq 'GET' -and $route -match '^/api/trabajos/([^/]+)$') {
+        $heartbeatJobId = [System.Uri]::UnescapeDataString($Matches[1])
+        if ($script:CurrentWork -and [string]$script:CurrentWork.id -eq $heartbeatJobId -and [string]$script:CurrentWork.estado -in @('QUEUED', 'RUNNING')) {
+            $script:CurrentWork.ultimaActividad = (Get-Date).ToUniversalTime().ToString('o')
+        }
+    }
     Update-CurrentWork
 
     if ($route -eq '/api/configuracion' -and $request.HttpMethod -eq 'GET') {
@@ -1130,7 +1447,13 @@ function Invoke-ApiRequest {
             if ($null -eq $client) { throw 'Cliente no encontrado.' }
             $tipoNormalizado = Clasificar-TipoAmbiente -Tipo ([string]$payload.tipo)
             if ($null -eq $tipoNormalizado) { throw 'El tipo de ambiente debe ser test o prod.' }
-            $environment = [pscustomobject]@{ id = [string]$payload.id; nombre = [string]$payload.nombre; tipo = $tipoNormalizado; kbPath = [string]$payload.kbPath }
+            foreach ($propertyName in @('tipo', 'kbPath')) {
+                if (-not $payload.PSObject.Properties[$propertyName] -or [string]::IsNullOrWhiteSpace([string]$payload.$propertyName)) {
+                    throw ('El ambiente requiere el campo ' + $propertyName + '.')
+                }
+            }
+            Validar-RutaKnowledgeBase -Ruta (Resolver-RutaRepositorio -Ruta ([string]$payload.kbPath) -Raiz $RepositoryRoot) -Contexto ("La Knowledge Base del ambiente '" + (Obtener-IdAmbienteCanonico -Tipo $tipoNormalizado) + "'") | Out-Null
+            $environment = [pscustomobject]@{ id = (Obtener-IdAmbienteCanonico -Tipo $tipoNormalizado); nombre = (Obtener-NombreAmbienteCanonico -Tipo $tipoNormalizado); tipo = $tipoNormalizado; kbPath = [string]$payload.kbPath }
             $client.ambientes = @($client.ambientes) + $environment
             Write-ConfigurationCandidate -Candidate $candidate -Operation 'CONFIGURACION_AMBIENTE'
             Write-JsonResponse -RequestContext $RequestContext -StatusCode 200 -Payload @{ ok = $true; data = @{ configHash = Get-ConfigurationHash } }
@@ -1146,12 +1469,22 @@ function Invoke-ApiRequest {
             if ($null -eq $client) { throw 'Cliente no encontrado.' }
             $environment = Find-ConfiguredEnvironment -Client $client -EnvironmentId ([System.Uri]::UnescapeDataString($Matches[2]))
             if ($null -eq $environment) { throw 'Ambiente no encontrado.' }
-            foreach ($propertyName in @('nombre', 'kbPath')) { if ($payload.PSObject.Properties[$propertyName]) { $environment.$propertyName = [string]$payload.$propertyName } }
+            $tipoActual = Clasificar-TipoAmbiente -Tipo ([string]$environment.tipo)
             if ($payload.PSObject.Properties['tipo']) {
                 $tipoNormalizado = Clasificar-TipoAmbiente -Tipo ([string]$payload.tipo)
                 if ($null -eq $tipoNormalizado) { throw 'El tipo de ambiente debe ser test o prod.' }
-                $environment.tipo = $tipoNormalizado
+                $tiposConfigurados = @($client.ambientes | ForEach-Object { Clasificar-TipoAmbiente -Tipo ([string]$_.tipo) })
+                $clienteTieneAmbosTipos = $tiposConfigurados -contains 'test' -and $tiposConfigurados -contains 'prod'
+                if ($clienteTieneAmbosTipos -and $tipoNormalizado -ne $tipoActual) {
+                    throw 'No se puede modificar el tipo de un ambiente cuando el cliente ya tiene TEST y PROD.'
+                }
+                $tipoActual = $tipoNormalizado
             }
+            if (-not $payload.PSObject.Properties['kbPath'] -or [string]::IsNullOrWhiteSpace([string]$payload.kbPath)) { throw 'El ambiente requiere el campo kbPath.' }
+            Validar-RutaKnowledgeBase -Ruta (Resolver-RutaRepositorio -Ruta ([string]$payload.kbPath) -Raiz $RepositoryRoot) -Contexto ("La Knowledge Base del ambiente '" + [string]$environment.id + "'") | Out-Null
+            $environment.tipo = $tipoActual
+            $environment.nombre = Obtener-NombreAmbienteCanonico -Tipo $tipoActual
+            $environment.kbPath = [string]$payload.kbPath
             Write-ConfigurationCandidate -Candidate $candidate -Operation 'CONFIGURACION_AMBIENTE'
             Write-JsonResponse -RequestContext $RequestContext -StatusCode 200 -Payload @{ ok = $true; data = @{ configHash = Get-ConfigurationHash } }
         } catch { $status = if ($_.Exception.Message -match 'cambio externamente') { 409 } else { 400 }; Write-JsonResponse -RequestContext $RequestContext -StatusCode $status -Payload @{ ok = $false; error = $_.Exception.Message } }
@@ -1204,6 +1537,10 @@ function Invoke-ApiRequest {
             $body = Get-RequestBodyJson -Request $request; $payload = Get-MutationPayload -Body $body
             $candidate = ($script:ConfigurationRaw | ConvertTo-Json -Depth 15 | ConvertFrom-Json)
             $newClient = Convert-MutationPayloadToNewClient -Payload $payload
+            $perfilSolicitado = if ($payload.PSObject.Properties['geneXusExportProfile']) { [string]$payload.geneXusExportProfile } elseif ($candidate.herramientas.PSObject.Properties['geneXusExportProfile']) { [string]$candidate.herramientas.geneXusExportProfile } else { 'Gx18' }
+            $perfilNormalizado = Normalize-GeneXusExportProfile -Value $perfilSolicitado
+            if ($null -eq $candidate.herramientas) { throw 'La configuracion no define herramientas para guardar el entorno de exportacion.' }
+            $candidate.herramientas.geneXusExportProfile = $perfilNormalizado
             $candidate.clientes = @($candidate.clientes) + $newClient
             Write-ConfigurationCandidate -Candidate $candidate -Operation 'CONFIGURACION_CLIENTE'
             Write-JsonResponse -RequestContext $RequestContext -StatusCode 200 -Payload @{ ok = $true; data = @{ configHash = Get-ConfigurationHash } }
@@ -1252,6 +1589,7 @@ function Invoke-ApiRequest {
                 clienteNombre = $script:ActiveContext.ClienteNombre
                 ambienteId = $script:ActiveContext.AmbienteId
                 ambienteNombre = $script:ActiveContext.AmbienteNombre
+                ambienteTipo = $script:ActiveContext.AmbienteTipo
                 kbPath = $script:ActiveContext.KbPath
                 xpzDirectory = $script:ActiveContext.DirectorioXpz
                 xpz = if ($script:ActiveXpz) { Convert-XpzForResponse -Xpz $script:ActiveXpz } else { $null }
@@ -1301,7 +1639,7 @@ function Invoke-ApiRequest {
             Write-JsonResponse -RequestContext $RequestContext -StatusCode 202 -Payload @{ ok = $true; data = @{ jobId = $work.id } }
         } catch {
             $errorMessage = $_.Exception.Message
-            if ($errorMessage -match 'No se encontro GeneXus|No se encontro MSBuild|No existe la Knowledge Base') {
+            if ($errorMessage -match 'No se encontro GeneXus|No se encontro MSBuild|No existe la Knowledge Base|Knowledge Base.*no existe|\.gxw') {
                 $failedWork = New-ImmediateFailedWork -Operation 'EXPORTAR_XPZ' -Context $script:ActiveContext -ErrorMessage $errorMessage
                 Write-JsonResponse -RequestContext $RequestContext -StatusCode 202 -Payload @{ ok = $true; data = @{ jobId = $failedWork.id } }
             } else {
@@ -1377,7 +1715,9 @@ function Invoke-ApiRequest {
         $historyValue = Get-QueryValue -Request $request -Name 'historial'
         $history = $historyValue -match '^(?i:true|1|si|sí|yes)$'
         $operationLogs = @(Get-OperationLogCatalog -OperationType $operationType -Severity $severity -History $history)
-        Write-JsonResponse -RequestContext $RequestContext -StatusCode 200 -Payload @{ ok = $true; data = @{ logs = $operationLogs; resumen = $operationLogs; historial = $history; filtros = @{ tipo = $operationType; severidad = $severity } } }
+        $contextFiles = @(Get-ContextLogCatalog)
+        $logs = @($operationLogs) + @($contextFiles)
+        Write-JsonResponse -RequestContext $RequestContext -StatusCode 200 -Payload @{ ok = $true; data = @{ logs = $logs; resumen = $logs; historial = $history; filtros = @{ tipo = $operationType; severidad = $severity } } }
         return
     }
     if ($route -match '^/api/logs/([^/]+)$' -and $request.HttpMethod -eq 'GET') {
@@ -1493,6 +1833,20 @@ function Invoke-ApiRequest {
         }
         return
     }
+    if ($route -match '^/api/trabajos/([^/]+)/cancelar$' -and $request.HttpMethod -eq 'POST') {
+        if (-not (Test-SessionToken -Request $request)) {
+            Write-JsonResponse -RequestContext $RequestContext -StatusCode 403 -Payload @{ ok = $false; error = 'Token de sesion invalido.' }
+            return
+        }
+        try {
+            $jobId = [System.Uri]::UnescapeDataString($Matches[1])
+            $work = Cancel-CurrentWork -JobId $jobId
+            Write-JsonResponse -RequestContext $RequestContext -StatusCode 200 -Payload @{ ok = $true; data = (Get-PublicWork -Work $work) }
+        } catch {
+            Write-JsonResponse -RequestContext $RequestContext -StatusCode 409 -Payload @{ ok = $false; error = $_.Exception.Message }
+        }
+        return
+    }
     if ($route -match '^/api/trabajos/([^/]+)$' -and $request.HttpMethod -eq 'GET') {
         Update-CurrentWork
         $jobId = [System.Uri]::UnescapeDataString($Matches[1])
@@ -1509,7 +1863,7 @@ function Invoke-ApiRequest {
             Write-JsonResponse -RequestContext $RequestContext -StatusCode 409 -Payload @{ ok = $false; error = 'No hay un contexto activo.' }
             return
         }
-        Write-JsonResponse -RequestContext $RequestContext -StatusCode 200 -Payload @{ ok = $true; data = @{ xpz = @(Get-ActiveXpzCandidates | ForEach-Object { Convert-XpzForResponse -Xpz $_ }); activo = if ($script:ActiveXpz) { Convert-XpzForResponse -Xpz $script:ActiveXpz } else { $null } } }
+        Write-JsonResponse -RequestContext $RequestContext -StatusCode 200 -Payload @{ ok = $true; data = @{ xpz = @(foreach ($candidatoXpz in @(Get-ActiveXpzCandidates)) { Convert-XpzForResponse -Xpz $candidatoXpz }); activo = if ($script:ActiveXpz) { Convert-XpzForResponse -Xpz $script:ActiveXpz } else { $null } } }
         return
     }
     if ($route -eq '/api/xpz/activar' -and $request.HttpMethod -eq 'POST') {

@@ -76,7 +76,8 @@ function New-ControlVersiones {
         [Parameter(Mandatory = $true)][string]$ProfileFingerprint,
         [Parameter(Mandatory = $false)]$Objects = @{},
         [Parameter(Mandatory = $false)]$Services = @{},
-        [Parameter(Mandatory = $false)]$Pendientes = @{}
+        [Parameter(Mandatory = $false)]$Pendientes = @{},
+        [Parameter(Mandatory = $false)][string]$XpzSha256 = ''
     )
 
     return [ordered]@{
@@ -84,6 +85,7 @@ function New-ControlVersiones {
         lineageId = $LineageId
         sourceFingerprint = $SourceFingerprint
         profileFingerprint = $ProfileFingerprint
+        xpzSha256 = $XpzSha256
         objects = Convertir-DiccionarioControlVersiones -Objeto $Objects
         services = Convertir-DiccionarioControlVersiones -Objeto $Services
         pendientes = Convertir-DiccionarioControlVersiones -Objeto $Pendientes
@@ -215,15 +217,20 @@ function Comparar-ControlVersiones {
     }
 
     $serviciosAfectados = @{}
-    foreach ($claveObjeto in $objetosModificados) {
-        foreach ($claveServicio in $serviciosAnteriores.Keys) {
-            if ((Obtener-DependenciasServicioControlVersiones -Servicio $serviciosAnteriores[$claveServicio]) -contains $claveObjeto) {
-                Agregar-ValorUnicoControlVersiones -Valores $serviciosAfectados -Clave 'afectados' -Valor $claveServicio
+    # En una inicializacion no existe una linea anterior que pueda verse
+    # afectada. Evitar el producto objetos x servicios reduce drasticamente
+    # el costo inicial, especialmente en ejecuciones selectivas.
+    if ($ControlAnterior) {
+        foreach ($claveObjeto in $objetosModificados) {
+            foreach ($claveServicio in $serviciosAnteriores.Keys) {
+                if ((Obtener-DependenciasServicioControlVersiones -Servicio $serviciosAnteriores[$claveServicio]) -contains $claveObjeto) {
+                    Agregar-ValorUnicoControlVersiones -Valores $serviciosAfectados -Clave 'afectados' -Valor $claveServicio
+                }
             }
-        }
-        foreach ($claveServicio in $serviciosObjetivo.Keys) {
-            if ((Obtener-DependenciasServicioControlVersiones -Servicio $serviciosObjetivo[$claveServicio]) -contains $claveObjeto) {
-                Agregar-ValorUnicoControlVersiones -Valores $serviciosAfectados -Clave 'afectados' -Valor $claveServicio
+            foreach ($claveServicio in $serviciosObjetivo.Keys) {
+                if ((Obtener-DependenciasServicioControlVersiones -Servicio $serviciosObjetivo[$claveServicio]) -contains $claveObjeto) {
+                    Agregar-ValorUnicoControlVersiones -Valores $serviciosAfectados -Clave 'afectados' -Valor $claveServicio
+                }
             }
         }
     }

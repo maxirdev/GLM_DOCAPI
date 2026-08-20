@@ -68,6 +68,7 @@ try {
             exit 3
         }
     }
+    Limpiar-LogsEjecucion -DirectorioLogs $rutaDirectorioLogs
 
     $rutaGeneXus = [string]$contexto.Herramientas.GeneXusProgramDir
     $rutaKb = [string]$contexto.KbPath
