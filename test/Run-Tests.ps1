@@ -3227,14 +3227,29 @@ function Ejecutar-CasosPanelWeb {
     ) -DetalleExito 'El Dashboard declara la tarjeta de KB y utiliza la ruta del contexto.' -DetalleFallo 'Falta el contrato visual de la tarjeta KB del Dashboard.'
     Test-Asercion -Id 'panelWeb.estilosEstadoOcupado' -Condicion (
         $contenidoEstilosPanel -match 'animation:\s*spinner-rotate' -and
+        $contenidoEstilosPanel -match '-webkit-animation:\s*spinner-rotate' -and
+        $contenidoEstilosPanel -match '@-webkit-keyframes\s+spinner-rotate' -and
         $contenidoEstilosPanel -match '@keyframes\s+spinner-rotate' -and
         $contenidoEstilosPanel -match 'prefers-reduced-motion' -and
+        $contenidoEstilosPanel -match 'animation-duration:\s*1\.4s\s*!important' -and
         $contenidoEstilosPanel -match 'margin-top:\s*10px'
     ) -DetalleExito 'Los estilos declaran animacion de spinners, movimiento reducido y espaciado de tarjetas.' -DetalleFallo 'Falta algun contrato CSS de spinners, movimiento reducido o espaciado de tarjetas.'
     Test-Asercion -Id 'panelWeb.contratosPaginacion' -Condicion (
         $contenidoHtmlPanel -match 'documentation-filter' -and
         $contenidoHtmlPanel -match 'documentation-pdf-list'
     ) -DetalleExito 'El frontend declara la consulta filtrable de PDF publicados.' -DetalleFallo 'El frontend no conserva la consulta de PDF publicados.'
+    Test-Asercion -Id 'panelWeb.aislamientoCargasContextuales' -Condicion (
+        $contenidoAplicacionPanel -match 'documentationLoadSequence' -and
+        $contenidoAplicacionPanel -match 'stateLoadSequence' -and
+        $contenidoAplicacionPanel -match 'getSelectedContextKey' -and
+        $contenidoAplicacionPanel -match 'requestSequence !== documentationLoadSequence' -and
+        $contenidoAplicacionPanel -match 'requestedContextKey !== getSelectedContextKey'
+    ) -DetalleExito 'Las respuestas tardías de Documentación y estado no pueden sobrescribir el contexto seleccionado.' -DetalleFallo 'Falta aislar las cargas asíncronas cuando cambia el contexto.'
+    Test-Asercion -Id 'panelWeb.catalogoPublicadoSinXpz' -Condicion (
+        $contenidoAplicacionPanel -match 'servicePayload\.ok \|\| documentPayload\.ok' -and
+        $contenidoAplicacionPanel -match 'endpointServices = servicePayload\.ok \? \(servicePayload\.data\.servicios \|\| \[\]\) : \[\]' -and
+        $contenidoAplicacionPanel -match 'loadServices\(\);'
+    ) -DetalleExito 'Documentación usa los PDF publicados del contexto aunque todavía no haya un XPZ seleccionado.' -DetalleFallo 'Documentación sigue dependiendo de un XPZ activo para mostrar los PDF publicados.'
     Test-Asercion -Id 'panelWeb.contratosSeleccion' -Condicion (
         $contenidoAplicacionPanel -match 'selectedFallbackXpz' -and
         $contenidoAplicacionPanel -match 'validate-xpz-option' -and

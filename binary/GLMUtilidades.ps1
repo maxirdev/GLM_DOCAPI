@@ -105,6 +105,26 @@ function Asegurar-Directorio {
     }
 }
 
+function Resolver-RutaMsbuildPorPerfil {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$RutaConfigurada,
+        [Parameter(Mandatory = $true)][ValidateSet('GX18', 'Evo3')][string]$Perfil
+    )
+
+    if ($Perfil -ne 'Evo3') {
+        return $RutaConfigurada
+    }
+
+    # Evo3 requiere MSBuild 3.5. No reutilizar la ruta configurada para GX18:
+    # MSBuild 3.5 no admite AfterTargets y necesita el proyecto Evo3 dedicado.
+    $rutaEvo3 = Join-Path $env:SystemRoot 'Microsoft.NET\Framework\v3.5\MSBuild.exe'
+    if (-not (Test-Path -LiteralPath $rutaEvo3 -PathType Leaf)) {
+        throw ('No se encontro MSBuild 3.5 requerido por Evo3: ' + $rutaEvo3)
+    }
+    return [System.IO.Path]::GetFullPath($rutaEvo3)
+}
+
 function Limpiar-LogsEjecucion {
     [CmdletBinding()]
     param(

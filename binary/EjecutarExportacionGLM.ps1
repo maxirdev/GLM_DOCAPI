@@ -12,8 +12,10 @@ param(
 $ErrorActionPreference = 'Stop'
 $raizRepositorio = [System.IO.Path]::GetFullPath($Repositorio)
 $rutaConfiguracion = Join-Path $raizRepositorio 'configuracion.json'
-$rutaProyectoCompleto = Join-Path $raizRepositorio 'binary\ExportarXPZ.msbuild'
-$rutaProyectoSelectivo = Join-Path $raizRepositorio 'binary\ExportarXPZSelectivo.msbuild'
+$rutaProyectoCompletoGX18 = Join-Path $raizRepositorio 'binary\ExportarXPZ.msbuild'
+$rutaProyectoCompletoEvo3 = Join-Path $raizRepositorio 'binary\ExportarXPZEvo3.msbuild'
+$rutaProyectoSelectivoGX18 = Join-Path $raizRepositorio 'binary\ExportarXPZSelectivo.msbuild'
+$rutaProyectoSelectivoEvo3 = Join-Path $raizRepositorio 'binary\ExportarXPZSelectivoEvo3.msbuild'
 $rutaScriptProgreso = Join-Path $raizRepositorio 'binary\ExportarXPZProgreso.ps1'
 $rutaScriptValidacion = Join-Path $raizRepositorio 'binary\ValidarXPZ.ps1'
 $rutaScriptSelectivo = Join-Path $raizRepositorio 'binary\ExportarXPZSelectivo.ps1'
@@ -68,13 +70,15 @@ try {
             exit 3
         }
     }
-    Limpiar-LogsEjecucion -DirectorioLogs $rutaDirectorioLogs
 
     $rutaGeneXus = [string]$contexto.Herramientas.GeneXusProgramDir
     $rutaKb = [string]$contexto.KbPath
     $rutaMsbuild = [string]$contexto.Herramientas.MsbuildPath
     $perfilExportacion = [string]$contexto.Herramientas.GeneXusExportProfile
     if ($perfilExportacion -notin @('GX18', 'Evo3')) { $perfilExportacion = 'GX18' }
+    $rutaMsbuild = Resolver-RutaMsbuildPorPerfil -RutaConfigurada $rutaMsbuild -Perfil $perfilExportacion
+    $rutaProyectoCompleto = if ($perfilExportacion -eq 'Evo3') { $rutaProyectoCompletoEvo3 } else { $rutaProyectoCompletoGX18 }
+    $rutaProyectoSelectivo = if ($perfilExportacion -eq 'Evo3') { $rutaProyectoSelectivoEvo3 } else { $rutaProyectoSelectivoGX18 }
 
     foreach ($requerido in @(
         [pscustomobject]@{ Nombre = 'GeneXus'; Ruta = $rutaGeneXus; Tipo = 'Container' },

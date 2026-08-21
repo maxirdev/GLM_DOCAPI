@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="ExportarAPIGLM"
+         xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+
+  <Import Project="$(GX_PROGRAM_DIR)\Genexus.Tasks.targets" />
+
+  <PropertyGroup>
+    <GeneXusExportProfile Condition="'$(GeneXusExportProfile)' == ''">Evo3</GeneXusExportProfile>
+  </PropertyGroup>
+
+  <Target Name="ValidarPerfilExportacion">
+    <Error Condition="'$(GeneXusExportProfile)' != 'Evo3'"
+           Text="Este proyecto solo admite el perfil Evo3." />
+  </Target>
+
+  <Target Name="AbrirKnowledgeBase">
+    <Error Condition="'$(KBPath)' == ''"
+           Text="No se definio la propiedad KBPath." />
+    <Error Condition="'$(XPZFile)' == ''"
+           Text="No se definio la propiedad XPZFile." />
+
+    <Message Text="Abriendo Knowledge Base: $(KBPath)" Importance="high" />
+    <OpenKnowledgeBase Directory="$(KBPath)" />
+    <PropertyGroup>
+      <KnowledgeBaseOpened>true</KnowledgeBaseOpened>
+    </PropertyGroup>
+  </Target>
+
+  <Target Name="ExportarAPIGLM" DependsOnTargets="ValidarPerfilExportacion;AbrirKnowledgeBase">
+    <Message Text="Exportando Module:APIGLM con referencias minimas." Importance="high" />
+    <Export File="$(XPZFile)"
+            Objects="Procedure:APIGLM.APIGLMMain"
+            DependencyType="ReferencesTo"
+            ReferenceType="Hard"
+            IncludeGXMessages="false"
+            IncludeUntranslatedMessages="false" />
+    <CallTarget Targets="CerrarKnowledgeBase" />
+    <OnError ExecuteTargets="CerrarKnowledgeBase" />
+  </Target>
+
+  <Target Name="ExportarTodaLaKB" DependsOnTargets="ValidarPerfilExportacion;AbrirKnowledgeBase">
+    <Message Text="Exportando todos los objetos de la Knowledge Base." Importance="high" />
+    <Export File="$(XPZFile)"
+            IncludeGXMessages="false"
+            IncludeUntranslatedMessages="false" />
+    <CallTarget Targets="CerrarKnowledgeBase" />
+    <OnError ExecuteTargets="CerrarKnowledgeBase" />
+  </Target>
+
+  <!-- Evo3 usa cierre explicito porque su MSBuild no admite dependencias posteriores automaticas. -->
+  <Target Name="CerrarKnowledgeBase"
+          Condition="'$(KnowledgeBaseOpened)' == 'true'">
+    <Message Text="Cerrando Knowledge Base." Importance="high" />
+    <CloseKnowledgeBase />
+    <PropertyGroup>
+      <KnowledgeBaseOpened>false</KnowledgeBaseOpened>
+    </PropertyGroup>
+    <Message Text="Cierre de Knowledge Base confirmado." Importance="high" />
+  </Target>
+
+</Project>

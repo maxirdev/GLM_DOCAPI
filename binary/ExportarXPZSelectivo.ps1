@@ -502,11 +502,15 @@ try {
     $seleccion = Seleccionar-ReporteValidacion -Configuracion $configuracion -RutaReporte $ReportePath -EjecucionId $ejecucionId
     Mostrar-RecetaSeleccionada -Seleccion $seleccion
     $complemento = Seleccionar-SiguienteXpzComplementario -RutaXpzPrincipal $seleccion.XpzPrincipal
-    $rutaMsbuildEfectiva = if ($MsbuildPath) { $MsbuildPath } else {
+    $rutaMsbuildEfectiva = if ($GeneXusExportProfile -eq 'Evo3') {
+        Resolver-RutaMsbuildPorPerfil -RutaConfigurada $MsbuildPath -Perfil $GeneXusExportProfile
+    } elseif ($MsbuildPath) { $MsbuildPath } else {
         $directorioMsbuild = if ($GeneXusExportProfile -eq 'Evo3') { 'v3.5' } else { 'v4.0.30319' }
         Join-Path $env:SystemRoot ('Microsoft.NET\Framework\' + $directorioMsbuild + '\MSBuild.exe')
     }
-    $rutaProyectoEfectiva = if ($ProjectFile) { $ProjectFile } else { Join-Path $PSScriptRoot 'ExportarXPZSelectivo.msbuild' }
+    $rutaProyectoEfectiva = if ($GeneXusExportProfile -eq 'Evo3') {
+        Join-Path $PSScriptRoot 'ExportarXPZSelectivoEvo3.msbuild'
+    } elseif ($ProjectFile) { $ProjectFile } else { Join-Path $PSScriptRoot 'ExportarXPZSelectivo.msbuild' }
     if (-not $GxProgramDir) { throw 'Debe indicar -GxProgramDir para ejecutar la exportacion selectiva.' }
     if (-not $KbPath) { throw 'Debe indicar -KbPath para ejecutar la exportacion selectiva.' }
     $rutaXpzSalida = if ($XpzFile) { [System.IO.Path]::GetFullPath($XpzFile) } else { $complemento.Ruta }

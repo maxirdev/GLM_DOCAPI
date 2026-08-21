@@ -28,7 +28,7 @@ if ([string]::IsNullOrWhiteSpace($ConfigPath)) {
 Inicializar-ConsolaUtf8
 
 $script:SessionToken = [Guid]::NewGuid().ToString('N')
-$script:PanelServerVersion = '20260820-msbuild-timeout-cleanup-v4'
+$script:PanelServerVersion = '20260820-msbuild-timeout-cleanup-v5'
 $script:ConfigurationRaw = $null
 $script:ConfigurationErrors = New-Object System.Collections.Generic.List[string]
 $script:ActiveContext = $null
@@ -210,6 +210,19 @@ function Stop-PanelOrphanedMsbuild {
     return @($terminated)
 }
 
+function Prepare-PanelOperationLogs {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]$Context
+    )
+
+    # La limpieza se realiza en el proceso padre, antes de crear los archivos
+    # de redireccion STDOUT/STDERR de la nueva operación. Los procesos hijos
+    # no deben limpiar este directorio porque podrían borrar su propio .err.
+    Stop-PanelOrphanedMsbuild -Context $Context | Out-Null
+    Limpiar-LogsEjecucion -DirectorioLogs $Context.DirectorioLogs
+}
+
 function Get-WorkStatusFromExitCode {
     param([Parameter(Mandatory = $true)][int]$ExitCode)
     switch ($ExitCode) {
@@ -285,6 +298,21 @@ function Get-WorkFullOutput {
         [void]$sections.Add('===== ' + $definition.Nombre + ' =====')
         if (Test-Path -LiteralPath $definition.Ruta -PathType Leaf) {
             [void]$sections.Add((Get-TimestampedWorkLines -Path $definition.Ruta) -join [Environment]::NewLine)
+        }
+    }
+    return ($sections -join [Environment]::NewLine)
+}
+
+function Get-WorkRawOutput {
+    param([Parameter(Mandatory = $true)]$Work)
+    $sections = New-Object System.Collections.Generic.List[string]
+    foreach ($definition in @(
+        [pscustomobject]@{ Nombre = 'STDOUT'; Ruta = $Work.stdoutPath },
+        [pscustomobject]@{ Nombre = 'STDERR'; Ruta = $Work.stderrPath }
+    )) {
+        [void]$sections.Add('===== ' + $definition.Nombre + ' =====')
+        if (Test-Path -LiteralPath $definition.Ruta -PathType Leaf) {
+            [void]$sections.Add((Get-Content -LiteralPath $definition.Ruta -Raw -ErrorAction SilentlyContinue).TrimEnd())
         }
     }
     return ($sections -join [Environment]::NewLine)
@@ -485,7 +513,10 @@ function Update-CurrentWork {
     $work.codigoSalida = [int]$work.process.ExitCode
     $work.estado = Get-WorkStatusFromExitCode -ExitCode $work.codigoSalida
     $fullOutput = Get-WorkFullOutput -Work $work
-    $outputErrors = @(Get-WorkOutputErrors -Output $fullOutput)
+    # La salida con timestamps es solo para presentación. La clasificación
+    # debe analizar el texto original producido por exportación/validación.
+    $rawOutput = Get-WorkRawOutput -Work $work
+    $outputErrors = @(Get-WorkOutputErrors -Output $rawOutput)
     if ($outputErrors.Count -gt 0) {
         if ($work.estado -ne 'FAILED') {
             $work.codigoSalida = 1
@@ -496,7 +527,7 @@ function Update-CurrentWork {
         }
     }
     if ([string]$work.operacion -eq 'EXPORTAR_XPZ') {
-        $confirmoValidacionFinal = $fullOutput -match '(?im)^XPZ completo y sin exportaciones adicionales\.$'
+        $confirmoValidacionFinal = $rawOutput -match '(?im)^XPZ completo y sin exportaciones adicionales\.$'
         if ($work.codigoSalida -eq 0 -and -not $confirmoValidacionFinal) {
             $work.codigoSalida = 1
             $work.estado = 'FAILED'
@@ -560,7 +591,6 @@ function Quote-ProcessArgument {
 function Start-ValidationWork {
     param([Parameter(Mandatory = $false)]$RequestBody)
     if ($null -eq $script:ActiveContext) { throw 'No hay un contexto activo.' }
-    Limpiar-LogsEjecucion -DirectorioLogs $script:ActiveContext.DirectorioLogs
     if ($RequestBody -and $RequestBody.nombre) {
         $selected = @(Get-ActiveXpzCandidates | Where-Object { $_.Nombre -ceq [string]$RequestBody.nombre })
         if ($selected.Count -ne 1) { throw 'El XPZ indicado no pertenece al contexto activo.' }
@@ -568,6 +598,7 @@ function Start-ValidationWork {
         $script:XpzOverride = $true
     }
     if ($null -eq $script:ActiveXpz) { throw 'No hay un XPZ activo en el contexto.' }
+    Prepare-PanelOperationLogs -Context $script:ActiveContext
     $jobsDirectory = Join-Path $script:ActiveContext.DirectorioLogs 'panel-jobs'
     New-Item -ItemType Directory -Path $jobsDirectory -Force | Out-Null
     $manifestBase = Join-Path $jobsDirectory ('validation-' + (Get-Date -Format 'yyyyMMdd-HHmmss'))
@@ -592,7 +623,6 @@ function Start-PdfGenerationWork {
         $confirmedXpzHash -ine $currentXpzHash) {
         throw 'PRECONDICION_XPZ: El XPZ activo o su SHA-256 cambio; confirme nuevamente.'
     }
-    Limpiar-LogsEjecucion -DirectorioLogs $script:ActiveContext.DirectorioLogs
     $scope = [string]$RequestBody.scope
     if ([string]::IsNullOrWhiteSpace($scope)) { $scope = 'BATCH' }
     if ($scope -notin @('BATCH', 'INDIVIDUAL')) { throw 'scope debe ser BATCH o INDIVIDUAL.' }
@@ -606,6 +636,7 @@ function Start-PdfGenerationWork {
         if (@($script:ActiveContext.ServiciosIgnorados) -contains $selectedName) { throw ('El servicio esta ignorado: ' + $selectedName) }
         $selectedNames = @($selectedName)
     }
+    Prepare-PanelOperationLogs -Context $script:ActiveContext
     $jobsDirectory = Join-Path $script:ActiveContext.DirectorioLogs 'panel-jobs'
     New-Item -ItemType Directory -Path $jobsDirectory -Force | Out-Null
     $manifest = Crear-ManifiestoEjecucion -Xpz $script:ActiveXpz.Ruta -FullyQualifiedNames $selectedNames -DirectorioBase (Join-Path $jobsDirectory ('pdf-' + (Get-Date -Format 'yyyyMMdd-HHmmss'))) -Contexto $script:ActiveContext
@@ -702,6 +733,7 @@ function Get-EnrichedServices {
 function Start-EndpointGenerationWork {
     if ($null -eq $script:ActiveContext) { throw 'No hay un contexto activo.' }
     if ($null -eq $script:ActiveXpz) { throw 'No hay un XPZ activo en el contexto.' }
+    Prepare-PanelOperationLogs -Context $script:ActiveContext
     $jobId = 'panel-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + ([Guid]::NewGuid().ToString('N').Substring(0, 8))
     $jobsDirectory = Join-Path $script:ActiveContext.DirectorioLogs 'panel-jobs'
     New-Item -ItemType Directory -Path $jobsDirectory -Force | Out-Null
@@ -787,12 +819,17 @@ function Start-PanelChildWork {
 function Start-ExportWork {
     param([Parameter(Mandatory = $true)]$RequestBody)
     if ($null -eq $script:ActiveContext) { throw 'No hay un contexto activo.' }
-    Limpiar-LogsEjecucion -DirectorioLogs $script:ActiveContext.DirectorioLogs
     $geneXus = Resolver-RutaRepositorio -Ruta ([string]$script:ActiveContext.Herramientas.GeneXusProgramDir) -Raiz $RepositoryRoot
     if ([string]::IsNullOrWhiteSpace($geneXus) -or -not (Test-Path -LiteralPath $geneXus -PathType Container)) {
         throw ('No se encontro GeneXus en: ' + $geneXus + '. Verifique herramientas.geneXusProgramDir en configuracion.json.')
     }
-    $msbuild = Resolver-RutaRepositorio -Ruta ([string]$script:ActiveContext.Herramientas.MsbuildPath) -Raiz $RepositoryRoot
+    $perfilExportacion = [string]$script:ActiveContext.Herramientas.GeneXusExportProfile
+    $msbuildConfigurado = [string]$script:ActiveContext.Herramientas.MsbuildPath
+    $msbuild = if ($perfilExportacion -eq 'Evo3') {
+        Resolver-RutaMsbuildPorPerfil -RutaConfigurada $msbuildConfigurado -Perfil 'Evo3'
+    } else {
+        Resolver-RutaRepositorio -Ruta $msbuildConfigurado -Raiz $RepositoryRoot
+    }
     if ([string]::IsNullOrWhiteSpace($msbuild) -or -not (Test-Path -LiteralPath $msbuild -PathType Leaf)) {
         throw ('No se encontro MSBuild en: ' + $msbuild + '. Verifique herramientas.msbuildPath en configuracion.json.')
     }
@@ -802,6 +839,7 @@ function Start-ExportWork {
     $policy = [string]$RequestBody.policy
     if ([string]::IsNullOrWhiteSpace($policy)) { $policy = 'abort' }
     if ($policy -notin @('abort', 'continue')) { throw 'policy debe ser abort o continue.' }
+    Prepare-PanelOperationLogs -Context $script:ActiveContext
     $scriptPath = Join-Path $RepositoryRoot 'binary\EjecutarExportacionGLM.ps1'
     $arguments = @('-File', $scriptPath, '-Repositorio', $RepositoryRoot, '-ClienteId', $script:ActiveContext.ClienteId, '-AmbienteId', $script:ActiveContext.AmbienteId, '-ConfirmarExportacionCompleta', '-PoliticaPendientes', $policy)
     $work = Start-PanelChildWork -Operation 'EXPORTAR_XPZ' -ScriptPath $scriptPath -ArgumentValues $arguments -Context $script:ActiveContext
@@ -812,11 +850,13 @@ function Start-ExportWork {
 function Start-CompleteXpzWork {
     param([Parameter(Mandatory = $true)]$RequestBody)
     if ($null -eq $script:ActiveContext) { throw 'No hay un contexto activo.' }
+    Prepare-PanelOperationLogs -Context $script:ActiveContext
     $name = [string]$RequestBody.nombre
     $selected = @(Get-ActiveXpzCandidates | Where-Object { $_.Nombre -ceq $name })
     if ($selected.Count -ne 1) { throw 'El XPZ indicado no pertenece al contexto activo.' }
     $script:ActiveXpz = $selected[0]
     $script:XpzOverride = $true
+    Prepare-PanelOperationLogs -Context $script:ActiveContext
     $jobsDirectory = Join-Path $script:ActiveContext.DirectorioLogs 'panel-jobs'
     $manifest = Crear-ManifiestoEjecucion -Xpz $script:ActiveXpz.Ruta -FullyQualifiedNames @() -DirectorioBase (Join-Path $jobsDirectory ('completar-' + (Get-Date -Format 'yyyyMMdd-HHmmss'))) -Contexto $script:ActiveContext
     $scriptPath = Join-Path $RepositoryRoot 'binary\CompletarXPZActivoGLM.ps1'
@@ -843,6 +883,7 @@ function Start-DocumentationWork {
             if (@($script:ActiveContext.ServiciosIgnorados) -contains $name) { throw ('El servicio esta ignorado: ' + $name) }
         }
     }
+    Prepare-PanelOperationLogs -Context $script:ActiveContext
     $jobsDirectory = Join-Path $script:ActiveContext.DirectorioLogs 'panel-jobs'
     $manifest = Crear-ManifiestoEjecucion -Xpz $script:ActiveXpz.Ruta -FullyQualifiedNames $selectedNames -DirectorioBase (Join-Path $jobsDirectory ('documentacion-' + (Get-Date -Format 'yyyyMMdd-HHmmss'))) -Contexto $script:ActiveContext
     $scriptPath = Join-Path $RepositoryRoot 'binary\ActualizarServicios.ps1'

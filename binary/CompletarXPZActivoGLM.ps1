@@ -21,7 +21,8 @@ $ErrorActionPreference = 'Stop'
 $raizRepositorio = [System.IO.Path]::GetFullPath($Repositorio)
 $rutaScriptValidacion = Join-Path $raizRepositorio 'binary\ValidarXPZ.ps1'
 $rutaScriptSelectivo = Join-Path $raizRepositorio 'binary\ExportarXPZSelectivo.ps1'
-$rutaProyectoSelectivo = Join-Path $raizRepositorio 'binary\ExportarXPZSelectivo.msbuild'
+$rutaProyectoSelectivoGX18 = Join-Path $raizRepositorio 'binary\ExportarXPZSelectivo.msbuild'
+$rutaProyectoSelectivoEvo3 = Join-Path $raizRepositorio 'binary\ExportarXPZSelectivoEvo3.msbuild'
 $maximoCiclos = 5
 
 $script:ultimaSalida = @()
@@ -121,7 +122,6 @@ try {
     $rutaConfiguracion = [System.IO.Path]::GetFullPath([string]$manifiestoEjecucion.configPath)
     $rutaDirectorioLogs = [System.IO.Path]::GetFullPath([string]$manifiestoEjecucion.logsDirectory)
     Asegurar-Directorio -Ruta $rutaDirectorioLogs
-    Limpiar-LogsEjecucion -DirectorioLogs $rutaDirectorioLogs
     if (-not (Test-Path -LiteralPath $rutaConfiguracion -PathType Leaf)) {
         throw ('No existe la configuracion del manifiesto: ' + $rutaConfiguracion)
     }
@@ -134,6 +134,9 @@ try {
         throw ('El manifiesto corresponde a otro XPZ. Manifiesto: ' + $rutaXpzManifiesto + '. Activo: ' + $rutaXpzActiva + '.')
     }
     $contexto = Cargar-Configuracion -ConfigPath $rutaConfiguracion -ClienteId ([string]$manifiestoEjecucion.clienteId) -AmbienteId ([string]$manifiestoEjecucion.ambienteId)
+    $perfilExportacion = [string]$contexto.Herramientas.GeneXusExportProfile
+    if ($perfilExportacion -notin @('GX18', 'Evo3')) { $perfilExportacion = 'GX18' }
+    $rutaProyectoSelectivo = if ($perfilExportacion -eq 'Evo3') { $rutaProyectoSelectivoEvo3 } else { $rutaProyectoSelectivoGX18 }
     foreach ($requerido in @(
         [pscustomobject]@{ Nombre = 'validador de completitud'; Ruta = $rutaScriptValidacion; Tipo = 'Leaf' },
         [pscustomobject]@{ Nombre = 'exportador selectivo'; Ruta = $rutaScriptSelectivo; Tipo = 'Leaf' },
@@ -184,8 +187,7 @@ try {
     $rutaMsbuild = [string]$contexto.Herramientas.MsbuildPath
     $rutaGeneXus = [string]$contexto.Herramientas.GeneXusProgramDir
     $rutaKb = [string]$contexto.KbPath
-    $perfilExportacion = [string]$contexto.Herramientas.GeneXusExportProfile
-    if ($perfilExportacion -notin @('GX18', 'Evo3')) { $perfilExportacion = 'GX18' }
+    $rutaMsbuild = Resolver-RutaMsbuildPorPerfil -RutaConfigurada $rutaMsbuild -Perfil $perfilExportacion
 
     $signaturaAnterior = ''
     for ($ciclo = 1; $ciclo -le $maximoCiclos; $ciclo++) {

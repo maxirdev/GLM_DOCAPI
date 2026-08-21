@@ -34,6 +34,8 @@
     var documentationCurrentPage = 1;
     var documentationPageSize = 25;
     var documentationView = 'cards';
+    var documentationLoadSequence = 0;
+    var stateLoadSequence = 0;
 
     function useServerApi() {
         return window.location.protocol === 'http:' && typeof window.fetch === 'function';
@@ -99,6 +101,12 @@
         return Boolean(firstContext && secondContext &&
             firstContext.clienteId === getProperty(secondContext, 'clienteId', 'ClienteId') &&
             firstContext.ambienteId === getProperty(secondContext, 'ambienteId', 'AmbienteId'));
+    }
+
+    function getSelectedContextKey() {
+        return (clientDropdown && clientDropdown.value && environmentDropdown && environmentDropdown.value)
+            ? clientDropdown.value + '/' + environmentDropdown.value
+            : '';
     }
 
     function contextExistsInServerList(context, contextList) {
@@ -359,8 +367,11 @@
     }
 
     function clearContextDependentState() {
+        documentationLoadSequence += 1;
+        stateLoadSequence += 1;
         lastState = null;
         endpointServices = [];
+        publishedDocuments = [];
         contextLogs = [];
         selectedFallbackXpz = null;
         exportConsoleVisible = false;
@@ -565,7 +576,10 @@
     /* ============ ESTADO GLOBAL ============ */
     function loadState() {
         if (!useServerApi()) { return; }
+        var requestSequence = ++stateLoadSequence;
+        var requestedContextKey = getSelectedContextKey();
         fetch('/api/estado', { cache: 'no-store' }).then(function (response) { return response.json(); }).then(function (payload) {
+            if (requestSequence !== stateLoadSequence || (requestedContextKey && requestedContextKey !== getSelectedContextKey())) { return; }
             if (!payload.ok) { return; }
             var serverContext = payload.data.context;
             if (contextResolutionPending) { return; }
@@ -610,7 +624,7 @@
                 setWorkBusy(false);
                 loadXpz();
                 loadContextArtifacts();
-                if (payload.data.xpz && payload.data.xpz.activo) { loadServices(); } else { endpointServices = []; renderDocumentationServices(document.getElementById('documentation-filter').value); renderDocumentation(document.getElementById('documentation-filter').value); renderGlobalNotices(); }
+                loadServices();
             } else {
                 unlockContext();
                 setWorkBusy(false);
@@ -728,14 +742,17 @@
     /* ============ SERVICIOS / DOCUMENTACIÓN ============ */
     function loadServices() {
         if (!useServerApi()) { return; }
+        var requestSequence = ++documentationLoadSequence;
+        var requestedContextKey = getSelectedContextKey();
         document.getElementById('documentation-loading').hidden = false;
         document.getElementById('documentation-empty').hidden = true;
         Promise.all([fetch('/api/servicios', { cache: 'no-store' }).then(function (response) { return response.json(); }), fetch('/api/documentos', { cache: 'no-store' }).then(function (response) { return response.json(); })]).then(function (responses) {
+            if (requestSequence !== documentationLoadSequence || requestedContextKey !== getSelectedContextKey()) { return; }
             document.getElementById('documentation-loading').hidden = true;
             var servicePayload = responses[0];
             var documentPayload = responses[1];
-            if (servicePayload.ok) {
-                endpointServices = servicePayload.data.servicios || [];
+            if (servicePayload.ok || documentPayload.ok) {
+                endpointServices = servicePayload.ok ? (servicePayload.data.servicios || []) : [];
                 publishedDocuments = (documentPayload.ok ? documentPayload.data.documentos : []) || [];
                 var knownPdfNames = {};
                 endpointServices.forEach(function (service) { if (service.pdf && service.pdf.nombre) { knownPdfNames[service.pdf.nombre] = true; } });
@@ -746,7 +763,10 @@
                 renderDocumentation(document.getElementById('documentation-filter').value);
                 renderGlobalNotices();
             }
-        }).catch(function () { document.getElementById('documentation-loading').hidden = true; endpointServices = []; publishedDocuments = []; renderDocumentationServices(document.getElementById('documentation-filter').value); renderDocumentation(document.getElementById('documentation-filter').value); });
+        }).catch(function () {
+            if (requestSequence !== documentationLoadSequence || requestedContextKey !== getSelectedContextKey()) { return; }
+            document.getElementById('documentation-loading').hidden = true; endpointServices = []; publishedDocuments = []; renderDocumentationServices(document.getElementById('documentation-filter').value); renderDocumentation(document.getElementById('documentation-filter').value);
+        });
     }
 
     function renderDocumentationServices(filter) {
@@ -1061,7 +1081,6 @@
                     var selectedEnvironment = (environments[clientDropdown.value] || []).filter(function (item) { return item.id === environmentDropdown.value; })[0];
                     var activeEnvironmentType = payload.data.ambienteTipo || (selectedEnvironment && selectedEnvironment.tipo);
                     showToast('Contexto activo: ' + payload.data.clienteNombre + ' / ' + nombreAmbienteCanonico(activeEnvironmentType, payload.data.ambienteNombre), 'ok');
-                    if (payload.data && payload.data.xpz && payload.data.xpz.activo) { loadServices(); } else { endpointServices = []; renderDocumentationServices(''); renderDocumentation(''); }
                     loadState();
                     if (payload.jobId) { currentJobId = payload.jobId; setWorkBusy(true); pollWork(); }
                 } else {

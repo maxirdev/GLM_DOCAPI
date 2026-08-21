@@ -458,7 +458,6 @@ function Marcar-ServicioSinPublicar {
 
 try {
     $lockActualizacion = Adquirir-LockActualizacion -RutaLock $rutaLockActualizacion
-    Limpiar-LogsEjecucion -DirectorioLogs $directorioLogs
 
     $parametrosConfiguracion = @{ ConfigPath = $ConfigPath; ClienteId = $contexto.ClienteId; AmbienteId = $contexto.AmbienteId }
     $configuracion = Cargar-Configuracion @parametrosConfiguracion

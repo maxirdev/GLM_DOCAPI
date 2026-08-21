@@ -18,6 +18,10 @@ $ErrorActionPreference = 'Stop'
 
 Inicializar-ConsolaUtf8
 
+if ($GeneXusExportProfile -eq 'Evo3') {
+    $MsbuildPath = Resolver-RutaMsbuildPorPerfil -RutaConfigurada $MsbuildPath -Perfil $GeneXusExportProfile
+}
+
 $onlyModuleAPIGLM = ($TargetName -eq 'ExportarAPIGLM')
 
 function Obtener-TimeoutMsbuildSegundos {

@@ -494,10 +494,14 @@ body[data-job="on"] .job-indicator { display: inline-flex; }
     border: 2px solid currentColor;
     border-top-color: transparent;
     border-radius: 50%;
+    -webkit-animation: spinner-rotate .7s linear infinite;
     animation: spinner-rotate .7s linear infinite;
     display: inline-block;
     flex: none;
+    -webkit-transform-origin: center;
+    transform-origin: center;
     vertical-align: -2px;
+    will-change: transform;
 }
 .spinner.sm { width: 13px; height: 13px; border-width: 2px; }
 
@@ -507,9 +511,13 @@ body[data-job="on"] .job-indicator { display: inline-flex; }
     border: 2px solid currentColor;
     border-top-color: transparent;
     border-radius: 50%;
+    -webkit-animation: spinner-rotate .7s linear infinite;
     animation: spinner-rotate .7s linear infinite;
     display: inline-block;
     flex: none;
+    -webkit-transform-origin: center;
+    transform-origin: center;
+    will-change: transform;
 }
 button.loading .btn-spinner { display: inline-block; }
 button .btn-spinner { display: none; }
@@ -517,7 +525,14 @@ button.loading { opacity: .85; cursor: progress; }
 button.loading .label-busy { display: inline; }
 button .label-busy { display: none; }
 
-@keyframes spinner-rotate { to { transform: rotate(360deg); } }
+@-webkit-keyframes spinner-rotate {
+    from { -webkit-transform: rotate(0deg); }
+    to { -webkit-transform: rotate(360deg); }
+}
+@keyframes spinner-rotate {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
 @keyframes panel-enter { from { opacity: .4; transform: translateY(3px); } to { opacity: 1; transform: translateY(0); } }
 
 /* ============ ACTION CARDS / EXPORT ============ */
@@ -766,7 +781,13 @@ code { color: var(--brand); font-size: 12px; overflow-wrap: anywhere; }
 }
 @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { animation-duration: .01ms !important; scroll-behavior: auto !important; transition-duration: .01ms !important; }
-    .spinner, .btn-spinner { animation: none !important; }
+    /* Los indicadores de carga siguen animándose: comunican que una operación continúa. */
+    .spinner, .btn-spinner, .component-spinner {
+        -webkit-animation-duration: 1.4s !important;
+        animation-duration: 1.4s !important;
+        -webkit-animation-iteration-count: infinite !important;
+        animation-iteration-count: infinite !important;
+    }
 }
 
 /* Lenguaje visual integrado desde web/resources/example.html. */
@@ -862,7 +883,11 @@ html[data-theme="dark"] .example-console .component-progress-track { background:
     border: 2px solid currentColor;
     border-right-color: transparent;
     border-radius: 50%;
+    -webkit-animation: component-spin 0.8s linear infinite;
     animation: component-spin 0.8s linear infinite;
+    -webkit-transform-origin: center;
+    transform-origin: center;
+    will-change: transform;
 }
 .component-skeletons { display: grid; gap: 0.4rem; }
 .component-skeleton {
@@ -913,11 +938,17 @@ html[data-theme="dark"] .example-console .component-progress-track { background:
     .component-detail-dialog { min-width: 0; }
 }
 
-@keyframes component-spin { to { transform: rotate(360deg); } }
+@-webkit-keyframes component-spin {
+    from { -webkit-transform: rotate(0deg); }
+    to { -webkit-transform: rotate(360deg); }
+}
+@keyframes component-spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
 @keyframes component-pulse { 50% { opacity: 0.45; } }
 
 @media (prefers-reduced-motion: reduce) {
-    .component-spinner,
     .component-skeleton,
     .component-progress-value { animation: none; transition: none; }
 }
