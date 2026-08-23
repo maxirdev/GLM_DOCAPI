@@ -313,6 +313,7 @@ body[data-job="on"] .job-indicator { display: inline-flex; }
 .tab-panel { animation: panel-enter .2s ease; }
 .tab-panel > * + * { margin-top: 18px; }
 .section-heading { align-items: start; display: flex; justify-content: space-between; margin-bottom: 18px; gap: 12px; }
+.section-heading-actions { align-items: center; display: flex; flex-wrap: wrap; gap: 10px; justify-content: flex-end; }
 .section-subtitle { color: var(--text-muted); font-size: 12px; margin-top: 3px; }
 
 .readonly-banner, .action-card, .empty-state, .work-card {

@@ -14,6 +14,8 @@
     var activeTab = 'estado';
     var exportButton = document.getElementById('export-xpz');
     var updateServicesButton = document.getElementById('update-services');
+    var updatePdfButton = document.getElementById('update-pdf');
+    var generateOpenApiButton = document.getElementById('generate-openapi');
     var exportFallback = document.getElementById('export-fallback');
     var selectedFallbackXpz = null;
     var operationResults = { exportar: null, generarPdf: null };
@@ -418,6 +420,13 @@
             }
         }
         var work = state && state.work;
+        if (work && work.rutaGenerada && !isEnProceso(work.estado)) {
+            var openApiStatus = work.estadoVisible || work.estado;
+            var openApiMessage = isError(openApiStatus)
+                ? 'La generación OpenAPI terminó con error.'
+                : 'OpenAPI generado en: ' + (work.rutaGenerada || 'la carpeta OpenAPI del ambiente activo.');
+            notices.push({ type: isError(openApiStatus) ? 'error' : 'ok', text: openApiMessage });
+        }
         if (work && (String(work.operacion || '').indexOf('EXPORTAR') >= 0 || String(work.operacion || '').indexOf('COMPLETAR') >= 0)) {
             var detail = formatDateTime(work.fin || work.inicio) + (work.error ? ' | ' + work.error : '');
             var visibleStatus = work.estadoVisible || work.estado;
@@ -453,6 +462,7 @@
         var message = document.getElementById('pdf-xpz-message');
         var actions = document.getElementById('pdf-actions');
         var hasActive = Boolean(xpz && xpz.activo);
+        var alreadyProcessed = Boolean(hasActive && xpz.activo.procesado);
         if (hasActive) {
             message.innerHTML = 'XPZ seleccionado: <span class="tag tag-selected">' + escapeHtml(xpz.activo.nombre) + '</span>';
         } else {
@@ -462,6 +472,8 @@
         document.getElementById('pdf-xpz-list').hidden = Boolean(currentJobId);
         actions.hidden = !hasActive;
         document.getElementById('generate-pdf').disabled = !hasActive || Boolean(currentJobId);
+        updatePdfButton.hidden = alreadyProcessed;
+        updatePdfButton.disabled = !hasActive || alreadyProcessed || Boolean(currentJobId);
     }
 
     function selectPdfXpz(name, button) {
@@ -502,6 +514,7 @@
     function renderDashboard(stateData) {
         var dashboard = stateData && stateData.dashboard;
         var summary = document.getElementById('state-summary');
+        renderOpenApiState(stateData);
         if (!dashboard || !dashboard.contexto) {
             summary.innerHTML = '';
             document.getElementById('validation-list').innerHTML = '';
@@ -543,6 +556,13 @@
         var xpz = dashboard.xpz || {};
         updatePdfPanel(xpz);
         renderPdfXpzList(xpz);
+    }
+
+    function renderOpenApiState(stateData) {
+        var state = stateData && stateData.dashboard && stateData.dashboard.openApi;
+        var tag = document.getElementById('openapi-state');
+        if (!tag) { return; }
+        tag.hidden = !(state && state.archivoDisponible);
     }
 
     function updateExportActions(processing, xpz) {
@@ -603,7 +623,10 @@
             var restoredWork = payload.data.work;
             if (restoredWork && isEnProceso(restoredWork.estado)) {
                 var restoredOperation = String(restoredWork.operacion || '');
-                if (restoredOperation.indexOf('PDF') >= 0) {
+                var restoredOutput = Array.isArray(restoredWork.ultimasLineas) ? restoredWork.ultimasLineas.join('\n').toUpperCase() : '';
+                if (restoredOperation.indexOf('GENERAR_OPENAPI') >= 0 || restoredOutput.indexOf('GENERANDO OPENAPI') >= 0) {
+                    document.getElementById('openapi-running').hidden = false;
+                } else if (restoredOperation.indexOf('PDF') >= 0) {
                     pdfConsoleVisible = true;
                     document.getElementById('pdf-work-card').setAttribute('operation', 'generarPdf');
                 } else if (restoredOperation.indexOf('EXPORTAR') >= 0 || restoredOperation.indexOf('COMPLETAR') >= 0 || restoredOperation.indexOf('VALIDAR') >= 0) {
@@ -860,6 +883,9 @@
         exportButton.disabled = isBusy || !(clientDropdown.value && environmentDropdown.value);
         updateServicesButton.disabled = isBusy || !(clientDropdown.value && environmentDropdown.value);
         document.getElementById('generate-pdf').disabled = isBusy || !(lastState && lastState.xpz && lastState.xpz.activo);
+        updatePdfButton.disabled = isBusy || !(lastState && lastState.dashboard && lastState.dashboard.xpz && lastState.dashboard.xpz.activo) || Boolean(lastState && lastState.dashboard && lastState.dashboard.xpz && lastState.dashboard.xpz.activo.procesado);
+        generateOpenApiButton.disabled = isBusy;
+        if (!isBusy) { document.getElementById('openapi-running').hidden = true; }
         if (isBusy) { document.getElementById('documentation-running').hidden = false; }
         document.body.setAttribute('data-job', isBusy ? 'on' : 'off');
         document.getElementById('pdf-xpz-info').hidden = isBusy;
@@ -902,6 +928,9 @@
             var op = String(payload.data.operacion || '');
             renderWork(payload.data);
             handleWorkResult(payload.data);
+            var outputText = Array.isArray(payload.data.ultimasLineas) ? payload.data.ultimasLineas.join('\n').toUpperCase() : '';
+            var isOpenApiOp = op.indexOf('GENERAR_OPENAPI') >= 0 || outputText.indexOf('GENERANDO OPENAPI') >= 0;
+            document.getElementById('openapi-running').hidden = !(isOpenApiOp && isEnProceso(payload.data.estado));
             var isExportOp = op.indexOf('EXPORTAR') >= 0 || op.indexOf('COMPLETAR') >= 0;
             showPdfRunning(isEnProceso(payload.data.estado) && isExportOp);
             if (isEnProceso(payload.data.estado)) {
@@ -912,10 +941,13 @@
             currentJobId = null;
             setWorkBusy(false);
             document.getElementById('documentation-running').hidden = true;
+            document.getElementById('openapi-running').hidden = true;
             showPdfRunning(false);
             setButtonLoading(exportButton, false);
             setButtonLoading(updateServicesButton, false);
             setButtonLoading(document.getElementById('generate-pdf'), false);
+            setButtonLoading(updatePdfButton, false);
+            setButtonLoading(generateOpenApiButton, false);
             setButtonLoading(document.getElementById('continue-operation'), false);
             document.getElementById('continue-operation').disabled = false;
             document.getElementById('abort-export').disabled = false;
@@ -928,6 +960,9 @@
             renderDocumentation(document.getElementById('documentation-filter').value);
             var finalStatus = payload.data.estadoVisible || payload.data.estado;
             var finalMessage = 'Trabajo finalizado: ' + finalStatus + ' (' + payload.data.contextId + ').';
+            if (payload.data.rutaGenerada && !isError(finalStatus)) {
+                finalMessage = 'OpenAPI generado en: ' + payload.data.rutaGenerada + '.';
+            }
             if (payload.data.error) { finalMessage += ' ' + payload.data.error; }
             var normalizedFinalStatus = String(finalStatus || '').toUpperCase();
             var isWarningStatus = normalizedFinalStatus.indexOf('PARCIAL') >= 0 || ['CANCELADO', 'CANCELLED', 'ABORTED', 'ABORTADO', 'ADVERTENCIA'].indexOf(normalizedFinalStatus) >= 0;
@@ -960,6 +995,34 @@
 
     function startPdfGeneration() {
         document.getElementById('pdf-warning').hidden = false;
+    }
+
+    function startPdfUpdate() {
+        if (!useServerApi() || currentJobId) { return; }
+        var dashboardXpz = lastState && lastState.dashboard && lastState.dashboard.xpz;
+        var activeXpz = dashboardXpz && dashboardXpz.activo;
+        if (!activeXpz || !dashboardXpz.sha256) { showToast('No hay un XPZ activo confirmado.', 'err'); return; }
+        setButtonLoading(updatePdfButton, true);
+        fetch('/api/actualizar', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Panel-Token': window.PANEL_TOKEN || '' }, body: JSON.stringify({ mode: 'update', xpz: { nombre: activeXpz.nombre, sha256: dashboardXpz.sha256 } }) }).then(function (response) { return response.json(); }).then(function (payload) {
+            if (!payload.ok) { throw new Error(payload.error || 'No se pudo iniciar la actualización.'); }
+            currentJobId = payload.data.jobId;
+            setWorkBusy(true);
+            showToast('Actualización de servicios iniciada.', 'info');
+            pollWork();
+        }).catch(function (error) { setButtonLoading(updatePdfButton, false); showToast(error.message, 'err'); });
+    }
+
+    function generateOpenApi() {
+        if (!useServerApi() || currentJobId) { return; }
+        setButtonLoading(generateOpenApiButton, true);
+        fetch('/api/openapi', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Panel-Token': window.PANEL_TOKEN || '' }, body: '{}' }).then(function (response) { return response.json(); }).then(function (payload) {
+            if (!payload.ok) { throw new Error(payload.error || 'No se pudo iniciar la generación OpenAPI.'); }
+            currentJobId = payload.data.jobId;
+            setWorkBusy(true);
+            document.getElementById('openapi-running').hidden = false;
+            showToast('Generación OpenAPI iniciada.', 'info');
+            pollWork();
+        }).catch(function (error) { setButtonLoading(generateOpenApiButton, false); document.getElementById('openapi-running').hidden = true; showToast(error.message, 'err'); });
     }
 
     function confirmPdfGeneration() {
@@ -1217,6 +1280,8 @@
         document.getElementById('configuration-environment-id').value = values.environmentId || (values.originalId ? values.originalId : inferredEnvironment.id);
         document.getElementById('configuration-environment-id').disabled = Boolean(values.environmentId && values.originalId);
         document.getElementById('configuration-kb-path').value = values.kbPath || '';
+        document.getElementById('configuration-host').value = values.host || '';
+        document.getElementById('configuration-base-url').value = values.baseUrl || '';
         var clientFields = document.getElementById('configuration-client-fields');
         var environmentFields = document.getElementById('configuration-environment-fields');
         var tipoRadios = document.querySelectorAll('input[name="configuration-tipo"]');
@@ -1414,7 +1479,7 @@
                 if (environment) {
                     var environmentTypes = (client.ambientes || []).map(function (item) { return clasificarTipo(item.tipo); });
                     var hasBothEnvironmentTypes = environmentTypes.indexOf('test') >= 0 && environmentTypes.indexOf('prod') >= 0;
-                    openConfigurationModal({ environment: true, originalId: environment.id, environmentId: environment.id, kbPath: environment.kbPath, clientId: client.id, tipo: environment.tipo, lockedTipo: null, tipoInmutable: hasBothEnvironmentTypes });
+                    openConfigurationModal({ environment: true, originalId: environment.id, environmentId: environment.id, kbPath: environment.kbPath, host: environment.host, baseUrl: environment.baseUrl, clientId: client.id, tipo: environment.tipo, lockedTipo: null, tipoInmutable: hasBothEnvironmentTypes });
                 }
             });
         });
@@ -1507,6 +1572,8 @@
         });
         document.getElementById('configuration-filter').addEventListener('input', renderConfigurationList);
         document.getElementById('generate-pdf').addEventListener('click', startPdfGeneration);
+        updatePdfButton.addEventListener('click', startPdfUpdate);
+        generateOpenApiButton.addEventListener('click', generateOpenApi);
         document.getElementById('confirm-pdf-generation').addEventListener('click', confirmPdfGeneration);
         document.getElementById('cancel-pdf-generation').addEventListener('click', function () { document.getElementById('pdf-warning').hidden = true; });
         document.getElementById('log-filter').addEventListener('change', function (event) {
@@ -1555,7 +1622,7 @@
             if (isEnvironment) {
                 url = '/api/configuracion/clientes/' + encodeURIComponent(clientId) + '/ambientes' + (isEditing ? '/' + encodeURIComponent(originalId) : '');
                 method = isEditing ? 'PUT' : 'POST';
-                body = { configHash: configHash, data: { tipo: environmentType, kbPath: document.getElementById('configuration-kb-path').value.trim() } };
+                body = { configHash: configHash, data: { tipo: environmentType, kbPath: document.getElementById('configuration-kb-path').value.trim(), host: document.getElementById('configuration-host').value.trim(), baseUrl: document.getElementById('configuration-base-url').value.trim() } };
             } else {
                 url = '/api/configuracion/clientes' + (isEditing ? '/' + encodeURIComponent(originalId) : '');
                 method = isEditing ? 'PUT' : 'POST';
@@ -1563,7 +1630,7 @@
                 var clientData = { id: id, nombre: name, packagename: document.getElementById('configuration-package').value.trim(), serviciosIgnorados: existingClient ? existingClient.serviciosIgnorados : [] };
                 if (!isEditing) {
                     clientData.geneXusExportProfile = getConfigurationExportProfile();
-                    clientData.ambientes = [{ tipo: environmentType, kbPath: document.getElementById('configuration-kb-path').value.trim() }];
+                    clientData.ambientes = [{ tipo: environmentType, kbPath: document.getElementById('configuration-kb-path').value.trim(), host: document.getElementById('configuration-host').value.trim(), baseUrl: document.getElementById('configuration-base-url').value.trim() }];
                 }
                 body = { configHash: configHash, data: clientData };
             }
@@ -1608,7 +1675,8 @@
     bindEvents();
     renderWork(null);
     renderGlobalNotices();
-    selectTab((window.panelUiPreferences && window.panelUiPreferences.current && window.panelUiPreferences.current.activeTab) || 'estado');
+    // La apertura del panel siempre muestra el resumen del contexto activo.
+    selectTab('estado');
     loadContextsFromServer();
     loadConfiguration();
 }());

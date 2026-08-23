@@ -27,13 +27,17 @@
           "id": "testing",
           "nombre": "Testing",
           "tipo": "test",
-          "kbPath": "C:/KBs/SEGUROS_COMERCIAL_TRUNK"
+          "kbPath": "C:/KBs/SEGUROS_COMERCIAL_TRUNK",
+          "host": "https://trunk.example.com",
+          "baseUrl": "/testing/rest"
         },
         {
           "id": "produccion",
           "nombre": "Produccion",
           "tipo": "prod",
-          "kbPath": "C:/KBs/SEGUROS_COMERCIAL_PROD"
+          "kbPath": "C:/KBs/SEGUROS_COMERCIAL_PROD",
+          "host": "https://trunk.example.com",
+          "baseUrl": "/produccion/rest"
         }
       ]
     },
@@ -47,7 +51,9 @@
           "id": "testing",
           "nombre": "Testing",
           "tipo": "test",
-          "kbPath": "test/fixtures/kb/otra"
+          "kbPath": "test/fixtures/kb/otra",
+          "host": "https://otro.example.com",
+          "baseUrl": "/testing/rest"
         }
       ]
     }

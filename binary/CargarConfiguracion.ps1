@@ -40,6 +40,33 @@ function Clasificar-TipoAmbiente {
     return $null
 }
 
+function Validar-HostAmbiente {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$HostUrl,
+        [Parameter(Mandatory = $false)][string]$Contexto = 'El host del ambiente'
+    )
+    $valor = ([string]$HostUrl).Trim()
+    $uri = $null
+    if ([string]::IsNullOrWhiteSpace($valor) -or -not [System.Uri]::TryCreate($valor, [System.UriKind]::Absolute, [ref]$uri) -or $uri.Scheme -notin @('http', 'https') -or [string]::IsNullOrWhiteSpace($uri.Host) -or -not [string]::IsNullOrWhiteSpace($uri.UserInfo) -or -not [string]::IsNullOrWhiteSpace($uri.Query) -or -not [string]::IsNullOrWhiteSpace($uri.Fragment) -or $uri.AbsolutePath -ne '/') {
+        throw ($Contexto + ' debe ser un origen absoluto http o https sin credenciales, query, fragmento ni path adicional.')
+    }
+    return $valor.TrimEnd('/')
+}
+
+function Validar-BaseUrlAmbiente {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$BaseUrl,
+        [Parameter(Mandatory = $false)][string]$Contexto = 'El baseUrl del ambiente'
+    )
+    $valor = ([string]$BaseUrl).Trim()
+    if ([string]::IsNullOrWhiteSpace($valor) -or -not $valor.StartsWith('/') -or $valor -match '[?#]' -or $valor -match '^[a-zA-Z][a-zA-Z0-9+.-]*://') {
+        throw ($Contexto + " debe ser una ruta que comience con '/'; no puede contener query, fragmento ni host.")
+    }
+    return $valor
+}
+
 function Obtener-IdAmbienteCanonico {
     [CmdletBinding()]
     param(
@@ -152,6 +179,12 @@ function Validar-ConfiguracionMulticliente {
             }
             if ([string]::IsNullOrWhiteSpace([string]$ambiente.kbPath)) {
                 throw ("El ambiente '" + $ambienteId + "' del cliente '" + $clienteId + "' no define kbPath.")
+            }
+            if ($ambiente.PSObject.Properties['host'] -and -not [string]::IsNullOrWhiteSpace([string]$ambiente.host)) {
+                Validar-HostAmbiente -HostUrl ([string]$ambiente.host) -Contexto ("El host del ambiente '" + $ambienteId + "'") | Out-Null
+            }
+            if ($ambiente.PSObject.Properties['baseUrl'] -and -not [string]::IsNullOrWhiteSpace([string]$ambiente.baseUrl)) {
+                Validar-BaseUrlAmbiente -BaseUrl ([string]$ambiente.baseUrl) -Contexto ("El baseUrl del ambiente '" + $ambienteId + "'") | Out-Null
             }
             $claveAmbiente = $ambienteId.ToLowerInvariant()
             if ($ambientesVistos.ContainsKey($claveAmbiente)) {
@@ -291,7 +324,15 @@ function Resolver-ContextoConfiguracion {
         TypstPath = [string]$ConfiguracionRaw.herramientas.typstPath
     }
 
-    return [pscustomobject]@{
+    $hostAmbiente = if ($ambiente.PSObject.Properties['host'] -and -not [string]::IsNullOrWhiteSpace([string]$ambiente.host)) {
+        Validar-HostAmbiente -HostUrl ([string]$ambiente.host) -Contexto ("El host del ambiente '" + $AmbienteId + "'")
+    } else { $null }
+    $baseUrl = if ($ambiente.PSObject.Properties['baseUrl'] -and -not [string]::IsNullOrWhiteSpace([string]$ambiente.baseUrl)) {
+        Validar-BaseUrlAmbiente -BaseUrl ([string]$ambiente.baseUrl) -Contexto ("El baseUrl del ambiente '" + $AmbienteId + "'")
+    } else { $null }
+    $serverUrl = if ($hostAmbiente -and $baseUrl) { $hostAmbiente.TrimEnd('/') + '/' + $baseUrl.TrimStart('/').TrimStart('/') } else { $null }
+
+    $contexto = [pscustomobject]@{
         ConfigPath = $ConfigPath
         RaizRepositorio = $RaizRepositorio
         ClientesRoot = $clientesRoot
@@ -303,6 +344,9 @@ function Resolver-ContextoConfiguracion {
         ContextId = $ClienteId + '/' + $AmbienteId
         DirectorioContexto = $directorioContexto
         KbPath = Resolver-RutaRepositorio -Ruta ([string]$ambiente.kbPath) -Raiz $RaizRepositorio
+        Host = $hostAmbiente
+        BaseUrl = $baseUrl
+        ServerUrl = $serverUrl
         PackageName = [string]$cliente.packagename
         ServiciosIgnorados = $serviciosIgnorados
         DirectorioXpz = $directorioXpz
@@ -316,6 +360,7 @@ function Resolver-ContextoConfiguracion {
         DirectorioTestResultados = $directorioTestResultados
         Herramientas = $herramientas
     }
+    return $contexto
 }
 
 function Cargar-Configuracion {

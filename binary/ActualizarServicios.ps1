@@ -990,6 +990,16 @@ try {
     } catch {
         Write-Host ('  [WARNING] No se pudo actualizar el historial de versiones: ' + $_.Exception.Message) -ForegroundColor Yellow
     }
+    if (-not [string]::IsNullOrWhiteSpace([string]$configuracion.Host) -and -not [string]::IsNullOrWhiteSpace([string]$configuracion.BaseUrl)) {
+        Write-Host 'Generando OpenAPI para el ambiente activo...' -ForegroundColor Cyan
+        $rutaGeneradorOpenApi = Join-Path $PSScriptRoot 'GenerarOpenApi.ps1'
+        $resultadoOpenApi = Invocar-PowerShellScript -RutaScript $rutaGeneradorOpenApi -Argumentos @('-ConfigPath', $ConfigPath, '-ManifiestoPath', $rutaManifiestoEjecucion)
+        if ($resultadoOpenApi.CodigoSalida -ne 0) { throw ('La generacion OpenAPI fallo. ' + (@($resultadoOpenApi.Salida) -join ' ')) }
+        $lineaOpenApi = @($resultadoOpenApi.Salida) | Where-Object { $_ -match '(?i)OPENAPI_GENERADO:\s*' } | Select-Object -Last 1
+        if ($lineaOpenApi) { Write-Host ('OPENAPI_GENERADO: ' + [regex]::Match([string]$lineaOpenApi, '(?i)OPENAPI_GENERADO:\s*(.+)$').Groups[1].Value.Trim()) -ForegroundColor DarkGray }
+    } else {
+        Write-Host '  [WARNING] OpenAPI omitido: host y baseUrl son opcionales y no estan completos.' -ForegroundColor Yellow
+    }
     $colorResultado = switch ($codigoSalidaOperacion) {
         0 { 'Green' }
         2 { 'Yellow' }

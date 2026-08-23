@@ -1,7 +1,7 @@
 # SPEC 20 — Exportación OpenAPI multicontexto
 
-> **Estado:** Borrador
-> **Depende de:** SPEC 06, SPEC 16, SPEC 18, SPEC 19
+> **Estado:** Aprobado
+> **Depende de:** SPEC 06, SPEC 16, SPEC 18, SPEC 19, SPEC 23, SPEC 24
 > **Fecha:** 2026-08-16
 > **Objetivo:** Generar y publicar un contrato OpenAPI 3.0.3 ejecutable por cliente y ambiente a partir del análisis técnico confirmado de los servicios activos.
 
@@ -18,17 +18,19 @@ Esta SPEC define únicamente la exportación OpenAPI. La aplicación web que lo 
 **Incluido:**
 
 - Extender cada ambiente del modelo de SPEC 19 con `host` y `baseUrl` obligatorios.
+- Extender el modelo de configuración administrado por SPEC 23 para editar y validar `host` y `baseUrl` como parte del ambiente.
 - Validar `host` como origen absoluto `http` o `https` sin path adicional.
 - Validar `baseUrl` como ruta iniciada en `/`, separada del host.
 - Propagar ambos valores en el contexto resuelto de SPEC 19.
 - Crear `binary/GenerarOpenApi.ps1` como punto de entrada independiente y reutilizable.
-- Generar un único `documentacion/OpenAPI/openapi.json` por cliente y ambiente.
+- Generar un único `documentacionServicios/OpenAPI/openapi.json` por cliente y ambiente.
 - Usar OpenAPI `3.0.3` como versión del contrato.
 - Incluir únicamente los servicios con estado `ACTIVO` en `controlVersiones.json`.
 - Excluir servicios `ELIMINADO`, `OMITIDO`, ignorados o sin publicación documental activa.
 - Reanalizar todos los servicios activos del contexto para construir el agregado completo.
-- Convertir el resultado de `Analizar-Servicio` a operaciones OpenAPI sin parsear Markdown.
-- Representar métodos `GET` y `POST`, entradas, estructuras, colecciones, respuestas, errores HTTP y autenticación HTTP Basic confirmados.
+- Convertir el resultado técnico mediante `ContratoAnalisis.ps1`, originado por `Analizar-Servicio`, a operaciones OpenAPI sin parsear Markdown.
+- Representar métodos `GET` y `POST`, entradas, estructuras, colecciones, respuestas y errores HTTP confirmados.
+- Representar HTTP Basic como esquema de seguridad global porque es una política confirmada del contrato vigente; no generar credenciales ni datos de autenticación.
 - Usar el endpoint publicado completo como resumen visible de cada operación, por ejemplo `glmsuit.comercial.apiglm.comun.awslistarbanco`.
 - Usar el `fullyQualifiedName` como `operationId` estable.
 - Agregar tags por módulo GeneXus y por método HTTP.
@@ -44,11 +46,11 @@ Esta SPEC define únicamente la exportación OpenAPI. La aplicación web que lo 
 - No reemplazar el contrato publicado cuando el hash semántico no cambió.
 - Publicar el archivo mediante escritura atómica después de validar su estructura.
 - Conservar el último `openapi.json` válido cuando la generación falle.
-- Regenerar automáticamente OpenAPI después de una publicación documental transaccional de `ActualizarServicios.ps1`.
+- Regenerar automáticamente OpenAPI después de una publicación documental transaccional de `ActualizarServicios.ps1`, persistiendo el resultado con la semántica operativa de SPEC 24.
 - Permitir regenerar el contrato manualmente con `binary/GenerarOpenApi.ps1`, incluso cuando solo cambien `host` o `baseUrl`.
 - Terminar con código `1` si OpenAPI falla después de que los documentos ya fueron publicados, sin revertir esos documentos.
 - Agregar fixtures y casos al harness existente de `test/Run-Tests.ps1`.
-- Actualizar `README.md` y `AGENTS.md` con el artefacto y el contrato de configuración.
+- Actualizar `README.md` y `AGENTS.md` con el artefacto y el contrato de configuración, sin presentar OpenAPI como parte del panel actual.
 
 **Fuera de alcance (para futuras SPEC):**
 
@@ -108,7 +110,7 @@ ServerUrl
 La salida se publica en:
 
 ```text
-<contexto>/documentacion/OpenAPI/openapi.json
+<contexto>/documentacionServicios/OpenAPI/openapi.json
 ```
 
 La forma mínima del documento es:
@@ -151,7 +153,7 @@ Convenciones del contrato:
 - Cada operación usa como `operationId` el FQN literal del inventario.
 - Cada operación tiene un tag del módulo GeneXus y otro tag con el método HTTP.
 - La ruta OpenAPI se deriva del endpoint publicado y se combina con el servidor del contexto.
-- Todas las operaciones incluyen el esquema de seguridad HTTP Basic cuando corresponda al contrato vigente.
+- Todas las operaciones incluyen el esquema de seguridad HTTP Basic porque el contrato vigente lo confirma para los servicios APIGLM; el exportador no persiste ni genera credenciales.
 - `x-glm-context` solo contiene identidad contextual; no contiene rutas físicas, usuarios, contraseñas ni tokens.
 - El hash de `info.version` se calcula sobre el contenido semántico del contrato, excluyendo `generatedAt` u otros campos volátiles.
 - Un cambio confirmado en host, base URL, operaciones, parámetros, tipos, ejemplos o respuestas modifica el hash semántico.
@@ -213,7 +215,7 @@ Reglas adicionales:
 - Los valores neutros son `""` para strings, `0` para números, `false` para booleanos, una fecha neutra válida para fechas, `null` solo cuando el esquema lo permita, objetos con su estructura y arrays vacíos para colecciones.
 - Los ejemplos nunca se obtienen de las colecciones Postman.
 - Las referencias recursivas usan `$ref` y no se expanden indefinidamente.
-- Un tipo ejecutable no resuelto bloquea la publicación del contrato nuevo.
+- Un tipo, método, endpoint, estructura o respuesta ejecutable no resuelto bloquea la publicación del contrato nuevo.
 
 ### Estados de generación
 
@@ -226,32 +228,33 @@ El proceso distingue:
 
 ## Plan de implementación
 
-1. Adaptar `binary/CargarConfiguracion.ps1` y `binary/ValidarConfiguracionGLM.ps1` al modelo de SPEC 19 para leer y validar `host` y `baseUrl` por ambiente; agregar fixtures de configuración válidos, ausentes, mal formados y con combinaciones inválidas.
+1. Adaptar `binary/CargarConfiguracion.ps1` y `binary/ValidarConfiguracionGLM.ps1` al modelo de SPEC 19 para leer y validar `host` y `baseUrl` por ambiente; actualizar también los payloads y validaciones de configuración de SPEC 23; agregar fixtures de configuración válidos, ausentes, mal formados y con combinaciones inválidas.
 2. Extender el contexto y el manifiesto contextual de SPEC 19 con `Host`, `BaseUrl` y `ServerUrl`, sin duplicar la lógica de resolución de rutas ni permitir que un proceso hijo combine valores de otro ambiente.
-3. Crear el contrato interno de conversión en `binary/GenerarOpenApi.ps1`, reutilizando `Analizar-Servicio`, `CargarMultiXPZ`, `GLMUtilidades` y las rutas del contexto; el script debe aceptar el manifiesto contextual y un modo independiente de regeneración.
+3. Crear el contrato interno de conversión en `binary/GenerarOpenApi.ps1`, reutilizando `Analizar-Servicio`, `ContratoAnalisis.ps1`, `CargarMultiXPZ`, `GLMUtilidades` y las rutas del contexto; el script debe aceptar el manifiesto contextual y un modo independiente de regeneración.
 4. Implementar el mapeo de operaciones GET y POST, parámetros, cuerpos, estructuras, colecciones, `$ref`, required, ejemplos neutros, tags, `operationId`, resumen y `x-glm-position`; comprobar cada caso con fixtures XML y XPZ existentes.
-5. Implementar la conversión de respuestas y errores HTTP confirmados, incluyendo JSON estructurado, colecciones, texto, vacío y binario, sin fabricar esquemas ni códigos no presentes en el resultado técnico.
-6. Implementar metadatos contextuales, `servers`, autenticación Basic, hash semántico, fast-path y validación propia de OpenAPI 3.0.3; rechazar referencias rotas, rutas duplicadas, `operationId` duplicados y documentos JSON inválidos.
-7. Implementar la escritura atómica de `documentacion/OpenAPI/openapi.json`; ante un fallo conservar byte a byte el contrato anterior y generar diagnóstico; si no existe contrato anterior, terminar con código `1` sin publicar un archivo parcial.
-8. Integrar `GenerarOpenApi.ps1` en `ActualizarServicios.ps1` después de publicar el lote documental y persistir el control; no invocarlo desde `Escribir-Salidas` ni desde una generación directa que opere sin control.
+5. Implementar la conversión de respuestas y errores HTTP confirmados, incluyendo JSON estructurado, colecciones, texto, vacío y binario, sin fabricar esquemas ni códigos no presentes en el resultado técnico; incluir `401` cuando el analizador confirme `HttpCode.Unauthorized`.
+6. Implementar metadatos contextuales, `servers`, el esquema Basic confirmado, hash semántico, fast-path y validación propia de OpenAPI 3.0.3; rechazar referencias rotas, rutas duplicadas, `operationId` duplicados y documentos JSON inválidos.
+7. Implementar la escritura atómica de `documentacionServicios/OpenAPI/openapi.json`; ante un fallo conservar byte a byte el contrato anterior y generar diagnóstico; si no existe contrato anterior, terminar con código `1` sin publicar un archivo parcial.
+8. Integrar `GenerarOpenApi.ps1` en `ActualizarServicios.ps1` después de publicar el lote documental y persistir el control; el resultado debe quedar correlacionado con la operación de SPEC 24 cuando la actualización se ejecute desde el panel. No invocarlo desde `Escribir-Salidas` ni desde una generación directa que opere sin control.
 9. Agregar regeneración manual para cambios exclusivos de `host` o `baseUrl`, sin exigir cambios en Markdown y sin modificar versiones documentales cuando el contrato sea el único artefacto cambiado.
 10. Ampliar `test/Run-Tests.ps1` con pruebas de configuración, mapeo, referencias, hash, fast-path, atomicidad, conservación del contrato anterior, servicios activos y aislamiento entre dos clientes y ambientes; ejecutar la suite completa.
 11. Actualizar `README.md`, `AGENTS.md` y `.gitignore` para describir la configuración, la ruta contextual, el carácter generado de `openapi.json` y la separación respecto del futuro probador web.
 
 ## Criterios de aceptación
 
-- [ ] La SPEC declara explícitamente dependencia de SPEC 06, SPEC 16, SPEC 18 y SPEC 19.
+- [ ] La SPEC declara explícitamente dependencia de SPEC 06, SPEC 16, SPEC 18, SPEC 19, SPEC 23 y SPEC 24.
 - [ ] Cada ambiente válido contiene `host` y `baseUrl` obligatorios.
 - [ ] Un `host` sin esquema HTTP(S), con credenciales, path, query o fragmento es rechazado antes de escribir archivos.
 - [ ] Un `baseUrl` que no empieza con `/` es rechazado antes de escribir archivos.
 - [ ] La combinación normalizada de `host` y `baseUrl` produce una única URL de servidor sin barras duplicadas.
 - [ ] El contexto resuelto expone `Host`, `BaseUrl` y `ServerUrl` del ambiente seleccionado.
-- [ ] El contrato se publica en `<contexto>/documentacion/OpenAPI/openapi.json`.
+- [ ] El contrato se publica en `<contexto>/documentacionServicios/OpenAPI/openapi.json`.
 - [ ] El documento publicado declara `openapi` igual a `3.0.3`.
 - [ ] El contrato contiene un único `servers.url` correspondiente al ambiente activo.
 - [ ] Solo los servicios `ACTIVO` del control aparecen como operaciones.
 - [ ] Los servicios `ELIMINADO`, `OMITIDO`, ignorados o no publicados no aparecen.
 - [ ] El exportador reanaliza todos los servicios activos y no construye el agregado leyendo Markdown.
+- [ ] El resultado usado para convertir cada servicio pasa por `ContratoAnalisis.ps1` y conserva la identidad del contexto y del XPZ.
 - [ ] Cada operación conserva el FQN literal como `operationId`.
 - [ ] Cada operación muestra el endpoint publicado completo como `summary`.
 - [ ] Cada operación contiene un tag del módulo GeneXus y otro del método HTTP.
@@ -264,20 +267,21 @@ El proceso distingue:
 - [ ] Los ejemplos son neutros y no provienen de las colecciones Postman.
 - [ ] El contrato no contiene credenciales, tokens, rutas locales ni secretos.
 - [ ] Las respuestas JSON, textuales, vacías y binarias se representan según la evidencia técnica disponible.
-- [ ] Los códigos HTTP específicos solo aparecen cuando fueron confirmados por el analizador.
-- [ ] La autenticación HTTP Basic se representa con un esquema `securitySchemes` válido.
+- [ ] Los códigos HTTP específicos, incluido `401` cuando corresponda, solo aparecen cuando fueron confirmados por el analizador.
+- [ ] La autenticación HTTP Basic se representa con un esquema `securitySchemes` válido, sin credenciales ni tokens.
 - [ ] `info.version` cambia cuando cambia semánticamente el contrato y no cambia por campos volátiles.
 - [ ] Una regeneración sin cambios semánticos conserva el archivo byte a byte y no modifica su fecha.
 - [ ] Un JSON con referencias rotas, rutas duplicadas u `operationId` duplicados no se publica.
 - [ ] Un fallo de generación conserva byte a byte el último `openapi.json` válido.
 - [ ] Si no existe contrato previo y la generación falla, no se crea un archivo parcial y el proceso termina con código `1`.
 - [ ] La publicación válida se realiza mediante escritura atómica.
-- [ ] `ActualizarServicios.ps1` regenera OpenAPI después de publicar el lote documental y persistir el control.
+- [ ] `ActualizarServicios.ps1` regenera OpenAPI después de publicar el lote documental y persistir el control, correlacionado con la operación de SPEC 24 cuando aplique.
 - [ ] `Escribir-Salidas.ps1` no dispara OpenAPI desde staging ni desde una publicación directa sin control.
 - [ ] El cambio exclusivo de `host` o `baseUrl` puede regenerarse mediante `binary/GenerarOpenApi.ps1`.
 - [ ] Si OpenAPI falla después de publicar documentos, los documentos no se revierten y el proceso termina con código `1`.
 - [ ] La salida de generación distingue `PUBLICADO`, `SIN_CAMBIOS`, `CONSERVADO` y `ERROR`.
 - [ ] Dos clientes o ambientes con los mismos FQN producen contratos aislados y no se reemplazan entre sí.
+- [ ] La configuración de SPEC 23 permite conservar y editar `host` y `baseUrl` por ambiente sin crear estados inválidos.
 - [ ] El archivo generado queda ignorado por Git según la política de artefactos mutables de SPEC 19.
 - [ ] Las pruebas del harness cubren configuración, mapeo OpenAPI, atomicidad, fast-path, fallos y aislamiento contextual.
 - [ ] `README.md` y `AGENTS.md` documentan el contrato y no presentan el probador web como parte de esta SPEC.
@@ -322,7 +326,7 @@ El proceso distingue:
 | La conversión de tipos introduce restricciones inventadas | Aplicar restricciones de longitud y precisión solo con evidencia confirmada y segura. |
 | Una estructura recursiva causa expansión infinita | Generar schemas reutilizables y referencias `$ref`. |
 | La generación directa y la actualización producen contratos distintos | Definir `ActualizarServicios.ps1` como único disparador automático y usar el mismo script reutilizable para regeneración manual. |
-| El archivo generado contamina el control de Git | Ignorar la ruta contextual `documentacion/OpenAPI/openapi.json` junto con los demás artefactos mutables. |
+| El archivo generado contamina el control de Git | Ignorar la ruta contextual `documentacionServicios/OpenAPI/openapi.json` junto con los demás artefactos mutables. |
 
 ## Lo que **no** incluye esta SPEC
 

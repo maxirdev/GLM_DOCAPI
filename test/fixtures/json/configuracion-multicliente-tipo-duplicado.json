@@ -19,13 +19,17 @@
           "id": "testing",
           "nombre": "Testing",
           "tipo": "test",
-          "kbPath": "C:/KBs/SEGUROS_COMERCIAL_TRUNK"
+          "kbPath": "C:/KBs/SEGUROS_COMERCIAL_TRUNK",
+          "host": "https://trunk.example.com",
+          "baseUrl": "/testing/rest"
         },
         {
           "id": "qa",
           "nombre": "QA",
           "tipo": "test",
-          "kbPath": "C:/KBs/SEGUROS_COMERCIAL_QA"
+          "kbPath": "C:/KBs/SEGUROS_COMERCIAL_QA",
+          "host": "https://trunk.example.com",
+          "baseUrl": "/qa/rest"
         }
       ]
     }

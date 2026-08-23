@@ -19,7 +19,9 @@
           "id": "testing",
           "nombre": "Testing",
           "tipo": "test",
-          "kbPath": "C:/KBs/CLIENTE_EXISTENTE"
+          "kbPath": "C:/KBs/CLIENTE_EXISTENTE",
+          "host": "https://existente.example.com",
+          "baseUrl": "/testing/rest"
         }
       ]
     }

@@ -21,7 +21,7 @@
                      {
                          "id":  "trunk",
                          "nombre":  "Trunk",
-                         "packagename":  "glmsuit.comercial.",
+                         "packagename":  "ar.com.glmsa.seguros.",
                          "serviciosIgnorados":  [
                                                     "APIGLM.WSRedireccionHome",
                                                     "APIGLM.Comun.WSLiberarSolicitud",
@@ -33,7 +33,9 @@
                                                "id":  "testing",
                                                "nombre":  "TEST",
                                                "tipo":  "test",
-                                               "kbPath":  "C:/KBs/SEGUROS_COMERCIAL_TRUNK"
+                                               "kbPath":  "C:\\Users\\Teltron\\Desktop\\OpenCode\\GLM_DocAPI",
+                                               "host":  "https://com-prue.lps.com.ar",
+                                               "baseUrl":  "/LPS_COM_PRUE/servlet/"
                                            }
                                        ]
                      }
