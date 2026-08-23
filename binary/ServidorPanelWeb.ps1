@@ -361,6 +361,7 @@ function Get-WorkOutputErrors {
         $_ -and (
             $_ -match '(?i)^\s*(ERROR\b|FATAL\b|EXCEPTION\b|MSB\d{4}\b)' -or
             $_ -match '(?i)\b(ERROR|FATAL|EXCEPTION)\s*:' -or
+            $_ -match '(?i)\bGenerarOpenApi:\s*' -or
             $_ -match '(?i)\b(RESULTADO|ESTADO)\s*:\s*(ERROR|FAILED|FATAL)\b'
         )
     } | Select-Object -Unique)
@@ -399,6 +400,7 @@ function Write-OperationRecord {
         codigoSalida = $Work.codigoSalida
         warnings = @($Work.warnings)
         error = $Work.error
+        rutaGenerada = if ($Work.PSObject.Properties['rutaGenerada']) { $Work.rutaGenerada } else { $null }
         logNombre = $Work.operationLogName
     }
     $json = $record | ConvertTo-Json -Depth 10
@@ -478,6 +480,7 @@ function Get-PublicWork {
         progreso = $Work.progreso
         warnings = @($Work.warnings)
         error = $Work.error
+        rutaGenerada = if ($Work.PSObject.Properties['rutaGenerada']) { $Work.rutaGenerada } else { $null }
         ultimasLineas = @(Get-WorkTail -Work $Work)
     }
 }
@@ -513,6 +516,10 @@ function Update-CurrentWork {
     $work.codigoSalida = [int]$work.process.ExitCode
     $work.estado = Get-WorkStatusFromExitCode -ExitCode $work.codigoSalida
     $fullOutput = Get-WorkFullOutput -Work $work
+    $openApiPathMatch = [regex]::Match($fullOutput, '(?im)OPENAPI_GENERADO:\s*(.+)$')
+    if ($openApiPathMatch.Success) {
+        $work | Add-Member -NotePropertyName rutaGenerada -NotePropertyValue $openApiPathMatch.Groups[1].Value.Trim() -Force
+    }
     # La salida con timestamps es solo para presentación. La clasificación
     # debe analizar el texto original producido por exportación/validación.
     $rawOutput = Get-WorkRawOutput -Work $work
@@ -645,6 +652,38 @@ function Start-PdfGenerationWork {
     return Start-PanelChildWork -Operation 'GENERAR_PDF' -ScriptPath $scriptPath -ArgumentValues $arguments -Context $script:ActiveContext
 }
 
+function Get-OpenApiState {
+    if ($null -eq $script:ActiveContext) {
+        return [pscustomobject]@{ disponible = $false; estado = 'ADVERTENCIA'; mensaje = 'No hay un contexto activo.'; hostConfigurado = $false; baseUrlConfigurado = $false; documentacionDisponible = $false; archivoDisponible = $false; nombre = $null }
+    }
+    $hostConfigurado = -not [string]::IsNullOrWhiteSpace([string]$script:ActiveContext.Host)
+    $baseUrlConfigurado = -not [string]::IsNullOrWhiteSpace([string]$script:ActiveContext.BaseUrl)
+    $documentosPublicados = @(Get-ContextFileList -Directory $script:ActiveContext.DirectorioServicios -Extensions @('.md', '.pdf'))
+    $ruta = Join-Path $script:ActiveContext.DirectorioServicios 'OpenAPI\openapi.json'
+    $documentacionDisponible = $documentosPublicados.Count -gt 0
+    $archivoDisponible = Test-Path -LiteralPath $ruta -PathType Leaf
+    $valido = $hostConfigurado -and $baseUrlConfigurado -and $documentacionDisponible
+    $mensaje = if (-not $hostConfigurado -or -not $baseUrlConfigurado) { 'Faltan host y/o baseUrl; la generación automática está deshabilitada.' } elseif (-not $documentacionDisponible) { 'No existe documentación publicada para generar OpenAPI.' } elseif ($archivoDisponible) { 'OpenAPI configurado y generado.' } else { 'OpenAPI configurado; aún no se ha generado openapi.json.' }
+    return [pscustomobject]@{ disponible = $valido; estado = if ($valido) { 'OK' } else { 'ADVERTENCIA' }; mensaje = $mensaje; hostConfigurado = $hostConfigurado; baseUrlConfigurado = $baseUrlConfigurado; documentacionDisponible = $documentacionDisponible; archivoDisponible = $archivoDisponible; nombre = if ($archivoDisponible) { 'openapi.json' } else { $null } }
+}
+
+function Start-OpenApiGenerationWork {
+    if ($null -eq $script:ActiveContext) { throw 'No hay un contexto activo.' }
+    $openApiState = Get-OpenApiState
+    if (-not $openApiState.hostConfigurado -or -not $openApiState.baseUrlConfigurado) { throw 'OpenAPI requiere host y baseUrl configurados.' }
+    if (-not $openApiState.documentacionDisponible) { throw 'No existe documentación Markdown o PDF publicada para generar OpenAPI.' }
+    $sourceXpz = if ($script:ActiveXpz) { $script:ActiveXpz } else { @(Get-ActiveXpzCandidates | Sort-Object Fecha -Descending | Select-Object -First 1)[0] }
+    if ($null -eq $sourceXpz) { throw 'No existe un XPZ fuente para el análisis técnico de OpenAPI.' }
+    Prepare-PanelOperationLogs -Context $script:ActiveContext
+    $jobsDirectory = Join-Path $script:ActiveContext.DirectorioLogs 'panel-jobs'
+    New-Item -ItemType Directory -Path $jobsDirectory -Force | Out-Null
+    $rutaOpenApi = [System.IO.Path]::GetFullPath((Join-Path $script:ActiveContext.DirectorioServicios 'OpenAPI\openapi.json'))
+    $manifest = Crear-ManifiestoEjecucion -Xpz $sourceXpz.Ruta -FullyQualifiedNames @() -DirectorioBase (Join-Path $jobsDirectory ('openapi-' + (Get-Date -Format 'yyyyMMdd-HHmmss'))) -Contexto $script:ActiveContext
+    $scriptPath = Join-Path $RepositoryRoot 'binary\GenerarOpenApi.ps1'
+    $arguments = @('-File', $scriptPath, '-ConfigPath', $ConfigPath, '-ManifiestoPath', $manifest.Ruta)
+    return Start-PanelChildWork -Operation 'GENERAR_OPENAPI' -ScriptPath $scriptPath -ArgumentValues $arguments -Context $script:ActiveContext -GeneratedPath $rutaOpenApi
+}
+
 function Get-EndpointInventoryState {
     if ($null -eq $script:ActiveContext -or $null -eq $script:ActiveXpz) {
         return [pscustomobject]@{ disponible = $false; vigente = $false; obsoleto = $false; motivo = 'No hay contexto o XPZ activo.'; inventario = $null }
@@ -772,7 +811,8 @@ function Start-PanelChildWork {
         [Parameter(Mandatory = $true)][string]$Operation,
         [Parameter(Mandatory = $true)][string]$ScriptPath,
         [Parameter(Mandatory = $true)][string[]]$ArgumentValues,
-        [Parameter(Mandatory = $true)]$Context
+        [Parameter(Mandatory = $true)]$Context,
+        [Parameter(Mandatory = $false)][string]$GeneratedPath = ''
     )
     if ($Context) { Stop-PanelOrphanedMsbuild -Context $Context | Out-Null }
     $jobId = 'panel-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + ([Guid]::NewGuid().ToString('N').Substring(0, 8))
@@ -810,6 +850,7 @@ function Start-PanelChildWork {
         stderrPath = $stderrPath
         xpzNombre = if ($script:ActiveXpz) { [string]$script:ActiveXpz.Nombre } else { $null }
         xpzSha256 = if ($script:ActiveXpz -and (Test-Path -LiteralPath $script:ActiveXpz.Ruta -PathType Leaf)) { Obtener-Sha256Archivo -Ruta $script:ActiveXpz.Ruta } else { $null }
+        rutaGenerada = if ([string]::IsNullOrWhiteSpace($GeneratedPath)) { $null } else { $GeneratedPath }
         process = $process
     }
     Write-OperationRecord -Work $script:CurrentWork
@@ -869,9 +910,15 @@ function Start-DocumentationWork {
     if ($null -eq $script:ActiveContext -or $null -eq $script:ActiveXpz) { throw 'No hay contexto y XPZ activos.' }
     $mode = [string]$RequestBody.mode
     $selectedNames = @($RequestBody.fullyQualifiedNames | ForEach-Object { [string]$_ } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
-    if ($mode -notin @('selected', 'all')) { throw 'mode debe ser selected o all.' }
+    if ($mode -notin @('selected', 'all', 'update')) { throw 'mode debe ser selected, update o all.' }
     if ($mode -eq 'selected' -and $selectedNames.Count -eq 0) { throw 'selected exige al menos un FQN.' }
-    if ($mode -eq 'all' -and $selectedNames.Count -gt 0) { throw 'all no admite FQN.' }
+    if ($mode -in @('all', 'update') -and $selectedNames.Count -gt 0) { throw ($mode + ' no admite FQN.') }
+    if ($RequestBody.PSObject.Properties['xpz'] -and $RequestBody.xpz) {
+        $confirmedName = [string]$RequestBody.xpz.nombre
+        $confirmedHash = [string]$RequestBody.xpz.sha256
+        $currentHash = if (Test-Path -LiteralPath $script:ActiveXpz.Ruta -PathType Leaf) { Obtener-Sha256Archivo -Ruta $script:ActiveXpz.Ruta } else { '' }
+        if ($confirmedName -cne [string]$script:ActiveXpz.Nombre -or $confirmedHash -notmatch '^[0-9a-fA-F]{64}$' -or $confirmedHash -ine $currentHash) { throw 'PRECONDICION_XPZ: El XPZ activo o su SHA-256 cambio; confirme nuevamente.' }
+    }
     $inventoryState = Get-EndpointInventoryState
     $knownNames = @()
     if ($inventoryState.inventario) { $knownNames = @($inventoryState.inventario.endpoints | ForEach-Object { [string]$_.proceso }) }
@@ -1135,7 +1182,9 @@ function Write-ConfigurationCandidate {
     )
     $contextBeforeWrite = $script:ActiveContext
     Normalize-CandidateEnvironmentNames -Candidate $Candidate
-    Test-ConfigurationCandidate -Candidate $Candidate
+    # Las mutaciones validan el contenido de la KB afectada; el candidato completo
+    # se valida aqui por esquema para no exigir acceso a todas las KB existentes.
+    Validar-ConfiguracionMulticliente -ConfiguracionRaw $Candidate -RaizRepositorio $RepositoryRoot -ConfigPath $ConfigPath | Out-Null
     $content = Normalizar-SaltosLineaLf -Texto ($Candidate | ConvertTo-Json -Depth 15)
     Escribir-ArchivoAtomico -Ruta $ConfigPath -Contenido $content | Out-Null
     $script:ConfigurationRaw = Get-Content -LiteralPath $ConfigPath -Raw | ConvertFrom-Json
@@ -1205,6 +1254,8 @@ function Convert-MutationPayloadToNewClient {
     }
     $kbPathResuelto = Resolver-RutaRepositorio -Ruta ([string]$environmentPayload.kbPath) -Raiz $RepositoryRoot
     Validar-RutaKnowledgeBase -Ruta $kbPathResuelto -Contexto ("La Knowledge Base del primer ambiente del cliente '" + $clientId + "'") | Out-Null
+    $environmentHost = if ($environmentPayload.PSObject.Properties['host'] -and -not [string]::IsNullOrWhiteSpace([string]$environmentPayload.host)) { Validar-HostAmbiente -HostUrl ([string]$environmentPayload.host) -Contexto 'El host del primer ambiente' } else { $null }
+    $environmentBaseUrl = if ($environmentPayload.PSObject.Properties['baseUrl'] -and -not [string]::IsNullOrWhiteSpace([string]$environmentPayload.baseUrl)) { Validar-BaseUrlAmbiente -BaseUrl ([string]$environmentPayload.baseUrl) -Contexto 'El baseUrl del primer ambiente' } else { $null }
 
     return [pscustomobject]@{
         id = $clientId
@@ -1216,6 +1267,8 @@ function Convert-MutationPayloadToNewClient {
             nombre = Obtener-NombreAmbienteCanonico -Tipo $environmentType
             tipo = $environmentType
             kbPath = [string]$environmentPayload.kbPath
+            host = $environmentHost
+            baseUrl = $environmentBaseUrl
         })
     }
 }
@@ -1396,6 +1449,16 @@ function Get-ContextValidaciones {
             [void]$validaciones.Add([pscustomobject]@{ item = $herramienta.nombre; estado = 'ADVERTENCIA'; mensaje = ('No se encontro en: ' + $valor) })
         }
     }
+    $hostConfigurado = -not [string]::IsNullOrWhiteSpace([string]$script:ActiveContext.Host)
+    $baseUrlConfigurado = -not [string]::IsNullOrWhiteSpace([string]$script:ActiveContext.BaseUrl)
+    $faltantesOpenApi = New-Object System.Collections.Generic.List[string]
+    if (-not $hostConfigurado) { [void]$faltantesOpenApi.Add('host') }
+    if (-not $baseUrlConfigurado) { [void]$faltantesOpenApi.Add('baseUrl') }
+    [void]$validaciones.Add([pscustomobject]@{
+        item = 'OpenAPI'
+        estado = if ($faltantesOpenApi.Count -eq 0) { 'OK' } else { 'ADVERTENCIA' }
+        mensaje = if ($faltantesOpenApi.Count -eq 0) { 'Host y baseUrl configurados.' } else { 'Falta(n): ' + ($faltantesOpenApi -join ', ') + '.' }
+    })
     [void]$validaciones.Add([pscustomobject]@{ item = 'Contexto'; estado = 'OK'; mensaje = ($script:ActiveContext.ContextId + ' (' + $script:ActiveContext.ClienteNombre + ' / ' + $script:ActiveContext.AmbienteNombre + ')') })
     try {
         Validar-RutaKnowledgeBase -Ruta $script:ActiveContext.KbPath -Contexto 'La Knowledge Base del ambiente' | Out-Null
@@ -1443,6 +1506,7 @@ function Get-StateData {
         validaciones = @(Get-ContextValidaciones)
         xpz = [pscustomobject]@{ disponibles = $xpzCandidates; activo = if ($script:ActiveXpz) { Convert-XpzForResponse -Xpz $script:ActiveXpz } else { $null }; sha256 = $activeXpzHash }
         herramientas = if ($script:ConfigurationRaw) { $script:ConfigurationRaw.herramientas } else { $null }
+        openApi = Get-OpenApiState
         trabajo = $publicWork
     }
     [pscustomobject]@{
@@ -1494,7 +1558,9 @@ function Invoke-ApiRequest {
                 }
             }
             Validar-RutaKnowledgeBase -Ruta (Resolver-RutaRepositorio -Ruta ([string]$payload.kbPath) -Raiz $RepositoryRoot) -Contexto ("La Knowledge Base del ambiente '" + (Obtener-IdAmbienteCanonico -Tipo $tipoNormalizado) + "'") | Out-Null
-            $environment = [pscustomobject]@{ id = (Obtener-IdAmbienteCanonico -Tipo $tipoNormalizado); nombre = (Obtener-NombreAmbienteCanonico -Tipo $tipoNormalizado); tipo = $tipoNormalizado; kbPath = [string]$payload.kbPath }
+            $hostAmbiente = if ($payload.PSObject.Properties['host'] -and -not [string]::IsNullOrWhiteSpace([string]$payload.host)) { Validar-HostAmbiente -HostUrl ([string]$payload.host) } else { $null }
+            $baseUrl = if ($payload.PSObject.Properties['baseUrl'] -and -not [string]::IsNullOrWhiteSpace([string]$payload.baseUrl)) { Validar-BaseUrlAmbiente -BaseUrl ([string]$payload.baseUrl) } else { $null }
+            $environment = [pscustomobject]@{ id = (Obtener-IdAmbienteCanonico -Tipo $tipoNormalizado); nombre = (Obtener-NombreAmbienteCanonico -Tipo $tipoNormalizado); tipo = $tipoNormalizado; kbPath = [string]$payload.kbPath; host = $hostAmbiente; baseUrl = $baseUrl }
             $client.ambientes = @($client.ambientes) + $environment
             Write-ConfigurationCandidate -Candidate $candidate -Operation 'CONFIGURACION_AMBIENTE'
             Write-JsonResponse -RequestContext $RequestContext -StatusCode 200 -Payload @{ ok = $true; data = @{ configHash = Get-ConfigurationHash } }
@@ -1523,6 +1589,8 @@ function Invoke-ApiRequest {
             }
             if (-not $payload.PSObject.Properties['kbPath'] -or [string]::IsNullOrWhiteSpace([string]$payload.kbPath)) { throw 'El ambiente requiere el campo kbPath.' }
             Validar-RutaKnowledgeBase -Ruta (Resolver-RutaRepositorio -Ruta ([string]$payload.kbPath) -Raiz $RepositoryRoot) -Contexto ("La Knowledge Base del ambiente '" + [string]$environment.id + "'") | Out-Null
+            $environment.host = if ($payload.PSObject.Properties['host'] -and -not [string]::IsNullOrWhiteSpace([string]$payload.host)) { Validar-HostAmbiente -HostUrl ([string]$payload.host) } else { $null }
+            $environment.baseUrl = if ($payload.PSObject.Properties['baseUrl'] -and -not [string]::IsNullOrWhiteSpace([string]$payload.baseUrl)) { Validar-BaseUrlAmbiente -BaseUrl ([string]$payload.baseUrl) } else { $null }
             $environment.tipo = $tipoActual
             $environment.nombre = Obtener-NombreAmbienteCanonico -Tipo $tipoActual
             $environment.kbPath = [string]$payload.kbPath
@@ -1581,7 +1649,7 @@ function Invoke-ApiRequest {
             $perfilSolicitado = if ($payload.PSObject.Properties['geneXusExportProfile']) { [string]$payload.geneXusExportProfile } elseif ($candidate.herramientas.PSObject.Properties['geneXusExportProfile']) { [string]$candidate.herramientas.geneXusExportProfile } else { 'Gx18' }
             $perfilNormalizado = Normalize-GeneXusExportProfile -Value $perfilSolicitado
             if ($null -eq $candidate.herramientas) { throw 'La configuracion no define herramientas para guardar el entorno de exportacion.' }
-            $candidate.herramientas.geneXusExportProfile = $perfilNormalizado
+            if ($candidate.herramientas.PSObject.Properties['geneXusExportProfile']) { $candidate.herramientas.geneXusExportProfile = $perfilNormalizado } else { $candidate.herramientas | Add-Member -MemberType NoteProperty -Name geneXusExportProfile -Value $perfilNormalizado }
             $candidate.clientes = @($candidate.clientes) + $newClient
             Write-ConfigurationCandidate -Candidate $candidate -Operation 'CONFIGURACION_CLIENTE'
             Write-JsonResponse -RequestContext $RequestContext -StatusCode 200 -Payload @{ ok = $true; data = @{ configHash = Get-ConfigurationHash } }
@@ -1697,6 +1765,22 @@ function Invoke-ApiRequest {
             $statusCode = if ($_.Exception.Message -match '^PRECONDICION_XPZ:') { 409 } else { 400 }
             Write-JsonResponse -RequestContext $RequestContext -StatusCode $statusCode -Payload @{ ok = $false; error = $_.Exception.Message }
         }
+        return
+    }
+    if ($route -eq '/api/openapi' -and $request.HttpMethod -eq 'POST') {
+        if (-not (Test-SessionToken -Request $request)) { Write-JsonResponse -RequestContext $RequestContext -StatusCode 403 -Payload @{ ok = $false; error = 'Token de sesion invalido.' }; return }
+        if (Test-WorkInProgress) { Write-JsonResponse -RequestContext $RequestContext -StatusCode 409 -Payload @{ ok = $false; error = 'Ya existe un trabajo activo.' }; return }
+        try {
+            $work = Start-OpenApiGenerationWork
+            Write-JsonResponse -RequestContext $RequestContext -StatusCode 202 -Payload @{ ok = $true; data = @{ jobId = $work.id } }
+        } catch { Write-JsonResponse -RequestContext $RequestContext -StatusCode 400 -Payload @{ ok = $false; error = $_.Exception.Message } }
+        return
+    }
+    if ($route -eq '/api/openapi' -and $request.HttpMethod -eq 'GET') {
+        if ($null -eq $script:ActiveContext) { Write-JsonResponse -RequestContext $RequestContext -StatusCode 409 -Payload @{ ok = $false; error = 'No hay un contexto activo.' }; return }
+        $openApiPath = Join-Path $script:ActiveContext.DirectorioServicios 'OpenAPI\openapi.json'
+        if (-not (Test-Path -LiteralPath $openApiPath -PathType Leaf)) { Write-JsonResponse -RequestContext $RequestContext -StatusCode 404 -Payload @{ ok = $false; error = 'openapi.json no encontrado.' }; return }
+        Write-TextResponse -RequestContext $RequestContext -StatusCode 200 -Content ([System.IO.File]::ReadAllText($openApiPath, [System.Text.Encoding]::UTF8)) -ContentType 'application/json; charset=utf-8'
         return
     }
     if ($route -eq '/api/documentos' -and $request.HttpMethod -eq 'GET') {

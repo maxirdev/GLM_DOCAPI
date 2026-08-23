@@ -1,0 +1,5 @@
+{
+  "rutas": { "clientesRoot": "clientes" },
+  "herramientas": { "geneXusProgramDir": "GeneXus", "msbuildPath": "MSBuild.exe", "pandocPath": "pandoc.exe", "typstPath": "typst.exe" },
+  "clientes": [{ "id": "trunk", "nombre": "Trunk", "packagename": "glmsuit.comercial.", "serviciosIgnorados": [], "ambientes": [{ "id": "testing", "nombre": "Testing", "tipo": "test", "kbPath": "C:/KBs/SEGUROS_COMERCIAL_TRUNK", "host": "https://servidor.example.com" }] }]
+}

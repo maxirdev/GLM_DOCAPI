@@ -65,8 +65,18 @@ function Validar-ManifiestoEjecucion {
     if ($null -eq $Manifiesto.fullyQualifiedNames) {
         throw 'El manifiesto de ejecucion no contiene fullyQualifiedNames.'
     }
-
     $comparador = [System.StringComparer]::OrdinalIgnoreCase
+    $tieneHost = -not [string]::IsNullOrWhiteSpace([string]$Manifiesto.host)
+    $tieneBaseUrl = -not [string]::IsNullOrWhiteSpace([string]$Manifiesto.baseUrl)
+    $tieneServerUrl = -not [string]::IsNullOrWhiteSpace([string]$Manifiesto.serverUrl)
+    if ($tieneHost -or $tieneBaseUrl -or $tieneServerUrl) {
+        if (-not ($tieneHost -and $tieneBaseUrl -and $tieneServerUrl)) { throw 'El manifiesto debe contener host, baseUrl y serverUrl juntos.' }
+        $serverUrlEsperado = ([string]$Manifiesto.host).TrimEnd('/') + '/' + ([string]$Manifiesto.baseUrl).TrimStart('/').TrimStart('/')
+        if (-not $comparador.Equals([string]$Manifiesto.serverUrl, $serverUrlEsperado)) {
+            throw ('El serverUrl del manifiesto no coincide con host/baseUrl: ' + [string]$Manifiesto.serverUrl)
+        }
+    }
+
     $contextoEsperado = [string]$Manifiesto.clienteId + '/' + [string]$Manifiesto.ambienteId
     if (-not $comparador.Equals([string]$Manifiesto.contextId, $contextoEsperado)) {
         throw ("El contextId del manifiesto no coincide con clienteId/ambienteId: " + [string]$Manifiesto.contextId)
@@ -147,6 +157,9 @@ function Crear-ManifiestoEjecucion {
     $directorioStaging = Join-Path $directorioEjecucion 'staging'
     New-Item -ItemType Directory -Path $directorioStaging -Force | Out-Null
 
+    $hostValor = [string]$Contexto.Host
+    $baseUrlValor = [string]$Contexto.BaseUrl
+    $serverUrlValor = [string]$Contexto.ServerUrl
     $manifiesto = [ordered]@{
         schemaVersion = 2
         ejecucionId = $ejecucionId
@@ -155,6 +168,9 @@ function Crear-ManifiestoEjecucion {
         ambienteId = $Contexto.AmbienteId
         configPath = [System.IO.Path]::GetFullPath($Contexto.ConfigPath)
         xpz = [System.IO.Path]::GetFullPath($Xpz)
+        host = $hostValor
+        baseUrl = $baseUrlValor
+        serverUrl = $serverUrlValor
         servicesDirectory = [System.IO.Path]::GetFullPath($Contexto.DirectorioServicios)
         stateDirectory = [System.IO.Path]::GetFullPath($Contexto.DirectorioEstado)
         logsDirectory = [System.IO.Path]::GetFullPath($Contexto.DirectorioLogs)

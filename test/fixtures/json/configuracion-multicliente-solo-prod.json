@@ -19,7 +19,9 @@
           "id": "produccion",
           "nombre": "Produccion",
           "tipo": "prod",
-          "kbPath": "C:/KBs/SEGUROS_COMERCIAL_PROD"
+          "kbPath": "C:/KBs/SEGUROS_COMERCIAL_PROD",
+          "host": "https://trunk.example.com",
+          "baseUrl": "/produccion/rest"
         }
       ]
     }

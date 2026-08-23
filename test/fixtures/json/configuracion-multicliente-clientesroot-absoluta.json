@@ -19,7 +19,9 @@
           "id": "testing",
           "nombre": "Testing",
           "tipo": "test",
-          "kbPath": "C:/KBs/SEGUROS_COMERCIAL_TRUNK"
+          "kbPath": "C:/KBs/SEGUROS_COMERCIAL_TRUNK",
+          "host": "https://trunk.example.com",
+          "baseUrl": "/testing/rest"
         }
       ]
     }

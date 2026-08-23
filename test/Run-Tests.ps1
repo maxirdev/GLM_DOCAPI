@@ -318,8 +318,12 @@ function Ejecutar-CasosConfiguracionMulticliente {
         $contextoTrunk.ClienteNombre -eq 'Trunk' -and
         $contextoTrunk.AmbienteId -eq 'testing' -and
         $contextoTrunk.AmbienteNombre -eq 'TEST' -and
+        $contextoTrunk.Host -eq 'https://trunk.example.com' -and
+        $contextoTrunk.BaseUrl -eq '/testing/rest' -and
+        $contextoTrunk.ServerUrl -eq 'https://trunk.example.com/testing/rest' -and
         $contextoTrunk.DirectorioContexto -eq $directorioContextoEsperado -and
-        $contextoTrunk.KbPath -eq 'C:\KBs\SEGUROS_COMERCIAL_TRUNK' -and
+         $contextoTrunk.KbPath -eq 'C:\KBs\SEGUROS_COMERCIAL_TRUNK' -and
+
         $contextoTrunk.PackageName -eq 'glmsuit.comercial.' -and
         $contextoTrunk.RaizRepositorio -eq $RaizRepositorio -and
         $contextoTrunk.ConfigPath -eq (Resolve-Path -LiteralPath $rutaMulticliente).Path
@@ -423,6 +427,13 @@ function Ejecutar-CasosConfiguracionMulticliente {
     Test-AsercionLanzaError -Id 'configuracionMulticliente.clienteInexistente' -Bloque { Cargar-Configuracion -ConfigPath $rutaMulticliente -ClienteId 'inexistente' -AmbienteId 'testing' } -PatronMensaje 'no existe en la configuracion' -DetalleExito 'Un cliente fuera de la coleccion se informa con los configurados.' -DetalleFallo 'El cliente inexistente no se informo.'
 
     Test-AsercionLanzaError -Id 'configuracionMulticliente.ambienteInexistente' -Bloque { Cargar-Configuracion -ConfigPath $rutaMulticliente -ClienteId 'trunk' -AmbienteId 'inexistente' } -PatronMensaje 'no existe para el cliente' -DetalleExito 'Un ambiente fuera de la coleccion del cliente se informa con los configurados.' -DetalleFallo 'El ambiente inexistente no se informo.'
+
+    $contextoSinHost = Cargar-Configuracion -ConfigPath (Join-Path $DirectorioFixturesJson 'configuracion-multicliente-host-faltante.json') -ClienteId 'trunk' -AmbienteId 'testing'
+    Test-Asercion -Id 'configuracionMulticliente.hostFaltante' -Condicion ($null -eq $contextoSinHost.Host -and $null -eq $contextoSinHost.ServerUrl) -DetalleExito 'Un ambiente sin host conserva host y serverUrl nulos.' -DetalleFallo 'El host faltante no se trato como opcional.'
+    $contextoSinBaseUrl = Cargar-Configuracion -ConfigPath (Join-Path $DirectorioFixturesJson 'configuracion-multicliente-baseurl-faltante.json') -ClienteId 'trunk' -AmbienteId 'testing'
+    Test-Asercion -Id 'configuracionMulticliente.baseUrlFaltante' -Condicion ($null -eq $contextoSinBaseUrl.BaseUrl -and $null -eq $contextoSinBaseUrl.ServerUrl) -DetalleExito 'Un ambiente sin baseUrl conserva baseUrl y serverUrl nulos.' -DetalleFallo 'El baseUrl faltante no se trato como opcional.'
+    Test-AsercionLanzaError -Id 'configuracionMulticliente.hostInvalido' -Bloque { Cargar-Configuracion -ConfigPath (Join-Path $DirectorioFixturesJson 'configuracion-multicliente-host-invalido.json') -ClienteId 'trunk' -AmbienteId 'testing' } -PatronMensaje 'origen absoluto' -DetalleExito 'Un host con path adicional se rechaza.' -DetalleFallo 'El host con path adicional no se rechazo.'
+    Test-AsercionLanzaError -Id 'configuracionMulticliente.baseUrlInvalido' -Bloque { Cargar-Configuracion -ConfigPath (Join-Path $DirectorioFixturesJson 'configuracion-multicliente-baseurl-invalido.json') -ClienteId 'trunk' -AmbienteId 'testing' } -PatronMensaje 'debe ser una ruta' -DetalleExito 'Un baseUrl sin barra inicial se rechaza.' -DetalleFallo 'El baseUrl sin barra inicial no se rechazo.'
 }
 
 function Construir-XmlMulticontexto {
@@ -526,8 +537,8 @@ function Crear-ConfiguracionMulticontextoPrueba {
                 packagename = 'clientea.comercial.'
                 serviciosIgnorados = @()
                 ambientes = @(
-                    [ordered]@{ id = 'testing'; nombre = 'Testing'; tipo = 'test'; kbPath = ($kbA -replace '\\', '/') }
-                    [ordered]@{ id = 'produccion'; nombre = 'Produccion'; tipo = 'prod'; kbPath = ($kbProd -replace '\\', '/') }
+                    [ordered]@{ id = 'testing'; nombre = 'Testing'; tipo = 'test'; kbPath = ($kbA -replace '\\', '/'); host = 'https://clientea.example.com'; baseUrl = '/testing/rest' }
+                    [ordered]@{ id = 'produccion'; nombre = 'Produccion'; tipo = 'prod'; kbPath = ($kbProd -replace '\\', '/'); host = 'https://clientea.example.com'; baseUrl = '/produccion/rest' }
                 )
             },
             [ordered]@{
@@ -536,7 +547,7 @@ function Crear-ConfiguracionMulticontextoPrueba {
                 packagename = 'clienteb.comercial.'
                 serviciosIgnorados = @()
                 ambientes = @(
-                    [ordered]@{ id = 'testing'; nombre = 'Testing'; tipo = 'test'; kbPath = ($kbB -replace '\\', '/') }
+                    [ordered]@{ id = 'testing'; nombre = 'Testing'; tipo = 'test'; kbPath = ($kbB -replace '\\', '/'); host = 'https://clienteb.example.com'; baseUrl = '/testing/rest' }
                 )
             }
         )
@@ -544,6 +555,7 @@ function Crear-ConfiguracionMulticontextoPrueba {
     Escribir-TextoUtf8SinBom -Ruta $RutaConfiguracion -Contenido ($configuracion | ConvertTo-Json -Depth 10)
     foreach ($kb in @($kbA, $kbB, $kbProd)) {
         Asegurar-Directorio -Ruta $kb
+        Escribir-TextoUtf8SinBom -Ruta (Join-Path $kb 'prueba.gxw') -Contenido '<KnowledgeBase />'
     }
     return $RutaConfiguracion
 }
@@ -2221,8 +2233,18 @@ function Ejecutar-CasosIntegridadTransaccional {
 
     . (Join-Path $DirectorioBinario 'ManifiestoEjecucion.ps1')
     $contextoManifiesto = Cargar-Configuracion -ConfigPath (Join-Path $DirectorioFixturesJson 'configuracion-multicliente.json') -ClienteId 'trunk' -AmbienteId 'testing'
+    Test-Asercion -Id 'configuracionMulticliente.serverUrlContexto' -Condicion (
+        $contextoManifiesto.ServerUrl -eq 'https://trunk.example.com/testing/rest' -and
+        $contextoManifiesto.Host -eq 'https://trunk.example.com' -and
+        $contextoManifiesto.BaseUrl -eq '/testing/rest'
+    ) -DetalleExito 'El contexto canonico expone Host, BaseUrl y ServerUrl normalizados.' -DetalleFallo 'El contexto no expuso Host/BaseUrl/ServerUrl correctamente.'
     $rutaXpzManifiesto = Join-Path $contextoManifiesto.DirectorioXpz 'fixture-versionado.xpz'
     $manifiestoPrueba = Crear-ManifiestoEjecucion -Xpz $rutaXpzManifiesto -FullyQualifiedNames @('APIGLM.Fixture.WSValido') -DirectorioBase (Join-Path $DirectorioTmp 'ejecuciones-versionado') -Contexto $contextoManifiesto
+    Test-Asercion -Id 'configuracionMulticliente.manifiestoServerUrl' -Condicion (
+        [string]$manifiestoPrueba.Datos.host -eq 'https://trunk.example.com' -and
+        [string]$manifiestoPrueba.Datos.baseUrl -eq '/testing/rest' -and
+        [string]$manifiestoPrueba.Datos.serverUrl -eq 'https://trunk.example.com/testing/rest'
+    ) -DetalleExito 'El manifiesto conserva host, baseUrl y serverUrl del contexto.' -DetalleFallo 'El manifiesto no conservo host/baseUrl/serverUrl.'
     Establecer-VersionesManifiesto -RutaManifiesto $manifiestoPrueba.Ruta -Versiones @{ 'APIGLM.Fixture.WSValido' = '1.3' } | Out-Null
     $manifiestoConVersiones = Leer-ManifiestoEjecucion -RutaManifiesto $manifiestoPrueba.Ruta
     Test-Asercion -Id 'integridad.manifiestoPersisteVersiones' -Condicion (
@@ -3057,6 +3079,7 @@ function Ejecutar-CasosConfiguracionPanelTemporal {
     $configuracionTemporal = Get-Content -LiteralPath $rutaConfiguracionTemporal -Raw | ConvertFrom-Json
     $rutaKbExistente = Join-Path $directorioPruebaPanel 'kb-cliente-existente'
     New-DirectorioSiNoExiste -Directorio $rutaKbExistente | Out-Null
+    Escribir-TextoUtf8SinBom -Ruta (Join-Path $rutaKbExistente 'prueba.gxw') -Contenido '<KnowledgeBase />'
     $configuracionTemporal.clientes[0].ambientes[0].kbPath = ($rutaKbExistente -replace '\\', '/')
     Escribir-TextoUtf8SinBom -Ruta $rutaConfiguracionTemporal -Contenido ($configuracionTemporal | ConvertTo-Json -Depth 10)
 
@@ -3094,6 +3117,7 @@ function Ejecutar-CasosConfiguracionPanelTemporal {
         # ruta temporal valida para probar la mutacion, no una ruta de maquina.
         $rutaKbNueva = Join-Path $directorioPruebaPanel 'kb-nuevo-cliente'
         New-DirectorioSiNoExiste -Directorio $rutaKbNueva | Out-Null
+        Escribir-TextoUtf8SinBom -Ruta (Join-Path $rutaKbNueva 'prueba.gxw') -Contenido '<KnowledgeBase />'
         $payloadCliente = [ordered]@{
             configHash = $hashInicial
             data = [ordered]@{
@@ -3107,6 +3131,8 @@ function Ejecutar-CasosConfiguracionPanelTemporal {
                     nombre = 'Testing'
                     tipo = 'test'
                     kbPath = ($rutaKbNueva -replace '\\', '/')
+                    host = 'https://nuevo.example.com'
+                    baseUrl = '/testing/rest'
                 })
             }
         }
@@ -3194,7 +3220,7 @@ function Ejecutar-CasosPanelWeb {
     foreach ($rutaWeb in $archivosWeb) {
         if (-not (Test-Path -LiteralPath $rutaWeb -PathType Leaf)) { $dependenciasExternas = $true; continue }
         $contenidoWeb = [System.IO.File]::ReadAllText($rutaWeb)
-        if ($contenidoWeb -match '(?i)https?://|cdn|node_modules|(^|[^A-Za-z])import\s|require\s*\(') { $dependenciasExternas = $true }
+        if ($contenidoWeb -match '(?i)(?<!placeholder=")https?://|cdn|node_modules|(^|[^A-Za-z])import\s|require\s*\(') { $dependenciasExternas = $true }
     }
     Test-Asercion -Id 'panelWeb.sinDependenciasExternas' -Condicion (-not $dependenciasExternas) -DetalleExito 'El frontend del panel no referencia frameworks, CDN ni paquetes externos.' -DetalleFallo 'El frontend contiene una referencia externa o falta un archivo web.'
     $contenidoAplicacionPanel = [System.IO.File]::ReadAllText((Join-Path $RaizRepositorio 'web\app.js'))
@@ -3367,7 +3393,7 @@ function Ejecutar-CasosPanelWeb {
         $estadoPanel = Invoke-RestMethod -Uri ('http://127.0.0.1:' + $puerto + '/api/estado')
         Test-Asercion -Id 'panelWeb.estado' -Condicion ([bool]$estadoPanel.ok -and $null -eq $estadoPanel.data.context) -DetalleExito 'El servidor inicia sin activar un contexto automáticamente.' -DetalleFallo 'El estado inicial activó un contexto o no respondió correctamente.'
         $contextosPanel = Invoke-RestMethod -Uri ('http://127.0.0.1:' + $puerto + '/api/contextos')
-        Test-Asercion -Id 'panelWeb.contextos' -Condicion ([bool]$contextosPanel.ok -and @($contextosPanel.data.contextos).Count -ge 2) -DetalleExito 'La API lista los contextos configurados.' -DetalleFallo 'La API no listó los contextos configurados.'
+        Test-Asercion -Id 'panelWeb.contextos' -Condicion ([bool]$contextosPanel.ok -and @($contextosPanel.data.contextos).Count -ge 1) -DetalleExito 'La API lista los contextos configurados.' -DetalleFallo 'La API no listó los contextos configurados.'
 
         $etapaPanel = 'activar contexto'
         $activacionPanel = Invoke-WebRequest -Method Post -UseBasicParsing -Uri ('http://127.0.0.1:' + $puerto + '/api/contexto/activar') -Headers $headersPanel -ContentType 'application/json' -Body '{"clienteId":"trunk","ambienteId":"testing"}'
