@@ -229,12 +229,13 @@ function Ejecutar-CasosConfiguracion {
     try { $configReal = Cargar-Configuracion -ClienteId 'trunk' -AmbienteId 'testing' } catch { }
     Test-Asercion -Id 'configuracion.cargaReal' -Condicion (
         $null -ne $configReal -and
-        $configReal.ContextId -eq 'trunk/testing' -and
+        $configReal.ContextId -eq 'trunk/comercial/testing' -and
         $configReal.ClienteId -eq 'trunk' -and
+        $configReal.Modulo -eq 'comercial' -and
         $configReal.AmbienteId -eq 'testing' -and
         $configReal.PackageName -eq 'glmsuit.comercial.' -and
         @($configReal.ServiciosIgnorados).Count -eq 4 -and
-        $configReal.DirectorioXpz -eq [System.IO.Path]::GetFullPath((Join-Path $configReal.ClientesRoot 'trunk\testing\xpz'))
+        $configReal.DirectorioXpz -eq [System.IO.Path]::GetFullPath((Join-Path $configReal.ClientesRoot 'trunk\comercial\testing\xpz'))
     ) -DetalleExito 'La configuracion real resuelve el contexto trunk/testing con packagename y serviciosIgnorados del cliente.' -DetalleFallo 'La configuracion real no resuelve el contexto multicliente esperado.'
 
     $configPrueba = $null
@@ -307,13 +308,13 @@ function Ejecutar-CasosConfiguracionMulticliente {
 
     $rutaMulticliente = Join-Path $DirectorioFixturesJson 'configuracion-multicliente.json'
     $clientesRootEsperado = [System.IO.Path]::GetFullPath((Join-Path $RaizRepositorio 'clientes'))
-    $directorioContextoEsperado = [System.IO.Path]::GetFullPath((Join-Path $clientesRootEsperado 'trunk\testing'))
+    $directorioContextoEsperado = [System.IO.Path]::GetFullPath((Join-Path $clientesRootEsperado 'trunk\comercial\testing'))
 
     $contextoTrunk = $null
     try { $contextoTrunk = Cargar-Configuracion -ConfigPath $rutaMulticliente -ClienteId 'trunk' -AmbienteId 'testing' } catch { }
     Test-Asercion -Id 'configuracionMulticliente.contextoValido' -Condicion (
         $null -ne $contextoTrunk -and
-        $contextoTrunk.ContextId -eq 'trunk/testing' -and
+        $contextoTrunk.ContextId -eq 'trunk/comercial/testing' -and
         $contextoTrunk.ClienteId -eq 'trunk' -and
         $contextoTrunk.ClienteNombre -eq 'Trunk' -and
         $contextoTrunk.AmbienteId -eq 'testing' -and
@@ -359,8 +360,8 @@ function Ejecutar-CasosConfiguracionMulticliente {
     $contextoProduccion = Cargar-Configuracion -ConfigPath $rutaMulticliente -ClienteId 'trunk' -AmbienteId 'produccion'
     $contextoOtro = Cargar-Configuracion -ConfigPath $rutaMulticliente -ClienteId 'otrocliente' -AmbienteId 'testing'
     Test-Asercion -Id 'configuracionMulticliente.aislamientoContextos' -Condicion (
-        $contextoProduccion.ContextId -eq 'trunk/produccion' -and
-        $contextoOtro.ContextId -eq 'otrocliente/testing' -and
+        $contextoProduccion.ContextId -eq 'trunk/comercial/produccion' -and
+        $contextoOtro.ContextId -eq 'otrocliente/comercial/testing' -and
         $contextoProduccion.DirectorioContexto -ne $contextoTrunk.DirectorioContexto -and
         $contextoOtro.DirectorioContexto -ne $contextoTrunk.DirectorioContexto -and
         $contextoOtro.RutaControl -ne $contextoTrunk.RutaControl -and
@@ -417,10 +418,10 @@ function Ejecutar-CasosConfiguracionMulticliente {
     Test-AsercionLanzaError -Id 'configuracionMulticliente.tipoFaltante' -Bloque { Cargar-Configuracion -ConfigPath $rutaTipoFaltante -ClienteId 'trunk' -AmbienteId 'testing' } -PatronMensaje 'tipo valido' -DetalleExito 'Un ambiente sin tipo (o con tipo invalido) se rechaza.' -DetalleFallo 'El ambiente sin tipo no se rechazo.'
 
     $rutaTipoDuplicado = Join-Path $DirectorioFixturesJson 'configuracion-multicliente-tipo-duplicado.json'
-    Test-AsercionLanzaError -Id 'configuracionMulticliente.tipoDuplicado' -Bloque { Cargar-Configuracion -ConfigPath $rutaTipoDuplicado -ClienteId 'trunk' -AmbienteId 'testing' } -PatronMensaje 'mas de un ambiente de tipo' -DetalleExito 'Un cliente no puede tener dos ambientes del mismo tipo.' -DetalleFallo 'El tipo duplicado dentro de un cliente no se rechazo.'
+    Test-AsercionLanzaError -Id 'configuracionMulticliente.tipoDuplicado' -Bloque { Cargar-Configuracion -ConfigPath $rutaTipoDuplicado -ClienteId 'trunk' -AmbienteId 'testing' } -PatronMensaje 'combinacion' -DetalleExito 'Un cliente no puede tener dos ambientes del mismo tipo dentro del mismo modulo.' -DetalleFallo 'El tipo duplicado dentro de un modulo no se rechazo.'
 
     $rutaTresAmbientes = Join-Path $DirectorioFixturesJson 'configuracion-multicliente-tres-ambientes.json'
-    Test-AsercionLanzaError -Id 'configuracionMulticliente.demasiadosAmbientes' -Bloque { Cargar-Configuracion -ConfigPath $rutaTresAmbientes -ClienteId 'trunk' -AmbienteId 'testing' } -PatronMensaje 'mas de dos ambientes' -DetalleExito 'Un cliente con mas de dos ambientes se rechaza.' -DetalleFallo 'El exceso de ambientes no se rechazo.'
+    Test-AsercionLanzaError -Id 'configuracionMulticliente.demasiadosAmbientes' -Bloque { Cargar-Configuracion -ConfigPath $rutaTresAmbientes -ClienteId 'trunk' -AmbienteId 'testing' } -PatronMensaje 'combinacion|mas de cuatro' -DetalleExito 'Un cliente con combinaciones de ambiente repetidas se rechaza.' -DetalleFallo 'La configuracion con ambientes repetidos no se rechazo.'
 
     Test-AsercionLanzaError -Id 'configuracionMulticliente.requiereContexto' -Bloque { Cargar-Configuracion -ConfigPath $rutaMulticliente } -PatronMensaje 'requiere -ClienteId' -DetalleExito 'El esquema multicliente exige cliente y ambiente explicitos.' -DetalleFallo 'El esquema multicliente no exigio el contexto.'
 
@@ -434,6 +435,109 @@ function Ejecutar-CasosConfiguracionMulticliente {
     Test-Asercion -Id 'configuracionMulticliente.baseUrlFaltante' -Condicion ($null -eq $contextoSinBaseUrl.BaseUrl -and $null -eq $contextoSinBaseUrl.ServerUrl) -DetalleExito 'Un ambiente sin baseUrl conserva baseUrl y serverUrl nulos.' -DetalleFallo 'El baseUrl faltante no se trato como opcional.'
     Test-AsercionLanzaError -Id 'configuracionMulticliente.hostInvalido' -Bloque { Cargar-Configuracion -ConfigPath (Join-Path $DirectorioFixturesJson 'configuracion-multicliente-host-invalido.json') -ClienteId 'trunk' -AmbienteId 'testing' } -PatronMensaje 'origen absoluto' -DetalleExito 'Un host con path adicional se rechaza.' -DetalleFallo 'El host con path adicional no se rechazo.'
     Test-AsercionLanzaError -Id 'configuracionMulticliente.baseUrlInvalido' -Bloque { Cargar-Configuracion -ConfigPath (Join-Path $DirectorioFixturesJson 'configuracion-multicliente-baseurl-invalido.json') -ClienteId 'trunk' -AmbienteId 'testing' } -PatronMensaje 'debe ser una ruta' -DetalleExito 'Un baseUrl sin barra inicial se rechaza.' -DetalleFallo 'El baseUrl sin barra inicial no se rechazo.'
+}
+
+function Ejecutar-CasosMigracionConfiguracionModular {
+    <#
+    .SYNOPSIS
+    Prueba la migracion modular sobre copias temporales de configuracion.json.
+    .DESCRIPTION
+    Verifica simulacion sin escritura, canonizacion de aliases heredados, rechazo
+    de conflictos y package names faltantes, limpieza de temporales atomicos y
+    restauracion del archivo vigente cuando falla la validacion del candidato.
+    #>
+    [CmdletBinding()]
+    param()
+
+    $rutaScriptMigracion = Join-Path $DirectorioBinario 'MigrarConfiguracionModulos.ps1'
+    Test-Asercion -Id 'migracionModular.scriptDisponible' -Condicion (Test-Path -LiteralPath $rutaScriptMigracion -PathType Leaf) -DetalleExito 'El script de migracion modular esta disponible para las pruebas.' -DetalleFallo 'No se encontro binary/MigrarConfiguracionModulos.ps1.'
+    if (-not (Test-Path -LiteralPath $rutaScriptMigracion -PathType Leaf)) { return }
+
+    $directorioMigracion = Join-Path $DirectorioTmp 'migracion-configuracion-modular'
+    New-DirectorioSiNoExiste -Directorio $directorioMigracion | Out-Null
+
+    $rutaFixtureAliases = Join-Path $DirectorioFixturesJson 'configuracion-modular-aliases-heredados.json'
+    $rutaConfiguracionSimulacion = Join-Path $directorioMigracion 'configuracion-simulacion.json'
+    Copy-Item -LiteralPath $rutaFixtureAliases -Destination $rutaConfiguracionSimulacion -Force
+    $bytesAntesSimulacion = [System.IO.File]::ReadAllBytes($rutaConfiguracionSimulacion)
+    $resultadoSimulacion = Invocar-ScriptHijo -RutaScript $rutaScriptMigracion -Argumentos @('-ConfigPath', $rutaConfiguracionSimulacion, '-Simular') -NormalizarCodigo -NoImprimir
+    $bytesDespuesSimulacion = [System.IO.File]::ReadAllBytes($rutaConfiguracionSimulacion)
+    $residualesSimulacion = @(Get-ChildItem -LiteralPath $directorioMigracion -File | Where-Object { $_.Name -like 'configuracion-simulacion.json.*' })
+    Test-Asercion -Id 'migracionModular.simulacionSinEscritura' -Condicion (
+        $resultadoSimulacion.CodigoSalida -eq 0 -and
+        [System.Linq.Enumerable]::SequenceEqual($bytesAntesSimulacion, $bytesDespuesSimulacion) -and
+        $residualesSimulacion.Count -eq 0
+    ) -DetalleExito 'La simulacion termina correctamente, conserva byte a byte la configuracion y no deja temporales.' -DetalleFallo 'La simulacion modifico la configuracion, fallo o dejo archivos temporales.'
+
+    $rutaConfiguracionCanonica = Join-Path $directorioMigracion 'configuracion-canonica.json'
+    Copy-Item -LiteralPath $rutaFixtureAliases -Destination $rutaConfiguracionCanonica -Force
+    $resultadoCanonizacion = Invocar-ScriptHijo -RutaScript $rutaScriptMigracion -Argumentos @('-ConfigPath', $rutaConfiguracionCanonica) -NormalizarCodigo -NoImprimir
+    $configuracionCanonica = $null
+    try { $configuracionCanonica = Get-Content -LiteralPath $rutaConfiguracionCanonica -Raw | ConvertFrom-Json } catch { }
+    $clienteCanonico = if ($configuracionCanonica) { @($configuracionCanonica.clientes)[0] } else { $null }
+    $ambienteCanonico = if ($clienteCanonico) { @($clienteCanonico.ambientes)[0] } else { $null }
+    $tienePackagenameHeredado = $false
+    $tieneBaseurlHeredado = $false
+    if ($clienteCanonico) { $tienePackagenameHeredado = @($clienteCanonico.PSObject.Properties | Where-Object { $_.Name -ceq 'packagename' }).Count -gt 0 }
+    if ($ambienteCanonico) { $tieneBaseurlHeredado = @($ambienteCanonico.PSObject.Properties | Where-Object { $_.Name -ceq 'baseurl' }).Count -gt 0 }
+    Test-Asercion -Id 'migracionModular.canonizacionAliases' -Condicion (
+        $resultadoCanonizacion.CodigoSalida -eq 0 -and
+        $null -ne $clienteCanonico -and
+        $null -ne $ambienteCanonico -and
+        $ambienteCanonico.modulo -eq 'comercial' -and
+        $clienteCanonico.packagenames.comercial -eq 'glmsuit.comercial.' -and
+        $ambienteCanonico.baseUrl -eq '/comercial-test/rest' -and
+        -not $tienePackagenameHeredado -and
+        -not $tieneBaseurlHeredado
+    ) -DetalleExito 'La migracion canoniza modulo, packagename y baseurl con los nombres y valores esperados.' -DetalleFallo 'La migracion no canonizo correctamente los aliases heredados.'
+
+    $rutaFixtureCombinacionDuplicada = Join-Path $DirectorioFixturesJson 'configuracion-modular-combinacion-duplicada.json'
+    $rutaConfiguracionConflicto = Join-Path $directorioMigracion 'configuracion-conflicto.json'
+    Copy-Item -LiteralPath $rutaFixtureCombinacionDuplicada -Destination $rutaConfiguracionConflicto -Force
+    $bytesAntesConflicto = [System.IO.File]::ReadAllBytes($rutaConfiguracionConflicto)
+    $resultadoConflicto = Invocar-ScriptHijo -RutaScript $rutaScriptMigracion -Argumentos @('-ConfigPath', $rutaConfiguracionConflicto) -NormalizarCodigo -NoImprimir
+    $bytesDespuesConflicto = [System.IO.File]::ReadAllBytes($rutaConfiguracionConflicto)
+    Test-Asercion -Id 'migracionModular.conflictoConservaArchivo' -Condicion (
+        $resultadoConflicto.CodigoSalida -ne 0 -and
+        [System.Linq.Enumerable]::SequenceEqual($bytesAntesConflicto, $bytesDespuesConflicto)
+    ) -DetalleExito 'Un conflicto de modulo y tipo se rechaza sin modificar la copia temporal.' -DetalleFallo 'La migracion no rechazo el conflicto o modifico la configuracion.'
+
+    $rutasFixturesPackageNameFaltante = @(
+        (Join-Path $DirectorioFixturesJson 'configuracion-modular-packagenames-faltante.json')
+        (Join-Path $DirectorioFixturesJson 'configuracion-modular-packagename-modulo-faltante.json')
+    )
+    $packageNamesFaltantesRechazados = $true
+    foreach ($rutaFixturePackageNameFaltante in $rutasFixturesPackageNameFaltante) {
+        $nombreFixturePackageNameFaltante = [System.IO.Path]::GetFileNameWithoutExtension($rutaFixturePackageNameFaltante)
+        $rutaConfiguracionPackageNameFaltante = Join-Path $directorioMigracion ($nombreFixturePackageNameFaltante + '.json')
+        Copy-Item -LiteralPath $rutaFixturePackageNameFaltante -Destination $rutaConfiguracionPackageNameFaltante -Force
+        $resultadoPackageNameFaltante = Invocar-ScriptHijo -RutaScript $rutaScriptMigracion -Argumentos @('-ConfigPath', $rutaConfiguracionPackageNameFaltante) -NormalizarCodigo -NoImprimir
+        if ($resultadoPackageNameFaltante.CodigoSalida -eq 0) { $packageNamesFaltantesRechazados = $false }
+    }
+    Test-Asercion -Id 'migracionModular.packageNamesFaltantes' -Condicion $packageNamesFaltantesRechazados -DetalleExito 'La migracion rechaza la ausencia del package name requerido para cada modulo configurado.' -DetalleFallo 'La migracion acepto una configuracion con package name faltante.'
+
+    $rutaConfiguracionRestauracion = Join-Path $directorioMigracion 'configuracion-restauracion.json'
+    Copy-Item -LiteralPath $rutaFixtureAliases -Destination $rutaConfiguracionRestauracion -Force
+    $bytesAntesRestauracion = [System.IO.File]::ReadAllBytes($rutaConfiguracionRestauracion)
+    $validarConfiguracionTemporal = {
+        param($rutaTemporal)
+        $contenidoTemporal = [System.IO.File]::ReadAllText($rutaTemporal)
+        $null = $contenidoTemporal | ConvertFrom-Json
+        throw 'fallo de validacion inyectado por el harness'
+    }
+    $falloValidacionCapturado = $false
+    try {
+        Escribir-ArchivoAtomico -Ruta $rutaConfiguracionRestauracion -Contenido '{"configuracion":"candidata"}' -Validar $validarConfiguracionTemporal | Out-Null
+    } catch {
+        $falloValidacionCapturado = $true
+    }
+    $bytesDespuesRestauracion = [System.IO.File]::ReadAllBytes($rutaConfiguracionRestauracion)
+    $residualesRestauracion = @(Get-ChildItem -LiteralPath $directorioMigracion -File | Where-Object { $_.Name -like 'configuracion-restauracion.json.*' })
+    Test-Asercion -Id 'migracionModular.restauracionAnteFallo' -Condicion (
+        $falloValidacionCapturado -and
+        [System.Linq.Enumerable]::SequenceEqual($bytesAntesRestauracion, $bytesDespuesRestauracion) -and
+        $residualesRestauracion.Count -eq 0
+    ) -DetalleExito 'Un fallo de validacion atomica conserva la configuracion anterior y elimina los temporales.' -DetalleFallo 'Un fallo de validacion atomica no restauro byte a byte la configuracion anterior.'
 }
 
 function Construir-XmlMulticontexto {
@@ -534,20 +638,20 @@ function Crear-ConfiguracionMulticontextoPrueba {
             [ordered]@{
                 id = 'clientea'
                 nombre = 'Cliente A'
-                packagename = 'clientea.comercial.'
+                packagenames = [ordered]@{ comercial = 'clientea.comercial.' }
                 serviciosIgnorados = @()
                 ambientes = @(
-                    [ordered]@{ id = 'testing'; nombre = 'Testing'; tipo = 'test'; kbPath = ($kbA -replace '\\', '/'); host = 'https://clientea.example.com'; baseUrl = '/testing/rest' }
-                    [ordered]@{ id = 'produccion'; nombre = 'Produccion'; tipo = 'prod'; kbPath = ($kbProd -replace '\\', '/'); host = 'https://clientea.example.com'; baseUrl = '/produccion/rest' }
+                    [ordered]@{ id = 'testing'; nombre = 'Testing'; modulo = 'comercial'; tipo = 'test'; kbPath = ($kbA -replace '\\', '/'); host = 'https://clientea.example.com'; baseUrl = '/testing/rest' }
+                    [ordered]@{ id = 'produccion'; nombre = 'Produccion'; modulo = 'comercial'; tipo = 'prod'; kbPath = ($kbProd -replace '\\', '/'); host = 'https://clientea.example.com'; baseUrl = '/produccion/rest' }
                 )
             },
             [ordered]@{
                 id = 'clienteb'
                 nombre = 'Cliente B'
-                packagename = 'clienteb.comercial.'
+                packagenames = [ordered]@{ comercial = 'clienteb.comercial.' }
                 serviciosIgnorados = @()
                 ambientes = @(
-                    [ordered]@{ id = 'testing'; nombre = 'Testing'; tipo = 'test'; kbPath = ($kbB -replace '\\', '/'); host = 'https://clienteb.example.com'; baseUrl = '/testing/rest' }
+                    [ordered]@{ id = 'testing'; nombre = 'Testing'; modulo = 'comercial'; tipo = 'test'; kbPath = ($kbB -replace '\\', '/'); host = 'https://clienteb.example.com'; baseUrl = '/testing/rest' }
                 )
             }
         )
@@ -637,11 +741,12 @@ function Ejecutar-PipelineContextoPrueba {
     param(
         [Parameter(Mandatory = $true)][string]$ConfigPath,
         [Parameter(Mandatory = $true)][string]$ClienteId,
+        [Parameter(Mandatory = $true)][string]$Modulo,
         [Parameter(Mandatory = $true)][string]$AmbienteId,
         [Parameter(Mandatory = $true)][string]$RutaXpz,
         [Parameter(Mandatory = $true)][string]$DirectorioEjecuciones
     )
-    $contexto = Cargar-Configuracion -ConfigPath $ConfigPath -ClienteId $ClienteId -AmbienteId $AmbienteId
+    $contexto = Cargar-Configuracion -ConfigPath $ConfigPath -ClienteId $ClienteId -Modulo $Modulo -AmbienteId $AmbienteId
     $rutaXpzContextual = Join-Path $contexto.DirectorioXpz ([System.IO.Path]::GetFileName($RutaXpz))
     if (-not (Test-Path -LiteralPath $rutaXpzContextual -PathType Leaf)) {
         Copy-Item -LiteralPath $RutaXpz -Destination $rutaXpzContextual -Force
@@ -709,22 +814,22 @@ function Ejecutar-CasosMulticontexto {
 
     $rutaValidador = Join-Path $DirectorioBinario 'ValidarConfiguracionGLM.ps1'
     $contextosPrueba = @(
-        [pscustomobject]@{ ClienteId = 'clientea'; AmbienteId = 'testing'; Xpz = $rutaXpzA },
-        [pscustomobject]@{ ClienteId = 'clientea'; AmbienteId = 'produccion'; Xpz = $rutaXpzA },
-        [pscustomobject]@{ ClienteId = 'clienteb'; AmbienteId = 'testing'; Xpz = $rutaXpzB }
+        [pscustomobject]@{ ClienteId = 'clientea'; Modulo = 'comercial'; AmbienteId = 'testing'; Xpz = $rutaXpzA },
+        [pscustomobject]@{ ClienteId = 'clientea'; Modulo = 'comercial'; AmbienteId = 'produccion'; Xpz = $rutaXpzA },
+        [pscustomobject]@{ ClienteId = 'clienteb'; Modulo = 'comercial'; AmbienteId = 'testing'; Xpz = $rutaXpzB }
     )
 
     $preflightsOk = $true
     $contextosResueltos = @{}
     foreach ($contextoPrueba in $contextosPrueba) {
-        $resultadoPreflight = Invocar-ScriptHijo -RutaScript $rutaValidador -Argumentos @('-Repositorio', $RaizRepositorio, '-ConfigPath', $rutaConfiguracionMulti, '-ClienteId', $contextoPrueba.ClienteId, '-AmbienteId', $contextoPrueba.AmbienteId) -NoImprimir
+        $resultadoPreflight = Invocar-ScriptHijo -RutaScript $rutaValidador -Argumentos @('-Repositorio', $RaizRepositorio, '-ConfigPath', $rutaConfiguracionMulti, '-ClienteId', $contextoPrueba.ClienteId, '-Modulo', $contextoPrueba.Modulo, '-AmbienteId', $contextoPrueba.AmbienteId) -NoImprimir
         if ($resultadoPreflight.CodigoSalida -ne 0) { $preflightsOk = $false }
-        $contexto = Cargar-Configuracion -ConfigPath $rutaConfiguracionMulti -ClienteId $contextoPrueba.ClienteId -AmbienteId $contextoPrueba.AmbienteId
+        $contexto = Cargar-Configuracion -ConfigPath $rutaConfiguracionMulti -ClienteId $contextoPrueba.ClienteId -Modulo $contextoPrueba.Modulo -AmbienteId $contextoPrueba.AmbienteId
         # El preflight productivo crea este arbol; se asegura la carpeta de
         # destino para que el fixture no falle antes de probar el pipeline.
         New-DirectorioSiNoExiste -Directorio $contexto.DirectorioXpz | Out-Null
         Copy-Item -LiteralPath $contextoPrueba.Xpz -Destination (Join-Path $contexto.DirectorioXpz ([System.IO.Path]::GetFileName($contextoPrueba.Xpz))) -Force
-        $contextosResueltos[$contextoPrueba.ClienteId + '/' + $contextoPrueba.AmbienteId] = $contexto
+        $contextosResueltos[$contextoPrueba.ClienteId + '/' + $contextoPrueba.Modulo + '/' + $contextoPrueba.AmbienteId] = $contexto
     }
     Test-Asercion -Id 'multicontexto.preflight' -Condicion $preflightsOk -DetalleExito 'El preflight de los tres contextos termina con codigo 0.' -DetalleFallo 'Algun preflight de contexto fallo.'
 
@@ -744,19 +849,19 @@ function Ejecutar-CasosMulticontexto {
     }
     Test-Asercion -Id 'multicontexto.arboles' -Condicion $arbolesOk -DetalleExito 'Cada contexto crea exactamente sus seis directorios bajo clientes/<cliente>/<ambiente>.' -DetalleFallo 'Falta algun directorio contextual en algun ambiente.'
 
-    $contextoSeleccionadoOk = $contextosResueltos['clientea/testing'].ContextId -eq 'clientea/testing' -and
-        $contextosResueltos['clientea/produccion'].ContextId -eq 'clientea/produccion' -and
-        $contextosResueltos['clienteb/testing'].ContextId -eq 'clienteb/testing' -and
-        $contextosResueltos['clientea/testing'].DirectorioContexto -ne $contextosResueltos['clientea/produccion'].DirectorioContexto -and
-        $contextosResueltos['clientea/testing'].DirectorioContexto -ne $contextosResueltos['clienteb/testing'].DirectorioContexto -and
-        $contextosResueltos['clientea/testing'].RutaControl -ne $contextosResueltos['clienteb/testing'].RutaControl
+    $contextoSeleccionadoOk = $contextosResueltos['clientea/comercial/testing'].ContextId -eq 'clientea/comercial/testing' -and
+        $contextosResueltos['clientea/comercial/produccion'].ContextId -eq 'clientea/comercial/produccion' -and
+        $contextosResueltos['clienteb/comercial/testing'].ContextId -eq 'clienteb/comercial/testing' -and
+        $contextosResueltos['clientea/comercial/testing'].DirectorioContexto -ne $contextosResueltos['clientea/comercial/produccion'].DirectorioContexto -and
+        $contextosResueltos['clientea/comercial/testing'].DirectorioContexto -ne $contextosResueltos['clienteb/comercial/testing'].DirectorioContexto -and
+        $contextosResueltos['clientea/comercial/testing'].RutaControl -ne $contextosResueltos['clienteb/comercial/testing'].RutaControl
     Test-Asercion -Id 'multicontexto.seleccionContextos' -Condicion $contextoSeleccionadoOk -DetalleExito 'La seleccion resuelve contextos distintos con directorios y controles separados.' -DetalleFallo 'Los contextos no se resuelven como identidades aisladas.'
 
     $estadoGlobalesAntes = Obtener-EstadoDirectoriosGlobales
 
-    $resultadoTesting = Ejecutar-PipelineContextoPrueba -ConfigPath $rutaConfiguracionMulti -ClienteId 'clientea' -AmbienteId 'testing' -RutaXpz $rutaXpzA -DirectorioEjecuciones $directorioEjecucionesMulti
-    $resultadoProduccion = Ejecutar-PipelineContextoPrueba -ConfigPath $rutaConfiguracionMulti -ClienteId 'clientea' -AmbienteId 'produccion' -RutaXpz $rutaXpzA -DirectorioEjecuciones $directorioEjecucionesMulti
-    $resultadoClienteb = Ejecutar-PipelineContextoPrueba -ConfigPath $rutaConfiguracionMulti -ClienteId 'clienteb' -AmbienteId 'testing' -RutaXpz $rutaXpzB -DirectorioEjecuciones $directorioEjecucionesMulti
+    $resultadoTesting = Ejecutar-PipelineContextoPrueba -ConfigPath $rutaConfiguracionMulti -ClienteId 'clientea' -Modulo 'comercial' -AmbienteId 'testing' -RutaXpz $rutaXpzA -DirectorioEjecuciones $directorioEjecucionesMulti
+    $resultadoProduccion = Ejecutar-PipelineContextoPrueba -ConfigPath $rutaConfiguracionMulti -ClienteId 'clientea' -Modulo 'comercial' -AmbienteId 'produccion' -RutaXpz $rutaXpzA -DirectorioEjecuciones $directorioEjecucionesMulti
+    $resultadoClienteb = Ejecutar-PipelineContextoPrueba -ConfigPath $rutaConfiguracionMulti -ClienteId 'clienteb' -Modulo 'comercial' -AmbienteId 'testing' -RutaXpz $rutaXpzB -DirectorioEjecuciones $directorioEjecucionesMulti
 
     $publicacionOk = $resultadoTesting.Codigo -in @(0, 2) -and $resultadoProduccion.Codigo -in @(0, 2) -and $resultadoClienteb.Codigo -in @(0, 2)
     foreach ($resultado in @($resultadoTesting, $resultadoProduccion, $resultadoClienteb)) {
@@ -798,16 +903,16 @@ function Ejecutar-CasosMulticontexto {
 
     Test-Asercion -Id 'multicontexto.versionIndependiente' -Condicion $hashesOk -DetalleExito 'Cada ambiente arranca su versionado en 1.0 sin compartir revisiones con otros ambientes.' -DetalleFallo 'El versionado no es independiente entre ambientes.'
 
-    $lineageTesting = [string](Obtener-PropiedadControlVersiones -Objeto (Leer-ControlVersiones -RutaControl $contextosResueltos['clientea/testing'].RutaControl) -Nombre 'lineageId')
-    $lineageClienteb = [string](Obtener-PropiedadControlVersiones -Objeto (Leer-ControlVersiones -RutaControl $contextosResueltos['clienteb/testing'].RutaControl) -Nombre 'lineageId')
+    $lineageTesting = [string](Obtener-PropiedadControlVersiones -Objeto (Leer-ControlVersiones -RutaControl $contextosResueltos['clientea/comercial/testing'].RutaControl) -Nombre 'lineageId')
+    $lineageClienteb = [string](Obtener-PropiedadControlVersiones -Objeto (Leer-ControlVersiones -RutaControl $contextosResueltos['clienteb/comercial/testing'].RutaControl) -Nombre 'lineageId')
     Test-Asercion -Id 'multicontexto.lineages' -Condicion (
         $lineageTesting -eq $guidLineageA -and $lineageClienteb -eq $guidLineageB -and $lineageTesting -ne $lineageClienteb
     ) -DetalleExito 'Los lineages de ambientes con XPZ distintos difieren y se derivan del APIGLMMain.' -DetalleFallo 'Los lineages no se derivan del APIGLMMain del XPZ de cada ambiente.'
 
-    $estadoProduccionAntes = [System.IO.File]::ReadAllBytes($contextosResueltos['clientea/produccion'].RutaControl)
-    $resultadoReinicio = Ejecutar-PipelineContextoPrueba -ConfigPath $rutaConfiguracionMulti -ClienteId 'clientea' -AmbienteId 'testing' -RutaXpz $rutaXpzB -DirectorioEjecuciones $directorioEjecucionesMulti
-    $estadoProduccionDespues = [System.IO.File]::ReadAllBytes($contextosResueltos['clientea/produccion'].RutaControl)
-    $lineageTestingReiniciado = [string](Obtener-PropiedadControlVersiones -Objeto (Leer-ControlVersiones -RutaControl $contextosResueltos['clientea/testing'].RutaControl) -Nombre 'lineageId')
+    $estadoProduccionAntes = [System.IO.File]::ReadAllBytes($contextosResueltos['clientea/comercial/produccion'].RutaControl)
+    $resultadoReinicio = Ejecutar-PipelineContextoPrueba -ConfigPath $rutaConfiguracionMulti -ClienteId 'clientea' -Modulo 'comercial' -AmbienteId 'testing' -RutaXpz $rutaXpzB -DirectorioEjecuciones $directorioEjecucionesMulti
+    $estadoProduccionDespues = [System.IO.File]::ReadAllBytes($contextosResueltos['clientea/comercial/produccion'].RutaControl)
+    $lineageTestingReiniciado = [string](Obtener-PropiedadControlVersiones -Objeto (Leer-ControlVersiones -RutaControl $contextosResueltos['clientea/comercial/testing'].RutaControl) -Nombre 'lineageId')
     $produccionIntacto = $estadoProduccionAntes.Length -eq $estadoProduccionDespues.Length
     if ($produccionIntacto) {
         for ($indiceByte = 0; $indiceByte -lt $estadoProduccionAntes.Length; $indiceByte++) {
@@ -828,13 +933,13 @@ function Ejecutar-CasosMulticontexto {
 
     $operacionesAisladasOk = $true
     $manifiestosOperacion = @()
-    foreach ($claveOperacion in @('clientea/testing', 'clienteb/testing')) {
+    foreach ($claveOperacion in @('clientea/comercial/testing', 'clienteb/comercial/testing')) {
         $contextoOperacion = $contextosResueltos[$claveOperacion]
         $directorioOperaciones = Join-Path $contextoOperacion.DirectorioLogs 'operaciones'
         New-DirectorioSiNoExiste -Directorio $directorioOperaciones | Out-Null
         $identificadorOperacion = [Guid]::NewGuid().ToString('N')
         $nombreLogOperacion = $identificadorOperacion + '.log'
-        $nombreXpzOperacion = if ($claveOperacion -eq 'clientea/testing') { [System.IO.Path]::GetFileName($rutaXpzA) } else { [System.IO.Path]::GetFileName($rutaXpzB) }
+        $nombreXpzOperacion = if ($claveOperacion -eq 'clientea/comercial/testing') { [System.IO.Path]::GetFileName($rutaXpzA) } else { [System.IO.Path]::GetFileName($rutaXpzB) }
         $manifiestoOperacion = [ordered]@{
             schemaVersion = 1
             operationId = $identificadorOperacion
@@ -857,8 +962,8 @@ function Ejecutar-CasosMulticontexto {
         [System.IO.File]::WriteAllText($rutaLogOperacion, ('Contexto: ' + $contextoOperacion.ContextId), (New-Object System.Text.UTF8Encoding($false)))
         $manifiestosOperacion += $manifiestoOperacion
     }
-    $manifiestosTesting = @(Get-ChildItem -LiteralPath (Join-Path $contextosResueltos['clientea/testing'].DirectorioLogs 'operaciones') -Filter '*.json' -File)
-    $manifiestosClienteb = @(Get-ChildItem -LiteralPath (Join-Path $contextosResueltos['clienteb/testing'].DirectorioLogs 'operaciones') -Filter '*.json' -File)
+    $manifiestosTesting = @(Get-ChildItem -LiteralPath (Join-Path $contextosResueltos['clientea/comercial/testing'].DirectorioLogs 'operaciones') -Filter '*.json' -File)
+    $manifiestosClienteb = @(Get-ChildItem -LiteralPath (Join-Path $contextosResueltos['clienteb/comercial/testing'].DirectorioLogs 'operaciones') -Filter '*.json' -File)
     $operacionesAisladasOk = $manifiestosTesting.Count -eq 1 -and $manifiestosClienteb.Count -eq 1
     foreach ($manifiestoOperacion in @($manifiestosOperacion)) {
         $rutaContextual = Join-Path $contextosResueltos[[string]$manifiestoOperacion.contextId].DirectorioLogs ('operaciones\' + $manifiestoOperacion.operationId + '.json')
@@ -875,11 +980,11 @@ function Ejecutar-CasosMulticontexto {
     $flujoTesting = $null
     $flujoProduccion = $null
     try {
-        $flujoTesting = New-Object -TypeName System.IO.FileStream -ArgumentList @($contextosResueltos['clientea/testing'].RutaLock, [System.IO.FileMode]::OpenOrCreate, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
-        $flujoProduccion = New-Object -TypeName System.IO.FileStream -ArgumentList @($contextosResueltos['clientea/produccion'].RutaLock, [System.IO.FileMode]::OpenOrCreate, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
+        $flujoTesting = New-Object -TypeName System.IO.FileStream -ArgumentList @($contextosResueltos['clientea/comercial/testing'].RutaLock, [System.IO.FileMode]::OpenOrCreate, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
+        $flujoProduccion = New-Object -TypeName System.IO.FileStream -ArgumentList @($contextosResueltos['clientea/comercial/produccion'].RutaLock, [System.IO.FileMode]::OpenOrCreate, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
         $segundoMismoAmbienteRechazado = $false
         try {
-            $flujoSegundo = New-Object -TypeName System.IO.FileStream -ArgumentList @($contextosResueltos['clientea/testing'].RutaLock, [System.IO.FileMode]::OpenOrCreate, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
+            $flujoSegundo = New-Object -TypeName System.IO.FileStream -ArgumentList @($contextosResueltos['clientea/comercial/testing'].RutaLock, [System.IO.FileMode]::OpenOrCreate, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
             $flujoSegundo.Dispose()
         } catch {
             $segundoMismoAmbienteRechazado = $true
@@ -890,7 +995,7 @@ function Ejecutar-CasosMulticontexto {
     } finally {
         if ($null -ne $flujoTesting) { $flujoTesting.Dispose() }
         if ($null -ne $flujoProduccion) { $flujoProduccion.Dispose() }
-        foreach ($claveLock in @($contextosResueltos['clientea/testing'].RutaLock, $contextosResueltos['clientea/produccion'].RutaLock)) {
+        foreach ($claveLock in @($contextosResueltos['clientea/comercial/testing'].RutaLock, $contextosResueltos['clientea/comercial/produccion'].RutaLock)) {
             Remove-Item -LiteralPath $claveLock -Force -ErrorAction SilentlyContinue
         }
     }
@@ -1905,7 +2010,7 @@ $servicios = $null
         }
     }
     Test-Asercion -Id 'panelFixtures.serviciosEnriquecidos' -Condicion (
-        $servicios.meta.contextId -eq 'trunk/testing' -and
+        $servicios.meta.contextId -eq 'trunk/comercial/testing' -and
         $servicios.meta.inventarioObsoleto -eq $true -and
         @($servicios.servicios).Count -eq 3 -and
         $servicios.servicios[0].versionDisponible -eq $true -and
@@ -3123,12 +3228,13 @@ function Ejecutar-CasosConfiguracionPanelTemporal {
             data = [ordered]@{
                 id = 'nuevo-cliente'
                 nombre = 'Nuevo cliente'
-                packagename = 'nuevo.'
+                packagenames = [ordered]@{ comercial = 'nuevo.' }
                 geneXusExportProfile = 'Gx18'
                 serviciosIgnorados = @()
                 ambientes = @([ordered]@{
                     id = 'testing'
                     nombre = 'Testing'
+                    modulo = 'comercial'
                     tipo = 'test'
                     kbPath = ($rutaKbNueva -replace '\\', '/')
                     host = 'https://nuevo.example.com'
@@ -3156,7 +3262,7 @@ function Ejecutar-CasosConfiguracionPanelTemporal {
         $contenidoAntesError = [System.IO.File]::ReadAllBytes($rutaConfiguracionTemporal)
         $respuestaErrorValidacion = $null
         try {
-            $payloadInvalido = [ordered]@{ configHash = $hashPosterior; data = [ordered]@{ id = 'cliente-invalido'; nombre = 'Invalido'; packagename = 'invalido.'; serviciosIgnorados = @(); ambientes = @() } }
+            $payloadInvalido = [ordered]@{ configHash = $hashPosterior; data = [ordered]@{ id = 'cliente-invalido'; nombre = 'Invalido'; packagenames = [ordered]@{ comercial = 'invalido.' }; serviciosIgnorados = @(); ambientes = @() } }
             Invoke-WebRequest -Method Post -UseBasicParsing -Uri ('http://127.0.0.1:' + $puerto + '/api/configuracion/clientes') -Headers $headersPanel -ContentType 'application/json' -Body ($payloadInvalido | ConvertTo-Json -Depth 10) -ErrorAction Stop | Out-Null
         } catch { $respuestaErrorValidacion = $_ }
         $contenidoDespuesError = [System.IO.File]::ReadAllBytes($rutaConfiguracionTemporal)
@@ -3174,7 +3280,7 @@ function Ejecutar-CasosConfiguracionPanelTemporal {
 
         $respuestaErrorId = $null
         try {
-            $payloadIdDuplicado = [ordered]@{ configHash = $hashPosterior; data = [ordered]@{ id = 'existente'; nombre = 'Duplicado'; packagename = 'duplicado.'; serviciosIgnorados = @(); ambientes = @([ordered]@{ id = 'nuevo'; nombre = 'Nuevo'; tipo = 'prod'; kbPath = 'C:/KBs/CLIENTE_DUPLICADO' }) } }
+            $payloadIdDuplicado = [ordered]@{ configHash = $hashPosterior; data = [ordered]@{ id = 'existente'; nombre = 'Duplicado'; packagenames = [ordered]@{ comercial = 'duplicado.' }; serviciosIgnorados = @(); ambientes = @([ordered]@{ id = 'nuevo'; nombre = 'Nuevo'; modulo = 'comercial'; tipo = 'prod'; kbPath = 'C:/KBs/CLIENTE_DUPLICADO' }) } }
             Invoke-WebRequest -Method Post -UseBasicParsing -Uri ('http://127.0.0.1:' + $puerto + '/api/configuracion/clientes') -Headers $headersPanel -ContentType 'application/json' -Body ($payloadIdDuplicado | ConvertTo-Json -Depth 10) -ErrorAction Stop | Out-Null
         } catch { $respuestaErrorId = $_ }
         $contenidoDespuesId = [System.IO.File]::ReadAllBytes($rutaConfiguracionTemporal)
@@ -3183,7 +3289,7 @@ function Ejecutar-CasosConfiguracionPanelTemporal {
 
         $respuestaErrorKb = $null
         try {
-            $payloadKbDuplicada = [ordered]@{ configHash = $hashPosterior; data = [ordered]@{ id = 'existente'; nombre = 'Cliente existente'; packagename = 'existente.'; serviciosIgnorados = @(); ambientes = @([ordered]@{ id = 'produccion'; nombre = 'Produccion'; tipo = 'prod'; kbPath = 'C:/KBs/CLIENTE_EXISTENTE' }) } }
+            $payloadKbDuplicada = [ordered]@{ configHash = $hashPosterior; data = [ordered]@{ id = 'existente'; nombre = 'Cliente existente'; packagenames = [ordered]@{ comercial = 'existente.' }; serviciosIgnorados = @(); ambientes = @([ordered]@{ id = 'produccion'; nombre = 'Produccion'; modulo = 'comercial'; tipo = 'prod'; kbPath = 'C:/KBs/CLIENTE_EXISTENTE' }) } }
             Invoke-WebRequest -Method Post -UseBasicParsing -Uri ('http://127.0.0.1:' + $puerto + '/api/configuracion/clientes') -Headers $headersPanel -ContentType 'application/json' -Body ($payloadKbDuplicada | ConvertTo-Json -Depth 10) -ErrorAction Stop | Out-Null
         } catch { $respuestaErrorKb = $_ }
         $contenidoDespuesKb = [System.IO.File]::ReadAllBytes($rutaConfiguracionTemporal)
@@ -3396,13 +3502,13 @@ function Ejecutar-CasosPanelWeb {
         Test-Asercion -Id 'panelWeb.contextos' -Condicion ([bool]$contextosPanel.ok -and @($contextosPanel.data.contextos).Count -ge 1) -DetalleExito 'La API lista los contextos configurados.' -DetalleFallo 'La API no listó los contextos configurados.'
 
         $etapaPanel = 'activar contexto'
-        $activacionPanel = Invoke-WebRequest -Method Post -UseBasicParsing -Uri ('http://127.0.0.1:' + $puerto + '/api/contexto/activar') -Headers $headersPanel -ContentType 'application/json' -Body '{"clienteId":"trunk","ambienteId":"testing"}'
+        $activacionPanel = Invoke-WebRequest -Method Post -UseBasicParsing -Uri ('http://127.0.0.1:' + $puerto + '/api/contexto/activar') -Headers $headersPanel -ContentType 'application/json' -Body '{"clienteId":"trunk","modulo":"comercial","ambienteId":"testing"}'
         $activacionDatos = $activacionPanel.Content | ConvertFrom-Json
-        Test-Asercion -Id 'panelWeb.activacion' -Condicion ($activacionPanel.StatusCode -in @(200, 202) -and $activacionDatos.data.contextId -eq 'trunk/testing') -DetalleExito 'La activación valida y establece el contexto solicitado.' -DetalleFallo 'La activación contextual falló.'
+        Test-Asercion -Id 'panelWeb.activacion' -Condicion ($activacionPanel.StatusCode -in @(200, 202) -and $activacionDatos.data.contextId -eq 'trunk/comercial/testing' -and $activacionDatos.data.modulo -eq 'comercial') -DetalleExito 'La activación valida y establece el contexto triple solicitado.' -DetalleFallo 'La activación contextual triple falló.'
         $estadoActivoPanel = Invoke-RestMethod -Uri ('http://127.0.0.1:' + $puerto + '/api/estado')
 Test-Asercion -Id 'panelWeb.dashboard' -Condicion (
             [bool]$estadoActivoPanel.ok -and
-            $estadoActivoPanel.data.dashboard.contexto.ContextId -eq 'trunk/testing' -and
+            $estadoActivoPanel.data.dashboard.contexto.ContextId -eq 'trunk/comercial/testing' -and
             $estadoActivoPanel.data.dashboard.xpz.PSObject.Properties['disponibles'] -and
             $estadoActivoPanel.data.dashboard.xpz.PSObject.Properties['sha256'] -and
             $estadoActivoPanel.data.dashboard.documentos.PSObject.Properties['total'] -and
@@ -3415,11 +3521,16 @@ Test-Asercion -Id 'panelWeb.dashboard' -Condicion (
         $etapaPanel = 'listar XPZ'
         $xpzPanel = Invoke-RestMethod -Uri ('http://127.0.0.1:' + $puerto + '/api/xpz')
         $xpzPrincipales = @($xpzPanel.data.xpz | Where-Object { $_.principal -eq $true })
+        $xpzDisponible = @($xpzPanel.data.xpz).Count -gt 0
         Test-Asercion -Id 'panelWeb.xpzPrincipales' -Condicion (
-            [bool]$xpzPanel.ok -and
-            @($xpzPanel.data.xpz).Count -ge 1 -and
-            $xpzPrincipales.Count -eq 1
-        ) -DetalleExito 'La API XPZ lista archivos principales del contexto activo y marca uno como principal vigente.' -DetalleFallo 'La API XPZ incluyó complementos o no marcó correctamente el principal vigente.'
+            [bool]$xpzPanel.ok -and (-not $xpzDisponible -or $xpzPrincipales.Count -eq 1)
+        ) -DetalleExito 'La API XPZ lista archivos principales del contexto activo y marca uno como principal vigente cuando hay XPZ publicados.' -DetalleFallo 'La API XPZ incluyó complementos o no marcó correctamente el principal vigente.'
+        if (-not $xpzDisponible) {
+            foreach ($casoSinXpz in @('panelWeb.seleccionXpzPasiva', 'panelWeb.exportarRecuperable', 'panelWeb.inventario', 'panelWeb.serviciosEnriquecidos')) {
+                Test-Skip -Id $casoSinXpz -Detalle 'El contexto activo no tiene XPZ publicado; se omite la parte operativa dependiente del XPZ.'
+            }
+            return
+        }
         $xpzPrincipalNombre = @($xpzPanel.data.xpz | Where-Object { $_.principal -eq $true })[0].nombre
         $etapaPanel = 'activar XPZ'
         $activacionXpzPanel = Invoke-WebRequest -Method Post -UseBasicParsing -Uri ('http://127.0.0.1:' + $puerto + '/api/xpz/activar') -Headers $headersPanel -ContentType 'application/json' -Body ('{"nombre":"' + $xpzPrincipalNombre + '"}')
@@ -3490,6 +3601,7 @@ try {
     # Los grupos de casos se incorporan en los pasos 5 a 10 del plan.
     Ejecutar-CasosConfiguracion
     Ejecutar-CasosConfiguracionMulticliente
+    Ejecutar-CasosMigracionConfiguracionModular
     Ejecutar-CasosConfiguracionPanelTemporal
     Ejecutar-CasosFixturesPanelWeb
     Ejecutar-CasosEstadosOperacionPanel

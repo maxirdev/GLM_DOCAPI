@@ -35,7 +35,7 @@ $rutaManifiestoEjecucion = [System.IO.Path]::GetFullPath($ManifiestoPath)
 $datosManifiestoEjecucion = $manifiestoEjecucion
 $XpzPath = [string]$manifiestoEjecucion.xpz
 $ConfigPath = [System.IO.Path]::GetFullPath([string]$manifiestoEjecucion.configPath)
-$contexto = Cargar-Configuracion -ConfigPath $ConfigPath -ClienteId ([string]$manifiestoEjecucion.clienteId) -AmbienteId ([string]$manifiestoEjecucion.ambienteId)
+$contexto = Cargar-Configuracion -ConfigPath $ConfigPath -ClienteId ([string]$manifiestoEjecucion.clienteId) -Modulo ([string]$manifiestoEjecucion.modulo) -AmbienteId ([string]$manifiestoEjecucion.ambienteId)
 if (-not $RutaControl) { $RutaControl = $contexto.RutaControl }
 $rutaLockActualizacion = $contexto.RutaLock
 $rutaHistorial = $contexto.RutaHistorial
@@ -459,7 +459,7 @@ function Marcar-ServicioSinPublicar {
 try {
     $lockActualizacion = Adquirir-LockActualizacion -RutaLock $rutaLockActualizacion
 
-    $parametrosConfiguracion = @{ ConfigPath = $ConfigPath; ClienteId = $contexto.ClienteId; AmbienteId = $contexto.AmbienteId }
+    $parametrosConfiguracion = @{ ConfigPath = $ConfigPath; ClienteId = $contexto.ClienteId; Modulo = $contexto.Modulo; AmbienteId = $contexto.AmbienteId }
     $configuracion = Cargar-Configuracion @parametrosConfiguracion
     try {
         $controlAnterior = Leer-ControlVersiones -RutaControl $RutaControl
@@ -480,7 +480,7 @@ try {
         $rutaExportador = Join-Path $PSScriptRoot 'EjecutarExportacionGLM.ps1'
         $rutaXpzAlternativa = $null
         try {
-            $resultadoExportacion = Invocar-PowerShellScript -RutaScript $rutaExportador -Argumentos @('-Repositorio', $raizRepositorio)
+            $resultadoExportacion = Invocar-PowerShellScript -RutaScript $rutaExportador -Argumentos @('-Repositorio', $raizRepositorio, '-ClienteId', $contexto.ClienteId, '-Modulo', $contexto.Modulo, '-AmbienteId', $contexto.AmbienteId)
             foreach ($lineaExportacion in $resultadoExportacion.Salida) {
                 if ($lineaExportacion) { Write-Host $lineaExportacion }
             }
@@ -504,7 +504,7 @@ try {
             $configuracion = Cargar-Configuracion @parametrosConfiguracion
         }
         if (-not $rutaXpzAlternativa) {
-            $configuracion = Cargar-Configuracion -ConfigPath $ConfigPath
+            $configuracion = Cargar-Configuracion -ConfigPath $ConfigPath -ClienteId $contexto.ClienteId -Modulo $contexto.Modulo -AmbienteId $contexto.AmbienteId
         }
     }
 

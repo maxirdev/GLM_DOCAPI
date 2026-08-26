@@ -1,0 +1,28 @@
+{
+  "rutas": {
+    "clientesRoot": "clientes"
+  },
+  "herramientas": {
+    "geneXusProgramDir": "GeneXus",
+    "msbuildPath": "MSBuild.exe",
+    "pandocPath": "pandoc.exe",
+    "typstPath": "typst.exe"
+  },
+  "clientes": [
+    {
+      "id": "trunk",
+      "nombre": "Trunk",
+      "packagenames": {},
+      "serviciosIgnorados": [],
+      "ambientes": [
+        {
+          "id": "testing",
+          "nombre": "TEST Comercial",
+          "modulo": "comercial",
+          "tipo": "test",
+          "kbPath": "C:/KBs/SEGUROS_COMERCIAL_TEST"
+        }
+      ]
+    }
+  ]
+}

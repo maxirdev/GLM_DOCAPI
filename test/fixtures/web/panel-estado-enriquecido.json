@@ -1,16 +1,16 @@
 {
     "meta": {
-        "contextId": "trunk/testing",
+        "contextId": "trunk/comercial/testing",
         "configValid": true
     },
     "dashboard": {
         "contexto": {
-            "contextId": "trunk/testing",
+            "contextId": "trunk/comercial/testing",
             "clienteId": "trunk",
             "clienteNombre": "Trunk",
             "ambienteId": "testing",
             "ambienteNombre": "Testing",
-            "kbPath": "C:/kb/trunk/testing"
+            "kbPath": "C:/kb/trunk/comercial/testing"
         },
         "documentos": {
             "total": 2,
@@ -30,7 +30,7 @@
             { "item": "Configuración", "estado": "OK", "mensaje": "Esquema multicliente válido." },
             { "item": "GeneXus", "estado": "OK", "mensaje": "C:/GeneXus/18" },
             { "item": "MSBuild", "estado": "ADVERTENCIA", "mensaje": "No se encontró en: C:/nonexistent" },
-            { "item": "Knowledge Base", "estado": "ERROR", "mensaje": "No existe la Knowledge Base: C:/kb/trunk/testing" }
+            { "item": "Knowledge Base", "estado": "ERROR", "mensaje": "No existe la Knowledge Base: C:/kb/trunk/comercial/testing" }
         ]
     }
 }

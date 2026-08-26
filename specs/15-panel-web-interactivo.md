@@ -1,6 +1,6 @@
 # SPEC 15 — Panel web interactivo multicliente
 
-> **Estado:** Aprobado
+> **Estado:** Implementado
 > **Depende de:** SPEC 19
 > **Fecha:** 2026-08-16
 > **Objetivo:** Crear un panel web local y autocontenido que permita administrar clientes y ambientes, operar el pipeline documental del contexto seleccionado y consultar sus endpoints, documentos y logs sin duplicar la lógica de los scripts PowerShell.

@@ -58,14 +58,20 @@ function Get-ConfiguredContexts {
         return @()
     }
     foreach ($client in @($script:ConfigurationRaw.clientes)) {
+        $packageNames = Obtener-PackageNamesCliente -Cliente $client -ClienteId ([string]$client.id)
         foreach ($environment in @($client.ambientes)) {
+            $modulo = Obtener-ModuloAmbienteConfigurado -Ambiente $environment -Contexto ("El ambiente '" + [string]$environment.id + "' del cliente '" + [string]$client.id + "'")
+            $tipoAmbiente = Clasificar-TipoAmbiente -Tipo ([string]$environment.tipo)
             $contexts.Add([pscustomobject]@{
                 clienteId = [string]$client.id
                 clienteNombre = [string]$client.nombre
+                modulo = $modulo
+                moduloNombre = Obtener-NombreModuloCanonico -Modulo $modulo
                 ambienteId = [string]$environment.id
-                ambienteNombre = Obtener-NombreAmbienteCanonico -Tipo (Clasificar-TipoAmbiente -Tipo ([string]$environment.tipo))
-                ambienteTipo = Clasificar-TipoAmbiente -Tipo ([string]$environment.tipo)
-                contextId = ([string]$client.id + '/' + [string]$environment.id)
+                ambienteNombre = Obtener-NombreAmbienteCanonico -Tipo $tipoAmbiente
+                ambienteTipo = $tipoAmbiente
+                contextId = ([string]$client.id + '/' + $modulo + '/' + [string]$environment.id)
+                packageName = if ($packageNames.ContainsKey($modulo)) { [string]$packageNames[$modulo] } else { $null }
             })
         }
     }
@@ -882,7 +888,7 @@ function Start-ExportWork {
     if ($policy -notin @('abort', 'continue')) { throw 'policy debe ser abort o continue.' }
     Prepare-PanelOperationLogs -Context $script:ActiveContext
     $scriptPath = Join-Path $RepositoryRoot 'binary\EjecutarExportacionGLM.ps1'
-    $arguments = @('-File', $scriptPath, '-Repositorio', $RepositoryRoot, '-ClienteId', $script:ActiveContext.ClienteId, '-AmbienteId', $script:ActiveContext.AmbienteId, '-ConfirmarExportacionCompleta', '-PoliticaPendientes', $policy)
+    $arguments = @('-File', $scriptPath, '-Repositorio', $RepositoryRoot, '-ClienteId', $script:ActiveContext.ClienteId, '-Modulo', $script:ActiveContext.Modulo, '-AmbienteId', $script:ActiveContext.AmbienteId, '-ConfirmarExportacionCompleta', '-PoliticaPendientes', $policy)
     $work = Start-PanelChildWork -Operation 'EXPORTAR_XPZ' -ScriptPath $scriptPath -ArgumentValues $arguments -Context $script:ActiveContext
     if ($policy -eq 'continue') { $work.warnings = @('La politica continue permite conservar un XPZ incompleto y pendientes visibles.') }
     return $work
@@ -1210,8 +1216,38 @@ function Find-ConfiguredClient {
 }
 
 function Find-ConfiguredEnvironment {
-    param([Parameter(Mandatory = $true)]$Client, [Parameter(Mandatory = $true)][string]$EnvironmentId)
-    return @($Client.ambientes | Where-Object { [string]$_.id -ceq $EnvironmentId }) | Select-Object -First 1
+    param(
+        [Parameter(Mandatory = $true)]$Client,
+        [Parameter(Mandatory = $true)][string]$EnvironmentId,
+        [Parameter(Mandatory = $true)][string]$Module
+    )
+    return @($Client.ambientes | Where-Object {
+        [string]$_.id -ceq $EnvironmentId -and
+        (Obtener-ModuloAmbienteConfigurado -Ambiente $_ -Contexto ("El ambiente '" + $EnvironmentId + "'")) -eq $Module
+    }) | Select-Object -First 1
+}
+
+function Set-ConfiguredClientPackageName {
+    param(
+        [Parameter(Mandatory = $true)]$Client,
+        [Parameter(Mandatory = $true)][ValidateSet('comercial', 'erp')][string]$Module,
+        [Parameter(Mandatory = $true)][string]$PackageName
+    )
+    $packageNames = @{}
+    $existingPackageNames = Obtener-PropiedadConfiguracionExacta -Objeto $Client -Nombre 'packagenames'
+    if ($null -ne $existingPackageNames -and $null -ne $existingPackageNames.Value) {
+        foreach ($property in @($existingPackageNames.Value.PSObject.Properties)) {
+            $packageNames[[string]$property.Name] = [string]$property.Value
+        }
+    }
+    if ($Module -eq 'comercial' -and -not $packageNames.ContainsKey('comercial')) {
+        $legacyPackageName = Obtener-PropiedadConfiguracionExacta -Objeto $Client -Nombre 'packagename'
+        if ($null -ne $legacyPackageName) { $packageNames['comercial'] = [string]$legacyPackageName.Value }
+    }
+    $packageNames[$Module] = $PackageName.Trim()
+    $value = [pscustomobject]$packageNames
+    $property = Obtener-PropiedadConfiguracionExacta -Objeto $Client -Nombre 'packagenames'
+    if ($null -ne $property) { $Client.packagenames = $value } else { $Client | Add-Member -MemberType NoteProperty -Name packagenames -Value $value }
 }
 
 function Normalize-GeneXusExportProfile {
@@ -1226,7 +1262,7 @@ function Normalize-GeneXusExportProfile {
 function Convert-MutationPayloadToNewClient {
     param([Parameter(Mandatory = $true)]$Payload)
 
-    foreach ($propertyName in @('id', 'nombre', 'packagename')) {
+    foreach ($propertyName in @('id', 'nombre', 'packagenames')) {
         if (-not $Payload.PSObject.Properties[$propertyName] -or [string]::IsNullOrWhiteSpace([string]$Payload.$propertyName)) {
             throw ('El alta de cliente requiere el campo ' + $propertyName + '.')
         }
@@ -1243,11 +1279,13 @@ function Convert-MutationPayloadToNewClient {
     }
 
     $environmentPayload = @($Payload.ambientes)[0]
-    foreach ($propertyName in @('tipo', 'kbPath')) {
+    foreach ($propertyName in @('modulo', 'tipo', 'kbPath')) {
         if (-not $environmentPayload.PSObject.Properties[$propertyName] -or [string]::IsNullOrWhiteSpace([string]$environmentPayload.$propertyName)) {
             throw ('El primer ambiente requiere el campo ' + $propertyName + '.')
         }
     }
+    $environmentModule = ([string]$environmentPayload.modulo).Trim().ToLowerInvariant()
+    if ($environmentModule -notin @('comercial', 'erp')) { throw 'El modulo del primer ambiente debe ser comercial o erp.' }
     $environmentType = Clasificar-TipoAmbiente -Tipo ([string]$environmentPayload.tipo)
     if ($null -eq $environmentType) {
         throw 'El tipo del primer ambiente debe ser test o prod.'
@@ -1260,11 +1298,12 @@ function Convert-MutationPayloadToNewClient {
     return [pscustomobject]@{
         id = $clientId
         nombre = [string]$Payload.nombre
-        packagename = [string]$Payload.packagename
+        packagenames = $Payload.packagenames
         serviciosIgnorados = @()
         ambientes = @([pscustomobject]@{
             id = Obtener-IdAmbienteCanonico -Tipo $environmentType
             nombre = Obtener-NombreAmbienteCanonico -Tipo $environmentType
+            modulo = $environmentModule
             tipo = $environmentType
             kbPath = [string]$environmentPayload.kbPath
             host = $environmentHost
@@ -1542,7 +1581,7 @@ function Invoke-ApiRequest {
         Write-JsonResponse -RequestContext $RequestContext -StatusCode 200 -Payload @{ ok = $true; data = @{ configuracion = $script:ConfigurationRaw; configHash = Get-ConfigurationHash; valida = ($script:ConfigurationErrors.Count -eq 0); errores = @($script:ConfigurationErrors) } }
         return
     }
-    if ($route -match '^/api/configuracion/clientes/([^/]+)/ambientes$' -and $request.HttpMethod -eq 'POST') {
+    if ($route -match '^/api/configuracion/clientes/([^/]+)/modulos/([^/]+)/ambientes$' -and $request.HttpMethod -eq 'POST') {
         if (-not (Test-SessionToken -Request $request)) { Write-JsonResponse -RequestContext $RequestContext -StatusCode 403 -Payload @{ ok = $false; error = 'Token de sesion invalido.' }; return }
         try {
             $body = Get-RequestBodyJson -Request $request
@@ -1550,6 +1589,8 @@ function Invoke-ApiRequest {
             $candidate = ($script:ConfigurationRaw | ConvertTo-Json -Depth 15 | ConvertFrom-Json)
             $client = Find-ConfiguredClient -Candidate $candidate -ClientId ([System.Uri]::UnescapeDataString($Matches[1]))
             if ($null -eq $client) { throw 'Cliente no encontrado.' }
+            $moduloSolicitado = [System.Uri]::UnescapeDataString($Matches[2]).Trim().ToLowerInvariant()
+            if ($moduloSolicitado -notin @('comercial', 'erp')) { throw 'El modulo debe ser comercial o erp.' }
             $tipoNormalizado = Clasificar-TipoAmbiente -Tipo ([string]$payload.tipo)
             if ($null -eq $tipoNormalizado) { throw 'El tipo de ambiente debe ser test o prod.' }
             foreach ($propertyName in @('tipo', 'kbPath')) {
@@ -1557,24 +1598,34 @@ function Invoke-ApiRequest {
                     throw ('El ambiente requiere el campo ' + $propertyName + '.')
                 }
             }
+            $packageNames = Obtener-PackageNamesCliente -Cliente $client -ClienteId ([string]$client.id)
+            $packageName = if ($payload.PSObject.Properties['packageName']) { [string]$payload.packageName } elseif ($payload.PSObject.Properties['packagename']) { [string]$payload.packagename } else { '' }
+            if (-not $packageNames.ContainsKey($moduloSolicitado)) {
+                if ([string]::IsNullOrWhiteSpace($packageName)) { throw ("El primer ambiente del modulo '$moduloSolicitado' requiere packageName.") }
+                Set-ConfiguredClientPackageName -Client $client -Module $moduloSolicitado -PackageName $packageName
+            } elseif (-not [string]::IsNullOrWhiteSpace($packageName) -and [string]$packageNames[$moduloSolicitado] -ne $packageName.Trim()) {
+                throw ("El package name del modulo '$moduloSolicitado' no coincide con el configurado.")
+            }
             Validar-RutaKnowledgeBase -Ruta (Resolver-RutaRepositorio -Ruta ([string]$payload.kbPath) -Raiz $RepositoryRoot) -Contexto ("La Knowledge Base del ambiente '" + (Obtener-IdAmbienteCanonico -Tipo $tipoNormalizado) + "'") | Out-Null
             $hostAmbiente = if ($payload.PSObject.Properties['host'] -and -not [string]::IsNullOrWhiteSpace([string]$payload.host)) { Validar-HostAmbiente -HostUrl ([string]$payload.host) } else { $null }
             $baseUrl = if ($payload.PSObject.Properties['baseUrl'] -and -not [string]::IsNullOrWhiteSpace([string]$payload.baseUrl)) { Validar-BaseUrlAmbiente -BaseUrl ([string]$payload.baseUrl) } else { $null }
-            $environment = [pscustomobject]@{ id = (Obtener-IdAmbienteCanonico -Tipo $tipoNormalizado); nombre = (Obtener-NombreAmbienteCanonico -Tipo $tipoNormalizado); tipo = $tipoNormalizado; kbPath = [string]$payload.kbPath; host = $hostAmbiente; baseUrl = $baseUrl }
+            $environment = [pscustomobject]@{ id = (Obtener-IdAmbienteCanonico -Tipo $tipoNormalizado); nombre = (Obtener-NombreAmbienteCanonico -Tipo $tipoNormalizado); modulo = $moduloSolicitado; tipo = $tipoNormalizado; kbPath = [string]$payload.kbPath; host = $hostAmbiente; baseUrl = $baseUrl }
             $client.ambientes = @($client.ambientes) + $environment
             Write-ConfigurationCandidate -Candidate $candidate -Operation 'CONFIGURACION_AMBIENTE'
             Write-JsonResponse -RequestContext $RequestContext -StatusCode 200 -Payload @{ ok = $true; data = @{ configHash = Get-ConfigurationHash } }
         } catch { $status = if ($_.Exception.Message -match 'cambio externamente') { 409 } else { 400 }; Write-JsonResponse -RequestContext $RequestContext -StatusCode $status -Payload @{ ok = $false; error = $_.Exception.Message } }
         return
     }
-    if ($route -match '^/api/configuracion/clientes/([^/]+)/ambientes/([^/]+)$' -and $request.HttpMethod -eq 'PUT') {
+    if ($route -match '^/api/configuracion/clientes/([^/]+)/modulos/([^/]+)/ambientes/([^/]+)$' -and $request.HttpMethod -eq 'PUT') {
         if (-not (Test-SessionToken -Request $request)) { Write-JsonResponse -RequestContext $RequestContext -StatusCode 403 -Payload @{ ok = $false; error = 'Token de sesion invalido.' }; return }
         try {
             $body = Get-RequestBodyJson -Request $request; $payload = Get-MutationPayload -Body $body
             $candidate = ($script:ConfigurationRaw | ConvertTo-Json -Depth 15 | ConvertFrom-Json)
             $client = Find-ConfiguredClient -Candidate $candidate -ClientId ([System.Uri]::UnescapeDataString($Matches[1]))
             if ($null -eq $client) { throw 'Cliente no encontrado.' }
-            $environment = Find-ConfiguredEnvironment -Client $client -EnvironmentId ([System.Uri]::UnescapeDataString($Matches[2]))
+            $moduloSolicitado = [System.Uri]::UnescapeDataString($Matches[2]).Trim().ToLowerInvariant()
+            if ($moduloSolicitado -notin @('comercial', 'erp')) { throw 'El modulo debe ser comercial o erp.' }
+            $environment = Find-ConfiguredEnvironment -Client $client -EnvironmentId ([System.Uri]::UnescapeDataString($Matches[3])) -Module $moduloSolicitado
             if ($null -eq $environment) { throw 'Ambiente no encontrado.' }
             $tipoActual = Clasificar-TipoAmbiente -Tipo ([string]$environment.tipo)
             if ($payload.PSObject.Properties['tipo']) {
@@ -1593,13 +1644,14 @@ function Invoke-ApiRequest {
             $environment.baseUrl = if ($payload.PSObject.Properties['baseUrl'] -and -not [string]::IsNullOrWhiteSpace([string]$payload.baseUrl)) { Validar-BaseUrlAmbiente -BaseUrl ([string]$payload.baseUrl) } else { $null }
             $environment.tipo = $tipoActual
             $environment.nombre = Obtener-NombreAmbienteCanonico -Tipo $tipoActual
+            $environment.modulo = $moduloSolicitado
             $environment.kbPath = [string]$payload.kbPath
             Write-ConfigurationCandidate -Candidate $candidate -Operation 'CONFIGURACION_AMBIENTE'
             Write-JsonResponse -RequestContext $RequestContext -StatusCode 200 -Payload @{ ok = $true; data = @{ configHash = Get-ConfigurationHash } }
         } catch { $status = if ($_.Exception.Message -match 'cambio externamente') { 409 } else { 400 }; Write-JsonResponse -RequestContext $RequestContext -StatusCode $status -Payload @{ ok = $false; error = $_.Exception.Message } }
         return
     }
-    if ($route -match '^/api/configuracion/clientes/([^/]+)/ambientes/([^/]+)$' -and $request.HttpMethod -eq 'DELETE') {
+    if ($route -match '^/api/configuracion/clientes/([^/]+)/modulos/([^/]+)/ambientes/([^/]+)$' -and $request.HttpMethod -eq 'DELETE') {
         if (-not (Test-SessionToken -Request $request)) { Write-JsonResponse -RequestContext $RequestContext -StatusCode 403 -Payload @{ ok = $false; error = 'Token de sesion invalido.' }; return }
         try {
             $body = Get-RequestBodyJson -Request $request; if ($body.confirmDelete -ne $true) { throw 'La eliminacion requiere confirmDelete=true.' }
@@ -1607,8 +1659,14 @@ function Invoke-ApiRequest {
             $candidate = ($script:ConfigurationRaw | ConvertTo-Json -Depth 15 | ConvertFrom-Json)
             $client = Find-ConfiguredClient -Candidate $candidate -ClientId ([System.Uri]::UnescapeDataString($Matches[1]))
             if ($null -eq $client) { throw 'Cliente no encontrado.' }
-            $environmentId = [System.Uri]::UnescapeDataString($Matches[2])
-            $client.ambientes = @($client.ambientes | Where-Object { [string]$_.id -cne $environmentId })
+            $moduloSolicitado = [System.Uri]::UnescapeDataString($Matches[2]).Trim().ToLowerInvariant()
+            if ($moduloSolicitado -notin @('comercial', 'erp')) { throw 'El modulo debe ser comercial o erp.' }
+            $environmentId = [System.Uri]::UnescapeDataString($Matches[3])
+            $environment = Find-ConfiguredEnvironment -Client $client -EnvironmentId $environmentId -Module $moduloSolicitado
+            if ($null -eq $environment) { throw 'Ambiente no encontrado.' }
+            $client.ambientes = @($client.ambientes | Where-Object {
+                -not ([string]$_.id -ceq $environmentId -and (Obtener-ModuloAmbienteConfigurado -Ambiente $_ -Contexto ("El ambiente '" + $environmentId + "'")) -eq $moduloSolicitado)
+            })
             Write-ConfigurationCandidate -Candidate $candidate -Operation 'CONFIGURACION_AMBIENTE'
             Write-JsonResponse -RequestContext $RequestContext -StatusCode 200 -Payload @{ ok = $true; data = @{ configHash = Get-ConfigurationHash } }
         } catch { $status = if ($_.Exception.Message -match 'cambio externamente') { 409 } else { 400 }; Write-JsonResponse -RequestContext $RequestContext -StatusCode $status -Payload @{ ok = $false; error = $_.Exception.Message } }
@@ -1621,7 +1679,7 @@ function Invoke-ApiRequest {
             $candidate = ($script:ConfigurationRaw | ConvertTo-Json -Depth 15 | ConvertFrom-Json)
             $client = Find-ConfiguredClient -Candidate $candidate -ClientId ([System.Uri]::UnescapeDataString($Matches[1]))
             if ($null -eq $client) { throw 'Cliente no encontrado.' }
-            foreach ($propertyName in @('nombre', 'packagename', 'serviciosIgnorados')) { if ($payload.PSObject.Properties[$propertyName]) { $client.$propertyName = $payload.$propertyName } }
+            foreach ($propertyName in @('nombre', 'packagenames', 'serviciosIgnorados')) { if ($payload.PSObject.Properties[$propertyName]) { $client.$propertyName = $payload.$propertyName } }
             Write-ConfigurationCandidate -Candidate $candidate -Operation 'CONFIGURACION_CLIENTE'
             Write-JsonResponse -RequestContext $RequestContext -StatusCode 200 -Payload @{ ok = $true; data = @{ configHash = Get-ConfigurationHash } }
         } catch { $status = if ($_.Exception.Message -match 'cambio externamente') { 409 } else { 400 }; Write-JsonResponse -RequestContext $RequestContext -StatusCode $status -Payload @{ ok = $false; error = $_.Exception.Message } }
@@ -1688,17 +1746,24 @@ function Invoke-ApiRequest {
         try {
             $body = Get-RequestBodyJson -Request $request
             if ($script:ConfigurationErrors.Count -gt 0) { throw 'La configuracion no es valida; el panel permanece en solo lectura.' }
-            $script:ActiveContext = Resolver-ContextoConfiguracion -ConfiguracionRaw $script:ConfigurationRaw -ConfigPath $ConfigPath -RaizRepositorio $RepositoryRoot -ClienteId ([string]$body.clienteId) -AmbienteId ([string]$body.ambienteId)
+            if ($null -eq $body -or [string]::IsNullOrWhiteSpace([string]$body.clienteId) -or [string]::IsNullOrWhiteSpace([string]$body.modulo) -or [string]::IsNullOrWhiteSpace([string]$body.ambienteId)) {
+                throw 'La activacion requiere clienteId, modulo y ambienteId.'
+            }
+            $script:ActiveContext = Resolver-ContextoConfiguracion -ConfiguracionRaw $script:ConfigurationRaw -ConfigPath $ConfigPath -RaizRepositorio $RepositoryRoot -ClienteId ([string]$body.clienteId) -Modulo ([string]$body.modulo) -AmbienteId ([string]$body.ambienteId)
             $script:ActiveXpz = $null
             $script:XpzOverride = $false
+            $script:XpzSha256ProcesadoCache = $null
             Write-PanelMutationOperation -Operation 'ACTIVAR_CONTEXTO' -Context $script:ActiveContext -Output @('Contexto activo: ' + $script:ActiveContext.ContextId) | Out-Null
             $contextData = [pscustomobject]@{
                 contextId = $script:ActiveContext.ContextId
                 clienteId = $script:ActiveContext.ClienteId
                 clienteNombre = $script:ActiveContext.ClienteNombre
+                modulo = $script:ActiveContext.Modulo
+                moduloNombre = $script:ActiveContext.ModuloNombre
                 ambienteId = $script:ActiveContext.AmbienteId
                 ambienteNombre = $script:ActiveContext.AmbienteNombre
                 ambienteTipo = $script:ActiveContext.AmbienteTipo
+                packageName = $script:ActiveContext.PackageName
                 kbPath = $script:ActiveContext.KbPath
                 xpzDirectory = $script:ActiveContext.DirectorioXpz
                 xpz = if ($script:ActiveXpz) { Convert-XpzForResponse -Xpz $script:ActiveXpz } else { $null }

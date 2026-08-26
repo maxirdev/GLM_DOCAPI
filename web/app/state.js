@@ -1,5 +1,6 @@
 const panelState = {
     clientDropdown: null,
+    moduleDropdown: null,
     environmentDropdown: null,
     currentJobId: null,
     pollingTimer: null,

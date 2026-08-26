@@ -8,6 +8,9 @@ param(
     [string]$ConfigPath,
     [string]$XpzPath,
     [string]$ManifiestoPath,
+    [string]$ClienteId,
+    [ValidateSet('comercial', 'erp')][string]$Modulo,
+    [string]$AmbienteId,
     [ValidateSet('FULL', 'SELECTIVE')][string]$Scope = 'FULL'
 )
 
@@ -424,6 +427,7 @@ function Write-ReporteValidacion {
         [Parameter(Mandatory = $true)][string]$EjecucionId,
         [Parameter(Mandatory = $false)][string]$RutaManifiesto = '',
         [Parameter(Mandatory = $false)][AllowEmptyString()][string]$ContextId = '',
+        [Parameter(Mandatory = $false)][AllowEmptyString()][string]$Modulo = '',
         [Parameter(Mandatory = $false)][AllowEmptyString()][string]$SourceFingerprint = '',
         [Parameter(Mandatory = $false)][AllowEmptyString()][string]$ConfigurationFingerprint = '',
         [Parameter(Mandatory = $false)][string]$Scope = 'FULL'
@@ -442,6 +446,7 @@ function Write-ReporteValidacion {
         ejecucion = [pscustomobject]@{
             id = $EjecucionId
             contextId = $ContextId
+            modulo = $Modulo
             scope = $Scope
             xpz = $xpzPrincipal
             manifiesto = $RutaManifiesto
@@ -470,14 +475,16 @@ function Write-ReporteValidacion {
 }
 
 try {
-    $clienteId = ''
-    $ambienteId = ''
+    $clienteId = $ClienteId
+    $modulo = $Modulo
+    $ambienteId = $AmbienteId
     $contextId = ''
     if ($ManifiestoPath) {
         $manifiestoEjecucion = Leer-ManifiestoEjecucion -RutaManifiesto $ManifiestoPath
         $XpzPath = [string]$manifiestoEjecucion.xpz
         $ejecucionId = [string]$manifiestoEjecucion.ejecucionId
         $clienteId = [string]$manifiestoEjecucion.clienteId
+        $modulo = [string]$manifiestoEjecucion.modulo
         $ambienteId = [string]$manifiestoEjecucion.ambienteId
         $contextId = [string]$manifiestoEjecucion.contextId
         $DirectorioLogs = [System.IO.Path]::GetFullPath([string]$manifiestoEjecucion.logsDirectory)
@@ -489,6 +496,7 @@ try {
     if ($XpzPath) { $cargarConfiguracionParametros.XpzPath = $XpzPath }
     if ($clienteId) {
         $cargarConfiguracionParametros.ClienteId = $clienteId
+        $cargarConfiguracionParametros.Modulo = $modulo
         $cargarConfiguracionParametros.AmbienteId = $ambienteId
     }
     $configuracion = Cargar-Configuracion @cargarConfiguracionParametros
@@ -541,7 +549,7 @@ try {
 
     $sourceFingerprint = Obtener-Sha256TextoNormalizado -Texto ((@($indiceUnificado.Manifiesto | Sort-Object Orden | ForEach-Object { '{0}|{1}|{2}' -f $_.Orden, $_.RutaRelativa, $_.Sha256 }) -join "`n") + "`n")
     $configurationFingerprint = Obtener-Sha256ArchivoNormalizado -Ruta $cargarConfiguracionParametros.ConfigPath
-    Write-ReporteValidacion -Resultados $resultados -RutaReporte $rutaReporte -StartTime $StartTime -FinEjecucion $finEjecucion -IndiceUnificado $indiceUnificado -EjecucionId $ejecucionId -RutaManifiesto $ManifiestoPath -ContextId $contextId -SourceFingerprint $sourceFingerprint -ConfigurationFingerprint $configurationFingerprint -Scope $Scope
+    Write-ReporteValidacion -Resultados $resultados -RutaReporte $rutaReporte -StartTime $StartTime -FinEjecucion $finEjecucion -IndiceUnificado $indiceUnificado -EjecucionId $ejecucionId -RutaManifiesto $ManifiestoPath -ContextId $contextId -Modulo $modulo -SourceFingerprint $sourceFingerprint -ConfigurationFingerprint $configurationFingerprint -Scope $Scope
 
     $ok = @($resultados | Where-Object { -not $_.esPendiente }).Count
     $pendientes = @($resultados | Where-Object { $_.esPendiente }).Count

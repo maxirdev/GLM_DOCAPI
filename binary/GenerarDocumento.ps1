@@ -164,6 +164,7 @@ try {
     $faseActual = 'configuracion'
     Write-Step 1 'Cargando configuracion...'
     $clienteId = ''
+    $modulo = ''
     $ambienteId = ''
     if ($ManifiestoPath) {
         $manifiestoEjecucion = Leer-ManifiestoEjecucion -RutaManifiesto $ManifiestoPath
@@ -175,6 +176,7 @@ try {
         $DirectorioLogs = [System.IO.Path]::GetFullPath([string]$manifiestoEjecucion.logsDirectory)
         Asegurar-Directorio -Ruta $DirectorioLogs
         $clienteId = [string]$manifiestoEjecucion.clienteId
+        $modulo = [string]$manifiestoEjecucion.modulo
         $ambienteId = [string]$manifiestoEjecucion.ambienteId
         Write-Host ('  Ejecucion: ' + $manifiestoEjecucion.ejecucionId) -ForegroundColor DarkGray
         Write-Host ('  Staging Markdown: ' + $DirectorioSalida) -ForegroundColor DarkGray
@@ -206,6 +208,7 @@ try {
     if ($XpzPath) { $cargarConfiguracionParametros.XpzPath = $XpzPath }
     if ($clienteId) {
         $cargarConfiguracionParametros.ClienteId = $clienteId
+        $cargarConfiguracionParametros.Modulo = $modulo
         $cargarConfiguracionParametros.AmbienteId = $ambienteId
     }
     $configuracion = Cargar-Configuracion @cargarConfiguracionParametros

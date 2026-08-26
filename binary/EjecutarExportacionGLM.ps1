@@ -4,6 +4,7 @@
 param(
     [Parameter(Mandatory = $true)][string]$Repositorio,
     [Parameter(Mandatory = $true)][string]$ClienteId,
+    [Parameter(Mandatory = $true)][ValidateSet('comercial', 'erp')][string]$Modulo,
     [Parameter(Mandatory = $true)][string]$AmbienteId,
     [switch]$ConfirmarExportacionCompleta,
     [ValidateSet('abort', 'continue')][string]$PoliticaPendientes = 'abort'
@@ -50,7 +51,7 @@ try {
         throw 'No existe configuracion.json. Ejecute primero el lanzador para crear el modelo.'
     }
 
-    $contexto = Cargar-Configuracion -ConfigPath $rutaConfiguracion -ClienteId $ClienteId -AmbienteId $AmbienteId
+    $contexto = Cargar-Configuracion -ConfigPath $rutaConfiguracion -ClienteId $ClienteId -Modulo $Modulo -AmbienteId $AmbienteId
     $rutaDirectorioXpz = $contexto.DirectorioXpz
     $rutaDirectorioLogs = $contexto.DirectorioLogs
     Asegurar-Directorio -Ruta $rutaDirectorioLogs
@@ -113,6 +114,7 @@ try {
         -XpzFile $rutaXpzNuevo `
         -LogFile $rutaLogExportacion `
         -GeneXusExportProfile $perfilExportacion `
+        -Modulo $Modulo `
         -TargetName $targetExportacion 2>&1 | Out-Host
     $codigoExportacion = $LASTEXITCODE
     $validacionXpz = Test-XpzValido -Ruta $rutaXpzNuevo

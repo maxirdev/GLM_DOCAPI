@@ -1,4 +1,4 @@
-# Contrato compartido del manifiesto de ejecucion no interactiva (esquema 2).
+# Contrato compartido del manifiesto de ejecucion no interactiva (esquema 3).
 
 $ErrorActionPreference = 'Stop'
 
@@ -16,12 +16,12 @@ function Obtener-NuevoIdentificadorEjecucion {
 function Validar-ManifiestoEjecucion {
     <#
     .SYNOPSIS
-    Valida el manifiesto de esquema 2 y la pertenencia de sus rutas al contexto.
+    Valida el manifiesto de esquema 3 y la pertenencia de sus rutas al contexto.
     .DESCRIPTION
     Comprueba los campos de identidad y rutas contextuales, que contextId sea
-    clienteId/ambienteId y que las rutas de servicios, estado, logs y XPZ deriven
-    del mismo directorio de contexto. Rechaza combinaciones hibridas, como el XPZ
-    de un ambiente con documentos o control de otro.
+    clienteId/modulo/ambienteId y que las rutas de servicios, estado, logs y XPZ
+    deriven del mismo directorio de contexto triple. Rechaza combinaciones
+    hibridas, como el XPZ de un ambiente con documentos o control de otro.
     #>
     [CmdletBinding()]
     param(
@@ -29,7 +29,7 @@ function Validar-ManifiestoEjecucion {
     )
 
     $versionEsquema = [int]$Manifiesto.schemaVersion
-    if ($versionEsquema -ne 2) {
+    if ($versionEsquema -ne 3) {
         throw 'El manifiesto de ejecucion tiene un schemaVersion no soportado.'
     }
     if ([string]::IsNullOrWhiteSpace([string]$Manifiesto.ejecucionId)) {
@@ -40,6 +40,9 @@ function Validar-ManifiestoEjecucion {
     }
     if ([string]::IsNullOrWhiteSpace([string]$Manifiesto.clienteId)) {
         throw 'El manifiesto de ejecucion no contiene clienteId.'
+    }
+    if ([string]::IsNullOrWhiteSpace([string]$Manifiesto.modulo)) {
+        throw 'El manifiesto de ejecucion no contiene modulo.'
     }
     if ([string]::IsNullOrWhiteSpace([string]$Manifiesto.ambienteId)) {
         throw 'El manifiesto de ejecucion no contiene ambienteId.'
@@ -77,9 +80,13 @@ function Validar-ManifiestoEjecucion {
         }
     }
 
-    $contextoEsperado = [string]$Manifiesto.clienteId + '/' + [string]$Manifiesto.ambienteId
+    $moduloManifiesto = ([string]$Manifiesto.modulo).Trim().ToLowerInvariant()
+    if ($moduloManifiesto -notin @('comercial', 'erp')) {
+        throw 'El modulo del manifiesto no es valido. Use comercial o erp.'
+    }
+    $contextoEsperado = [string]$Manifiesto.clienteId + '/' + $moduloManifiesto + '/' + [string]$Manifiesto.ambienteId
     if (-not $comparador.Equals([string]$Manifiesto.contextId, $contextoEsperado)) {
-        throw ("El contextId del manifiesto no coincide con clienteId/ambienteId: " + [string]$Manifiesto.contextId)
+        throw ("El contextId del manifiesto no coincide con clienteId/modulo/ambienteId: " + [string]$Manifiesto.contextId)
     }
 
     $directorioServiciosCompleto = [System.IO.Path]::GetFullPath([string]$Manifiesto.servicesDirectory)
@@ -96,6 +103,22 @@ function Validar-ManifiestoEjecucion {
         -not $comparador.Equals($contextoDesdeServicios, $contextoDesdeLogs) -or
         -not $comparador.Equals($directorioXpzCompleto, $directorioXpzEsperado)) {
         throw 'Las rutas del manifiesto no pertenecen al mismo contexto (documentos, estado, logs o XPZ de otro ambiente).'
+    }
+
+    $directorioContextoInformado = New-Object System.IO.DirectoryInfo($contextoDesdeServicios)
+    $directorioModuloInformado = $directorioContextoInformado.Parent
+    $directorioClienteInformado = if ($directorioModuloInformado) { $directorioModuloInformado.Parent } else { $null }
+    if ($null -eq $directorioModuloInformado -or $null -eq $directorioClienteInformado -or
+        -not $comparador.Equals($directorioContextoInformado.Name, [string]$Manifiesto.ambienteId) -or
+        -not $comparador.Equals($directorioModuloInformado.Name, $moduloManifiesto) -or
+        -not $comparador.Equals($directorioClienteInformado.Name, [string]$Manifiesto.clienteId)) {
+        throw 'Las rutas del manifiesto no corresponden a clienteId/modulo/ambienteId.'
+    }
+
+    $rutaStagingCompleta = [System.IO.Path]::GetFullPath([string]$Manifiesto.staging)
+    $directorioEjecucion = New-Object System.IO.DirectoryInfo($rutaStagingCompleta)
+    if ($null -eq $directorioEjecucion.Parent -or -not $comparador.Equals($directorioEjecucion.Name, 'staging')) {
+        throw 'La ruta staging del manifiesto no corresponde a un directorio de ejecucion valido.'
     }
 
     return $true
@@ -136,7 +159,7 @@ function Escribir-ManifiestoEjecucion {
 function Crear-ManifiestoEjecucion {
     <#
     .SYNOPSIS
-    Crea un manifiesto de ejecucion de esquema 2 con identidad y rutas contextuales.
+    Crea un manifiesto de ejecucion de esquema 3 con identidad y rutas contextuales.
     .DESCRIPTION
      Recibe el contexto canonico (Cargar-Configuracion) y construye el manifiesto
      con cliente, ambiente, config, XPZ, directorios de servicios, estado y logs.
@@ -161,10 +184,11 @@ function Crear-ManifiestoEjecucion {
     $baseUrlValor = [string]$Contexto.BaseUrl
     $serverUrlValor = [string]$Contexto.ServerUrl
     $manifiesto = [ordered]@{
-        schemaVersion = 2
+        schemaVersion = 3
         ejecucionId = $ejecucionId
         contextId = $Contexto.ContextId
         clienteId = $Contexto.ClienteId
+        modulo = $Contexto.Modulo
         ambienteId = $Contexto.AmbienteId
         configPath = [System.IO.Path]::GetFullPath($Contexto.ConfigPath)
         xpz = [System.IO.Path]::GetFullPath($Xpz)

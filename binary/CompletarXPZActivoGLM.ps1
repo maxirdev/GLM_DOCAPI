@@ -133,7 +133,7 @@ try {
     if (-not [System.StringComparer]::OrdinalIgnoreCase.Equals($rutaXpzManifiesto, $rutaXpzActiva)) {
         throw ('El manifiesto corresponde a otro XPZ. Manifiesto: ' + $rutaXpzManifiesto + '. Activo: ' + $rutaXpzActiva + '.')
     }
-    $contexto = Cargar-Configuracion -ConfigPath $rutaConfiguracion -ClienteId ([string]$manifiestoEjecucion.clienteId) -AmbienteId ([string]$manifiestoEjecucion.ambienteId)
+    $contexto = Cargar-Configuracion -ConfigPath $rutaConfiguracion -ClienteId ([string]$manifiestoEjecucion.clienteId) -Modulo ([string]$manifiestoEjecucion.modulo) -AmbienteId ([string]$manifiestoEjecucion.ambienteId)
     $perfilExportacion = [string]$contexto.Herramientas.GeneXusExportProfile
     if ($perfilExportacion -notin @('GX18', 'Evo3')) { $perfilExportacion = 'GX18' }
     $rutaProyectoSelectivo = if ($perfilExportacion -eq 'Evo3') { $rutaProyectoSelectivoEvo3 } else { $rutaProyectoSelectivoGX18 }

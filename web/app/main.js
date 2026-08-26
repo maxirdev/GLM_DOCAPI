@@ -37,6 +37,6 @@ document.documentElement.setAttribute('data-theme', loadedUiPreferences.theme);
 window.panelUiPreferences.current = loadedUiPreferences;
 
 const legacyApplicationScript = document.createElement('script');
-legacyApplicationScript.src = 'app.js?v=20260820-pdf-oneclick-v6';
+legacyApplicationScript.src = 'app.js?v=20260825-context-module-v1';
 legacyApplicationScript.async = false;
 document.body.appendChild(legacyApplicationScript);

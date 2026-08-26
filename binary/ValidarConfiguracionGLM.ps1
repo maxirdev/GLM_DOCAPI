@@ -5,6 +5,7 @@ param(
     [Parameter(Mandatory = $false)][AllowEmptyString()][string]$Repositorio,
     [Parameter(Mandatory = $false)][AllowEmptyString()][string]$ConfigPath,
     [Parameter(Mandatory = $false)][AllowEmptyString()][string]$ClienteId,
+    [Parameter(Mandatory = $false)][AllowEmptyString()][string]$Modulo,
     [Parameter(Mandatory = $false)][AllowEmptyString()][string]$AmbienteId
 )
 
@@ -67,7 +68,7 @@ function Crear-ModeloConfiguracion {
 function Crear-ArbolContextual {
     <#
     .SYNOPSIS
-    Crea el arbol contextual de un ambiente valido bajo clientes/<clienteId>/<ambienteId>/.
+    Crea el arbol contextual de un ambiente valido bajo clientes/<clienteId>/<modulo>/<ambienteId>/.
     .DESCRIPTION
     Solo se ejecuta despues de que el esquema global, las herramientas, el cliente,
     el ambiente y la KB hayan pasado la validacion. Crea exactamente los seis
@@ -145,12 +146,12 @@ if ([string]::IsNullOrWhiteSpace($ClienteId) -or [string]::IsNullOrWhiteSpace($A
 
 $contexto = $null
 try {
-    $contexto = Resolver-ContextoConfiguracion -ConfiguracionRaw $configuracionValidada -ConfigPath $rutaConfiguracion -RaizRepositorio $raizRepositorio -ClienteId $ClienteId -AmbienteId $AmbienteId
+    $contexto = Resolver-ContextoConfiguracion -ConfiguracionRaw $configuracionValidada -ConfigPath $rutaConfiguracion -RaizRepositorio $raizRepositorio -ClienteId $ClienteId -AmbienteId $AmbienteId -Modulo $Modulo
 } catch {
     Escribir-Estado -Estado ERROR -Mensaje ($_.Exception.Message)
     exit 1
 }
-Escribir-Estado -Estado OK -Mensaje ("Contexto: " + $contexto.ContextId + " (" + $contexto.ClienteNombre + " / " + $contexto.AmbienteNombre + ")")
+Escribir-Estado -Estado OK -Mensaje ("Contexto: " + $contexto.ContextId + " (" + $contexto.ClienteNombre + " / " + $contexto.ModuloNombre + " / " + $contexto.AmbienteNombre + ")")
 Escribir-Estado -Estado OK -Mensaje ("Knowledge Base: " + $contexto.KbPath)
 
 try {

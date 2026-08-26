@@ -6,6 +6,7 @@
 param(
     [Parameter(Mandatory = $false)][string]$ConfigPath,
     [Parameter(Mandatory = $false)][string]$ClienteId,
+    [Parameter(Mandatory = $false)][ValidateSet('comercial', 'erp')][string]$Modulo,
     [Parameter(Mandatory = $false)][string]$AmbienteId,
     [Parameter(Mandatory = $false)][string]$XpzPath,
     [Parameter(Mandatory = $false)][string]$ManifiestoPath,
@@ -31,7 +32,7 @@ function Resolver-ContextoOpenApi {
     )
 
     if ($null -ne $Manifiesto) {
-        $contexto = Cargar-Configuracion -ConfigPath $RutaConfiguracion -ClienteId ([string]$Manifiesto.clienteId) -AmbienteId ([string]$Manifiesto.ambienteId)
+        $contexto = Cargar-Configuracion -ConfigPath $RutaConfiguracion -ClienteId ([string]$Manifiesto.clienteId) -Modulo ([string]$Manifiesto.modulo) -AmbienteId ([string]$Manifiesto.ambienteId)
         if ([string]$Manifiesto.contextId -ne [string]$contexto.ContextId) {
             throw 'El manifiesto de OpenAPI no pertenece al contexto configurado.'
         }
@@ -41,10 +42,10 @@ function Resolver-ContextoOpenApi {
         return $contexto
     }
 
-    if ([string]::IsNullOrWhiteSpace($ClienteId) -or [string]::IsNullOrWhiteSpace($AmbienteId)) {
-        throw 'La generacion OpenAPI independiente requiere -ClienteId y -AmbienteId.'
+    if ([string]::IsNullOrWhiteSpace($ClienteId) -or [string]::IsNullOrWhiteSpace($Modulo) -or [string]::IsNullOrWhiteSpace($AmbienteId)) {
+        throw 'La generacion OpenAPI independiente requiere -ClienteId, -Modulo y -AmbienteId.'
     }
-    return Cargar-Configuracion -ConfigPath $RutaConfiguracion -ClienteId $ClienteId -AmbienteId $AmbienteId
+    return Cargar-Configuracion -ConfigPath $RutaConfiguracion -ClienteId $ClienteId -Modulo $Modulo -AmbienteId $AmbienteId
 }
 
 function Obtener-RutaConfiguracionOpenApi {
@@ -415,7 +416,7 @@ function Construir-DocumentoOpenApi {
         tags = @($tags.ToArray())
         paths = [pscustomobject]$paths
         components = [ordered]@{ securitySchemes = [ordered]@{ basicAuth = [ordered]@{ type = 'http'; scheme = 'basic' } }; schemas = [pscustomobject]$Mapeo.Esquemas }
-        'x-glm-context' = [ordered]@{ contextId = [string]$Contexto.ContextId; clienteId = [string]$Contexto.ClienteId; ambienteId = [string]$Contexto.AmbienteId }
+        'x-glm-context' = [ordered]@{ contextId = [string]$Contexto.ContextId; clienteId = [string]$Contexto.ClienteId; modulo = [string]$Contexto.Modulo; ambienteId = [string]$Contexto.AmbienteId }
         'x-glm-source' = [ordered]@{ contextId = [string]$Contexto.ContextId; xpz = [System.IO.Path]::GetFileName($Xpz) }
     }
     $documento.info.version = Obtener-HashSemanticoOpenApi -Documento ([pscustomobject]$documento)
