@@ -1,0 +1,63 @@
+{
+  "rutas": {
+    "clientesRoot": "clientes"
+  },
+  "exportacion": {
+    "onlyModuleAPIGLM": true
+  },
+  "herramientas": {
+    "geneXusProgramDir": "C:/Program Files (x86)/GeneXus/GeneXus18",
+    "msbuildPath": "C:/Windows/Microsoft.NET/Framework/v4.0.30319/MSBuild.exe",
+    "pandocPath": "binary/tools/pandoc.exe",
+    "typstPath": "binary/tools/typst.exe"
+  },
+  "clientes": [
+    {
+      "id": "trunk",
+      "nombre": "Trunk",
+      "packagenames": {
+        "comercial": "glmsuit.comercial.",
+        "erp": "glmsuit.erp."
+      },
+      "serviciosIgnorados": [],
+      "ambientes": [
+        {
+          "id": "testing",
+          "nombre": "TEST Comercial",
+          "modulo": "comercial",
+          "tipo": "test",
+          "kbPath": "C:/KBs/SEGUROS_COMERCIAL_TEST",
+          "host": "https://comercial-test.example.com",
+          "baseUrl": "/comercial-test/rest"
+        },
+        {
+          "id": "produccion",
+          "nombre": "PROD Comercial",
+          "modulo": "comercial",
+          "tipo": "prod",
+          "kbPath": "C:/KBs/SEGUROS_COMERCIAL_PROD",
+          "host": "https://comercial-prod.example.com",
+          "baseUrl": "/comercial-prod/rest"
+        },
+        {
+          "id": "testing",
+          "nombre": "TEST ERP",
+          "modulo": "erp",
+          "tipo": "test",
+          "kbPath": "C:/KBs/SEGUROS_ERP_TEST",
+          "host": "https://erp-test.example.com",
+          "baseUrl": "/erp-test/rest"
+        },
+        {
+          "id": "produccion",
+          "nombre": "PROD ERP",
+          "modulo": "erp",
+          "tipo": "prod",
+          "kbPath": "C:/KBs/SEGUROS_ERP_PROD",
+          "host": "https://erp-prod.example.com",
+          "baseUrl": "/erp-prod/rest"
+        }
+      ]
+    }
+  ]
+}

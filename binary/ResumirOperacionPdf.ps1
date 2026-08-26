@@ -18,7 +18,7 @@ $raizRepositorio = [System.IO.Path]::GetFullPath($Repositorio)
 Inicializar-ConsolaUtf8
 
 $manifiestoEjecucion = Leer-ManifiestoEjecucion -RutaManifiesto $ManifiestoPath
-$contexto = Cargar-Configuracion -ConfigPath ([string]$manifiestoEjecucion.configPath) -ClienteId ([string]$manifiestoEjecucion.clienteId) -AmbienteId ([string]$manifiestoEjecucion.ambienteId)
+$contexto = Cargar-Configuracion -ConfigPath ([string]$manifiestoEjecucion.configPath) -ClienteId ([string]$manifiestoEjecucion.clienteId) -Modulo ([string]$manifiestoEjecucion.modulo) -AmbienteId ([string]$manifiestoEjecucion.ambienteId)
 $rutaDirectorioLogs = $contexto.DirectorioLogs
 $rutaDirectorioServicios = $contexto.DirectorioServicios
 $rutaReporte = Join-Path $rutaDirectorioLogs ([string]$manifiestoEjecucion.ejecucionId + '-actualizacion-review.json')

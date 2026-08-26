@@ -14,6 +14,9 @@ param(
     [string]$XpzFile,
     [string]$LogFile,
     [string]$ManifiestoPath,
+    [string]$ClienteId,
+    [ValidateSet('comercial', 'erp')][string]$Modulo,
+    [string]$AmbienteId,
     [ValidateSet('GX18', 'Evo3')]
     [string]$GeneXusExportProfile
 )
@@ -476,13 +479,15 @@ function Ejecutar-ExportacionSelectiva {
 
 try {
     $ejecucionId = ''
-    $clienteId = ''
-    $ambienteId = ''
+    $clienteId = $ClienteId
+    $modulo = $Modulo
+    $ambienteId = $AmbienteId
     if ($ManifiestoPath) {
         $manifiestoEjecucion = Leer-ManifiestoEjecucion -RutaManifiesto $ManifiestoPath
         $XpzPath = [string]$manifiestoEjecucion.xpz
         $ejecucionId = [string]$manifiestoEjecucion.ejecucionId
         $clienteId = [string]$manifiestoEjecucion.clienteId
+        $modulo = [string]$manifiestoEjecucion.modulo
         $ambienteId = [string]$manifiestoEjecucion.ambienteId
         $DirectorioLogs = [System.IO.Path]::GetFullPath([string]$manifiestoEjecucion.logsDirectory)
         Asegurar-Directorio -Ruta $DirectorioLogs
@@ -491,6 +496,7 @@ try {
     if ($XpzPath) { $parametrosConfiguracion.XpzPath = $XpzPath }
     if ($clienteId) {
         $parametrosConfiguracion.ClienteId = $clienteId
+        $parametrosConfiguracion.Modulo = $modulo
         $parametrosConfiguracion.AmbienteId = $ambienteId
     }
     $configuracion = Cargar-Configuracion @parametrosConfiguracion

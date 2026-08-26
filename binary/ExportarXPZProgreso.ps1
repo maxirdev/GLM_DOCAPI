@@ -6,6 +6,7 @@ param(
     [Parameter(Mandatory = $true)][string]$KbPath,
     [Parameter(Mandatory = $true)][string]$XpzFile,
     [Parameter(Mandatory = $true)][string]$LogFile,
+    [Parameter(Mandatory = $false)][ValidateSet('comercial', 'erp')][string]$Modulo,
     [ValidateSet('ExportarAPIGLM', 'ExportarTodaLaKB')]
     [string]$TargetName = 'ExportarAPIGLM',
     [ValidateSet('GX18', 'Evo3')]

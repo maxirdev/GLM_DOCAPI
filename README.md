@@ -7,12 +7,12 @@ La única fuente de evidencia es el XPZ del ambiente activo. No se completan dat
 ## Estado actual
 
 - Pipeline PowerShell 5.1 operativo, sin build ni dependencias de Node.js o Pester.
-- Configuración central multicliente y multiambiente implementada (SPEC 19).
+- Configuración central multicliente, modular y multiambiente implementada (SPEC 19 y SPEC 26).
 - Exportación de `Module:APIGLM` o de toda la KB mediante GeneXus y MSBuild.
 - Validación y completitud automática mediante XPZ principal y complementos numerados.
 - Descubrimiento contextual de servicios HTTP y publicación versionada de `endpoints.json`/`endpoints.md` para el panel.
 - Generación de Markdown y PDF con publicación transaccional por servicio.
-- Actualización incremental con control de versiones esquema 2, historial, fingerprints, dependencias y lock por ambiente.
+- Actualización incremental con control de versiones esquema 2, historial, fingerprints, dependencias y lock por contexto triple.
 - Diagnósticos estructurados y reviews por ejecución.
 - Panel web local unificado, sin frameworks ni dependencias externas, para operar el pipeline y consultar endpoints, documentos, reportes y logs.
 - El panel usa navegación `Dashboard`, `XPZ`, `Exportar`, `Endpoints`, `Documentación`, `Logs` y `Configuración`; Documentación unifica la consulta por endpoint, estado, versión y PDF.
@@ -47,7 +47,7 @@ El repositorio auxiliar `GeneXus-XPZ-Skills-main/` es opcional. Su catálogo se 
 .\IniciarPanelWeb.cmd
 ```
 
-7. Usar la consola o el panel para validar, exportar, regenerar documentación y consultar artefactos del contexto activo.
+7. Usar el panel web como entrada modular vigente para validar, exportar, regenerar documentación y consultar artefactos del contexto activo. La consola interactiva anterior queda deprecada para nuevas operaciones modulares.
 
 ### Panel web
 
@@ -89,12 +89,16 @@ Los scripts directos no pausan para solicitar confirmaciones; el lanzador intera
     {
       "id": "trunk",
       "nombre": "Trunk",
-      "packagename": "glmsuit.comercial.",
+      "packagenames": {
+        "comercial": "glmsuit.comercial."
+      },
       "serviciosIgnorados": [],
       "ambientes": [
         {
           "id": "testing",
           "nombre": "Testing",
+          "modulo": "comercial",
+          "tipo": "test",
           "kbPath": "C:/KBs/SEGUROS_COMERCIAL_TRUNK"
         }
       ]
@@ -110,17 +114,17 @@ Reglas del esquema:
 - Los IDs son únicos sin distinguir mayúsculas dentro de su nivel.
 - `kbPath` es obligatorio, explícito por ambiente y se resuelve contra la raíz cuando es relativo. Nunca se deduce del nombre o del ID.
 - Dos ambientes no pueden resolver al mismo `kbPath`.
-- `packagename` y `serviciosIgnorados` pertenecen al cliente y se comparten entre sus ambientes.
-- `packagename` define el package publicado; no se confirma desde el XPZ.
+- `modulo` es obligatorio en el formato canónico y solo admite `comercial` o `erp`.
+- `packagenames.<modulo>` es obligatorio para cada módulo configurado y define el package publicado; no se confirma desde el XPZ.
 - `serviciosIgnorados` contiene FQN del inventario que deben quedar en estado `OMITIDO`, sin generar documento ni error.
 - Agregar un cliente o ambiente válido requiere editar solamente `configuracion.json`.
 
 ## Contextos y artefactos
 
-Cada ejecución activa un contexto `<clienteId>/<ambienteId>`. Todo lo mutable queda aislado en:
+Cada ejecución activa un contexto `<clienteId>/<modulo>/<ambienteId>`. Todo lo mutable queda aislado en:
 
 ```text
-clientes/<clienteId>/<ambienteId>/
+clientes/<clienteId>/<modulo>/<ambienteId>/
 ├── documentacionServicios/    # Markdown y PDF publicados
 │   └── Endpoints/              # generaciones de endpoints y current.json
 ├── estado/                    # control, historial y lock
@@ -135,7 +139,7 @@ Las carpetas globales heredadas `xpz/`, `estado/`, `documentacionServicios/` y `
 
 El XPZ no se persiste en la configuración. La sesión permite seleccionar explícitamente un XPZ principal del ambiente; los complementos con sufijo `_N.xpz` se descubren automáticamente. Una exportación nueva se guarda en el ambiente activo y queda disponible como principal más reciente. Cambiar de contexto reinicia todas las rutas y repite el preflight.
 
-El manifiesto de ejecución usa `schemaVersion = 2`, transporta `contextId` y las rutas canónicas del contexto, y rechaza combinaciones híbridas, por ejemplo un XPZ de un ambiente con documentos o control de otro. El inventario técnico, cuando un proceso lo necesita, vive únicamente en el staging de esa ejecución y se elimina junto con el manifiesto.
+El manifiesto de ejecución usa `schemaVersion = 3`, transporta `clienteId`, `modulo`, `ambienteId`, `contextId` y las rutas canónicas del contexto, y rechaza manifiestos esquema 2 o combinaciones híbridas. El inventario técnico, cuando un proceso lo necesita, vive únicamente en el staging de esa ejecución y se elimina junto con el manifiesto.
 
 ## Flujo operativo
 

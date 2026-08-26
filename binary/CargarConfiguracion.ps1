@@ -40,6 +40,113 @@ function Clasificar-TipoAmbiente {
     return $null
 }
 
+function Obtener-PropiedadConfiguracionExacta {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]$Objeto,
+        [Parameter(Mandatory = $true)][string]$Nombre
+    )
+    if ($null -eq $Objeto) { return $null }
+    return @($Objeto.PSObject.Properties | Where-Object { $_.Name -ceq $Nombre }) | Select-Object -First 1
+}
+
+function Test-TienePropiedadConfiguracionExacta {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]$Objeto,
+        [Parameter(Mandatory = $true)][string]$Nombre
+    )
+    if ($null -eq $Objeto) { return $false }
+    return @($Objeto.PSObject.Properties | Where-Object { $_.Name -ceq $Nombre }).Count -gt 0
+}
+
+function Obtener-ModuloAmbienteConfigurado {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]$Ambiente,
+        [Parameter(Mandatory = $true)][string]$Contexto
+    )
+    $propiedadModulo = Obtener-PropiedadConfiguracionExacta -Objeto $Ambiente -Nombre 'modulo'
+    if ($null -eq $propiedadModulo) { return 'comercial' }
+    $modulo = ([string]$propiedadModulo.Value).Trim().ToLowerInvariant()
+    if ([string]::IsNullOrWhiteSpace($modulo) -or $modulo -notin @('comercial', 'erp')) {
+        throw ($Contexto + " define un modulo invalido. Use comercial o erp.")
+    }
+    return $modulo
+}
+
+function Obtener-NombreModuloCanonico {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][ValidateSet('comercial', 'erp')][string]$Modulo
+    )
+    if ($Modulo -eq 'erp') { return 'ERP' }
+    return 'Comercial'
+}
+
+function Obtener-BaseUrlAmbienteConfigurado {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]$Ambiente,
+        [Parameter(Mandatory = $true)][string]$Contexto
+    )
+    $propiedadBaseUrl = Obtener-PropiedadConfiguracionExacta -Objeto $Ambiente -Nombre 'baseUrl'
+    $propiedadBaseUrlHeredada = Obtener-PropiedadConfiguracionExacta -Objeto $Ambiente -Nombre 'baseurl'
+    $baseUrl = if ($null -ne $propiedadBaseUrl) { ([string]$propiedadBaseUrl.Value).Trim() } else { '' }
+    $baseUrlHeredada = if ($null -ne $propiedadBaseUrlHeredada) { ([string]$propiedadBaseUrlHeredada.Value).Trim() } else { '' }
+    if ($null -ne $propiedadBaseUrl -and $null -ne $propiedadBaseUrlHeredada -and -not [string]::IsNullOrWhiteSpace($baseUrl) -and -not [string]::IsNullOrWhiteSpace($baseUrlHeredada) -and $baseUrl -ne $baseUrlHeredada) {
+        throw ($Contexto + ' define valores contradictorios para baseUrl y baseurl.')
+    }
+    if ($null -ne $propiedadBaseUrl) { return $baseUrl }
+    if ($null -ne $propiedadBaseUrlHeredada) { return $baseUrlHeredada }
+    return $null
+}
+
+function Obtener-PackageNamesCliente {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]$Cliente,
+        [Parameter(Mandatory = $true)][string]$ClienteId
+    )
+    $packageNames = @{}
+    $propiedadPackageNames = Obtener-PropiedadConfiguracionExacta -Objeto $Cliente -Nombre 'packagenames'
+    if ($null -ne $propiedadPackageNames) {
+        if ($null -eq $propiedadPackageNames.Value -or $propiedadPackageNames.Value -is [System.Array]) {
+            throw ("El cliente '$ClienteId' define packagenames con un formato invalido.")
+        }
+        $modulosVistos = @{}
+        foreach ($propiedadModulo in @($propiedadPackageNames.Value.PSObject.Properties)) {
+            $modulo = ([string]$propiedadModulo.Name).Trim().ToLowerInvariant()
+            if ($modulo -notin @('comercial', 'erp')) {
+                throw ("El cliente '$ClienteId' define un modulo invalido en packagenames: '$modulo'.")
+            }
+            if ($modulosVistos.ContainsKey($modulo)) {
+                throw ("El cliente '$ClienteId' define packagenames duplicados para el modulo '$modulo'.")
+            }
+            $modulosVistos[$modulo] = $true
+            $packageName = ([string]$propiedadModulo.Value).Trim()
+            if ([string]::IsNullOrWhiteSpace($packageName)) {
+                throw ("El package name del modulo '$modulo' del cliente '$ClienteId' no puede estar vacio.")
+            }
+            $packageNames[$modulo] = $packageName
+        }
+    }
+
+    $propiedadPackageNameHeredado = Obtener-PropiedadConfiguracionExacta -Objeto $Cliente -Nombre 'packagename'
+    if ($null -ne $propiedadPackageNameHeredado) {
+        $packageNameHeredado = ([string]$propiedadPackageNameHeredado.Value).Trim()
+        if (-not [string]::IsNullOrWhiteSpace($packageNameHeredado)) {
+            if ($packageNames.ContainsKey('comercial') -and $packageNames['comercial'] -ne $packageNameHeredado) {
+                throw ("El cliente '$ClienteId' define valores contradictorios para packagename y packagenames.comercial.")
+            }
+            if (-not $packageNames.ContainsKey('comercial')) {
+                $packageNames['comercial'] = $packageNameHeredado
+            }
+        }
+    }
+    return $packageNames
+}
+
 function Validar-HostAmbiente {
     [CmdletBinding()]
     param(
@@ -131,7 +238,7 @@ function Validar-ConfiguracionMulticliente {
         }
     }
     $perfilExportacion = 'GX18'
-    $propiedadPerfil = $ConfiguracionRaw.herramientas.PSObject.Properties['geneXusExportProfile']
+    $propiedadPerfil = Obtener-PropiedadConfiguracionExacta -Objeto $ConfiguracionRaw.herramientas -Nombre 'geneXusExportProfile'
     if ($null -ne $propiedadPerfil -and -not [string]::IsNullOrWhiteSpace([string]$propiedadPerfil.Value)) {
         $perfilExportacion = [string]$propiedadPerfil.Value
     }
@@ -152,64 +259,75 @@ function Validar-ConfiguracionMulticliente {
         if ([string]::IsNullOrWhiteSpace([string]$cliente.nombre)) {
             throw ("El cliente '" + $clienteId + "' no define su nombre visible.")
         }
-        if ([string]::IsNullOrWhiteSpace([string]$cliente.packagename)) {
-            throw ("El cliente '" + $clienteId + "' no define packagename.")
-        }
         $claveCliente = $clienteId.ToLowerInvariant()
         if ($clientesVistos.ContainsKey($claveCliente)) {
             throw ("El id de cliente '" + $clienteId + "' esta duplicado (sin distinguir mayusculas de minusculas).")
         }
         $clientesVistos[$claveCliente] = $true
 
+        $packageNames = Obtener-PackageNamesCliente -Cliente $cliente -ClienteId $clienteId
         if ($null -eq $cliente.ambientes -or @($cliente.ambientes).Count -eq 0) {
             throw ("El cliente '" + $clienteId + "' no define ambientes.")
         }
-        if (@($cliente.ambientes).Count -gt 2) {
-            throw ("El cliente '" + $clienteId + "' no puede tener mas de dos ambientes (un TEST y un PROD).")
+        if (@($cliente.ambientes).Count -gt 4) {
+            throw ("El cliente '" + $clienteId + "' no puede tener mas de cuatro ambientes (Comercial/ERP TEST/PROD).")
         }
-        $ambientesVistos = @{}
-        $tiposAmbiente = @{}
+        $ambientesVistosPorModulo = @{}
+        $combinacionesVistas = @{}
         foreach ($ambiente in @($cliente.ambientes)) {
             $ambienteId = [string]$ambiente.id
+            $contextoAmbiente = "El ambiente '$ambienteId' del cliente '$clienteId'"
             if (-not (Test-NombreSlugValido -Valor $ambienteId)) {
-                throw ("El id de ambiente '" + $ambienteId + "' del cliente '" + $clienteId + "' no es valido. Use minusculas, digitos y guiones con el formato ^[a-z0-9][a-z0-9-]*$.")
+                throw ("$contextoAmbiente no es valido. Use minusculas, digitos y guiones con el formato ^[a-z0-9][a-z0-9-]*$.")
             }
             if ([string]::IsNullOrWhiteSpace([string]$ambiente.nombre)) {
-                throw ("El ambiente '" + $ambienteId + "' del cliente '" + $clienteId + "' no define su nombre visible.")
+                throw ("$contextoAmbiente no define su nombre visible.")
             }
             if ([string]::IsNullOrWhiteSpace([string]$ambiente.kbPath)) {
-                throw ("El ambiente '" + $ambienteId + "' del cliente '" + $clienteId + "' no define kbPath.")
+                throw ("$contextoAmbiente no define kbPath.")
             }
-            if ($ambiente.PSObject.Properties['host'] -and -not [string]::IsNullOrWhiteSpace([string]$ambiente.host)) {
-                Validar-HostAmbiente -HostUrl ([string]$ambiente.host) -Contexto ("El host del ambiente '" + $ambienteId + "'") | Out-Null
+            $moduloAmbiente = Obtener-ModuloAmbienteConfigurado -Ambiente $ambiente -Contexto $contextoAmbiente
+            $tipoAmbiente = Clasificar-TipoAmbiente -Tipo ([string]$ambiente.tipo)
+            if ($null -eq $tipoAmbiente) {
+                throw ("$contextoAmbiente no define un tipo valido (test o prod).")
             }
-            if ($ambiente.PSObject.Properties['baseUrl'] -and -not [string]::IsNullOrWhiteSpace([string]$ambiente.baseUrl)) {
-                Validar-BaseUrlAmbiente -BaseUrl ([string]$ambiente.baseUrl) -Contexto ("El baseUrl del ambiente '" + $ambienteId + "'") | Out-Null
+            if (-not $packageNames.ContainsKey($moduloAmbiente) -or [string]::IsNullOrWhiteSpace([string]$packageNames[$moduloAmbiente])) {
+                throw ("El cliente '$clienteId' tiene ambientes del modulo '$moduloAmbiente' pero no define un package name para ese modulo.")
+            }
+
+            $propiedadHost = Obtener-PropiedadConfiguracionExacta -Objeto $ambiente -Nombre 'host'
+            if ($null -ne $propiedadHost -and -not [string]::IsNullOrWhiteSpace([string]$propiedadHost.Value)) {
+                Validar-HostAmbiente -HostUrl ([string]$propiedadHost.Value) -Contexto ("El host del ambiente '$ambienteId'") | Out-Null
+            }
+            $baseUrlAmbiente = Obtener-BaseUrlAmbienteConfigurado -Ambiente $ambiente -Contexto $contextoAmbiente
+            if (-not [string]::IsNullOrWhiteSpace($baseUrlAmbiente)) {
+                Validar-BaseUrlAmbiente -BaseUrl $baseUrlAmbiente -Contexto ("El baseUrl del ambiente '$ambienteId'") | Out-Null
+            }
+
+            if (-not $ambientesVistosPorModulo.ContainsKey($moduloAmbiente)) {
+                $ambientesVistosPorModulo[$moduloAmbiente] = @{}
             }
             $claveAmbiente = $ambienteId.ToLowerInvariant()
-            if ($ambientesVistos.ContainsKey($claveAmbiente)) {
-                throw ("El id de ambiente '" + $ambienteId + "' del cliente '" + $clienteId + "' esta duplicado (sin distinguir mayusculas de minusculas).")
+            if ($ambientesVistosPorModulo[$moduloAmbiente].ContainsKey($claveAmbiente)) {
+                throw ("El id de ambiente '$ambienteId' del modulo '$moduloAmbiente' del cliente '$clienteId' esta duplicado (sin distinguir mayusculas de minusculas).")
             }
-            $ambientesVistos[$claveAmbiente] = $true
+            $ambientesVistosPorModulo[$moduloAmbiente][$claveAmbiente] = $true
+
+            $claveCombinacion = $moduloAmbiente + '|' + $tipoAmbiente
+            if ($combinacionesVistas.ContainsKey($claveCombinacion)) {
+                throw ("El cliente '$clienteId' no puede tener mas de un ambiente para la combinacion $moduloAmbiente/$tipoAmbiente.")
+            }
+            $combinacionesVistas[$claveCombinacion] = $true
 
             $kbPathResuelto = Resolver-RutaRepositorio -Ruta ([string]$ambiente.kbPath) -Raiz $RaizRepositorio
             if ($ValidarContenidoKnowledgeBase) {
-                Validar-RutaKnowledgeBase -Ruta $kbPathResuelto -Contexto ("La Knowledge Base del ambiente '" + $ambienteId + "' del cliente '" + $clienteId + "'") | Out-Null
+                Validar-RutaKnowledgeBase -Ruta $kbPathResuelto -Contexto ("La Knowledge Base del ambiente '$ambienteId' del cliente '$clienteId'") | Out-Null
             }
             $claveKb = $kbPathResuelto.ToLowerInvariant()
             if ($kbPathsVistos.ContainsKey($claveKb)) {
                 throw ("Dos ambientes apuntan a la misma ruta de Knowledge Base: " + $kbPathResuelto)
             }
             $kbPathsVistos[$claveKb] = $true
-
-            $tipoAmbiente = Clasificar-TipoAmbiente -Tipo ([string]$ambiente.tipo)
-            if ($null -eq $tipoAmbiente) {
-                throw ("El ambiente '" + $ambienteId + "' del cliente '" + $clienteId + "' no define un tipo valido (test o prod).")
-            }
-            if ($tiposAmbiente.ContainsKey($tipoAmbiente)) {
-                throw ("El cliente '" + $clienteId + "' no puede tener mas de un ambiente de tipo " + $tipoAmbiente + ".")
-            }
-            $tiposAmbiente[$tipoAmbiente] = $true
         }
     }
     return $ConfiguracionRaw
@@ -242,13 +360,15 @@ function Obtener-AmbientesConfigurados {
     .SYNOPSIS
     Devuelve los ambientes de un cliente para el selector interactivo.
     .DESCRIPTION
-    Devuelve un array de objetos con Id y Nombre visible para el cliente indicado.
-    Si el cliente no existe, devuelve una coleccion vacia.
+    Devuelve ambientes con modulo, tipo e identidad logica. Si se indica modulo,
+    filtra la coleccion plana del cliente por ese modulo. Si el cliente no existe,
+    devuelve una coleccion vacia.
     #>
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)]$ConfiguracionRaw,
-        [Parameter(Mandatory = $true)][string]$ClienteId
+        [Parameter(Mandatory = $true)][string]$ClienteId,
+        [Parameter(Mandatory = $false)][string]$Modulo
     )
     $cliente = @($ConfiguracionRaw.clientes | Where-Object { [string]$_.id -ieq $ClienteId }) | Select-Object -First 1
     if ($null -eq $cliente) {
@@ -256,9 +376,38 @@ function Obtener-AmbientesConfigurados {
     }
     $resultado = New-Object System.Collections.Generic.List[object]
     foreach ($ambiente in @($cliente.ambientes)) {
+        $moduloAmbiente = Obtener-ModuloAmbienteConfigurado -Ambiente $ambiente -Contexto ("El ambiente '" + [string]$ambiente.id + "' del cliente '" + $ClienteId + "'")
+        if (-not [string]::IsNullOrWhiteSpace($Modulo) -and $moduloAmbiente -ine $Modulo) { continue }
+        $tipoAmbiente = Clasificar-TipoAmbiente -Tipo ([string]$ambiente.tipo)
         $resultado.Add([pscustomobject]@{
             Id = [string]$ambiente.id
             Nombre = [string]$ambiente.nombre
+            Modulo = $moduloAmbiente
+            ModuloNombre = Obtener-NombreModuloCanonico -Modulo $moduloAmbiente
+            Tipo = $tipoAmbiente
+            TipoNombre = Obtener-NombreAmbienteCanonico -Tipo $tipoAmbiente
+        })
+    }
+    return $resultado.ToArray()
+}
+
+function Obtener-ModulosConfigurados {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]$ConfiguracionRaw,
+        [Parameter(Mandatory = $true)][string]$ClienteId
+    )
+    $cliente = @($ConfiguracionRaw.clientes | Where-Object { [string]$_.id -ieq $ClienteId }) | Select-Object -First 1
+    if ($null -eq $cliente) { return @() }
+    $modulosVistos = @{}
+    $resultado = New-Object System.Collections.Generic.List[object]
+    foreach ($ambiente in @($cliente.ambientes)) {
+        $moduloAmbiente = Obtener-ModuloAmbienteConfigurado -Ambiente $ambiente -Contexto ("El ambiente '" + [string]$ambiente.id + "' del cliente '" + $ClienteId + "'")
+        if ($modulosVistos.ContainsKey($moduloAmbiente)) { continue }
+        $modulosVistos[$moduloAmbiente] = $true
+        $resultado.Add([pscustomobject]@{
+            Id = $moduloAmbiente
+            Nombre = Obtener-NombreModuloCanonico -Modulo $moduloAmbiente
         })
     }
     return $resultado.ToArray()
@@ -280,7 +429,8 @@ function Resolver-ContextoConfiguracion {
         [Parameter(Mandatory = $true)][string]$ConfigPath,
         [Parameter(Mandatory = $true)][string]$RaizRepositorio,
         [Parameter(Mandatory = $true)][string]$ClienteId,
-        [Parameter(Mandatory = $true)][string]$AmbienteId
+        [Parameter(Mandatory = $true)][string]$AmbienteId,
+        [Parameter(Mandatory = $false)][string]$Modulo
     )
 
     Validar-ConfiguracionMulticliente -ConfiguracionRaw $ConfiguracionRaw -RaizRepositorio $RaizRepositorio -ConfigPath $ConfigPath | Out-Null
@@ -290,14 +440,30 @@ function Resolver-ContextoConfiguracion {
         $clientesDisponibles = ((@($ConfiguracionRaw.clientes) | ForEach-Object { [string]$_.id }) -join ', ')
         throw ("El cliente '" + $ClienteId + "' no existe en la configuracion. Clientes configurados: " + $clientesDisponibles + ".")
     }
-    $ambiente = @($cliente.ambientes | Where-Object { [string]$_.id -ieq $AmbienteId }) | Select-Object -First 1
-    if ($null -eq $ambiente) {
+    $ambientesCoincidentes = @($cliente.ambientes | Where-Object { [string]$_.id -ieq $AmbienteId })
+    if (-not [string]::IsNullOrWhiteSpace($Modulo)) {
+        $moduloSolicitado = $Modulo.Trim().ToLowerInvariant()
+        if ($moduloSolicitado -notin @('comercial', 'erp')) {
+            throw ("El modulo '$Modulo' no es valido. Use comercial o erp.")
+        }
+        $ambientesCoincidentes = @($ambientesCoincidentes | Where-Object {
+            (Obtener-ModuloAmbienteConfigurado -Ambiente $_ -Contexto ("El ambiente '" + [string]$_.id + "' del cliente '" + $ClienteId + "'")) -eq $moduloSolicitado
+        })
+    }
+    if ($ambientesCoincidentes.Count -eq 0) {
         $ambientesDisponibles = ((@($cliente.ambientes) | ForEach-Object { [string]$_.id }) -join ', ')
         throw ("El ambiente '" + $AmbienteId + "' no existe para el cliente '" + $ClienteId + "'. Ambientes configurados: " + $ambientesDisponibles + ".")
     }
+    if ($ambientesCoincidentes.Count -gt 1) {
+        throw ("El ambiente '" + $AmbienteId + "' del cliente '" + $ClienteId + "' es ambiguo. Requiere -Modulo para resolver la identidad triple.")
+    }
+    $ambiente = $ambientesCoincidentes[0]
+    $clienteIdCanonico = [string]$cliente.id
+    $moduloCanonico = Obtener-ModuloAmbienteConfigurado -Ambiente $ambiente -Contexto ("El ambiente '" + [string]$ambiente.id + "' del cliente '" + $clienteIdCanonico + "'")
+    $ambienteIdCanonico = [string]$ambiente.id
 
     $clientesRoot = Resolver-RutaRepositorio -Ruta ([string]$ConfiguracionRaw.rutas.clientesRoot) -Raiz $RaizRepositorio
-    $directorioContexto = [System.IO.Path]::GetFullPath((Join-Path (Join-Path $clientesRoot $ClienteId) $AmbienteId))
+    $directorioContexto = [System.IO.Path]::GetFullPath((Join-Path (Join-Path (Join-Path $clientesRoot $clienteIdCanonico) $moduloCanonico) $ambienteIdCanonico))
     $directorioServicios = [System.IO.Path]::GetFullPath((Join-Path $directorioContexto 'documentacionServicios'))
     $directorioEstado = [System.IO.Path]::GetFullPath((Join-Path $directorioContexto 'estado'))
     $directorioXpz = [System.IO.Path]::GetFullPath((Join-Path $directorioContexto 'xpz'))
@@ -311,7 +477,7 @@ function Resolver-ContextoConfiguracion {
     }
 
     $perfilExportacion = 'GX18'
-    $propiedadPerfil = $ConfiguracionRaw.herramientas.PSObject.Properties['geneXusExportProfile']
+    $propiedadPerfil = Obtener-PropiedadConfiguracionExacta -Objeto $ConfiguracionRaw.herramientas -Nombre 'geneXusExportProfile'
     if ($null -ne $propiedadPerfil -and -not [string]::IsNullOrWhiteSpace([string]$propiedadPerfil.Value)) {
         $perfilExportacion = [string]$propiedadPerfil.Value
     }
@@ -324,30 +490,36 @@ function Resolver-ContextoConfiguracion {
         TypstPath = [string]$ConfiguracionRaw.herramientas.typstPath
     }
 
-    $hostAmbiente = if ($ambiente.PSObject.Properties['host'] -and -not [string]::IsNullOrWhiteSpace([string]$ambiente.host)) {
-        Validar-HostAmbiente -HostUrl ([string]$ambiente.host) -Contexto ("El host del ambiente '" + $AmbienteId + "'")
+    $propiedadHost = Obtener-PropiedadConfiguracionExacta -Objeto $ambiente -Nombre 'host'
+    $hostAmbiente = if ($null -ne $propiedadHost -and -not [string]::IsNullOrWhiteSpace([string]$propiedadHost.Value)) {
+        Validar-HostAmbiente -HostUrl ([string]$propiedadHost.Value) -Contexto ("El host del ambiente '" + $ambienteIdCanonico + "'")
     } else { $null }
-    $baseUrl = if ($ambiente.PSObject.Properties['baseUrl'] -and -not [string]::IsNullOrWhiteSpace([string]$ambiente.baseUrl)) {
-        Validar-BaseUrlAmbiente -BaseUrl ([string]$ambiente.baseUrl) -Contexto ("El baseUrl del ambiente '" + $AmbienteId + "'")
+    $baseUrlDeclarado = Obtener-BaseUrlAmbienteConfigurado -Ambiente $ambiente -Contexto ("El ambiente '" + $ambienteIdCanonico + "' del cliente '" + $clienteIdCanonico + "'")
+    $baseUrl = if (-not [string]::IsNullOrWhiteSpace($baseUrlDeclarado)) {
+        Validar-BaseUrlAmbiente -BaseUrl $baseUrlDeclarado -Contexto ("El baseUrl del ambiente '" + $ambienteIdCanonico + "'")
     } else { $null }
     $serverUrl = if ($hostAmbiente -and $baseUrl) { $hostAmbiente.TrimEnd('/') + '/' + $baseUrl.TrimStart('/').TrimStart('/') } else { $null }
+    $packageNames = Obtener-PackageNamesCliente -Cliente $cliente -ClienteId $clienteIdCanonico
 
     $contexto = [pscustomobject]@{
         ConfigPath = $ConfigPath
         RaizRepositorio = $RaizRepositorio
         ClientesRoot = $clientesRoot
-        ClienteId = $ClienteId
+        ClienteId = $clienteIdCanonico
         ClienteNombre = [string]$cliente.nombre
-        AmbienteId = $AmbienteId
+        Modulo = $moduloCanonico
+        ModuloNombre = Obtener-NombreModuloCanonico -Modulo $moduloCanonico
+        AmbienteId = $ambienteIdCanonico
         AmbienteNombre = Obtener-NombreAmbienteCanonico -Tipo (Clasificar-TipoAmbiente -Tipo ([string]$ambiente.tipo))
         AmbienteTipo = Clasificar-TipoAmbiente -Tipo ([string]$ambiente.tipo)
-        ContextId = $ClienteId + '/' + $AmbienteId
+        ContextId = $clienteIdCanonico + '/' + $moduloCanonico + '/' + $ambienteIdCanonico
         DirectorioContexto = $directorioContexto
         KbPath = Resolver-RutaRepositorio -Ruta ([string]$ambiente.kbPath) -Raiz $RaizRepositorio
         Host = $hostAmbiente
         BaseUrl = $baseUrl
         ServerUrl = $serverUrl
-        PackageName = [string]$cliente.packagename
+        PackageName = [string]$packageNames[$moduloCanonico]
+        PackageNames = $packageNames
         ServiciosIgnorados = $serviciosIgnorados
         DirectorioXpz = $directorioXpz
         DirectorioServicios = $directorioServicios
@@ -369,15 +541,16 @@ function Cargar-Configuracion {
     Carga configuracion.json y resuelve el contexto de cliente y ambiente.
     .DESCRIPTION
     Con el esquema multicliente (propiedad clientes), valida el esquema global y
-    construye el contexto canonico del cliente y ambiente seleccionados. Con el
-    esquema anterior (propiedad xpz) conserva temporalmente el comportamiento
-    historico: resuelve el XPZ y devuelve el objeto plano, para no interrumpir
-    los consumidores mientras se migra la seleccion de contexto.
+    construye el contexto canonico de cliente, modulo y ambiente seleccionados.
+    Una llamada sin modulo solo se acepta cuando el id de ambiente es inequivoco.
+    Con el esquema anterior (propiedad xpz) conserva temporalmente el comportamiento
+    historico para los consumidores de la consola.
     #>
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $false)][string]$ConfigPath,
         [Parameter(Mandatory = $false)][string]$ClienteId,
+        [Parameter(Mandatory = $false)][string]$Modulo,
         [Parameter(Mandatory = $false)][string]$AmbienteId,
         [Parameter(Mandatory = $false)][string]$XpzPath,
         [Parameter(Mandatory = $false)][string]$RaizRepositorio
@@ -405,7 +578,7 @@ function Cargar-Configuracion {
         if ([string]::IsNullOrWhiteSpace($ClienteId) -or [string]::IsNullOrWhiteSpace($AmbienteId)) {
             throw 'La configuracion multicliente requiere -ClienteId y -AmbienteId para resolver el contexto.'
         }
-        return Resolver-ContextoConfiguracion -ConfiguracionRaw $configuracionRaw -ConfigPath $ConfigPath -RaizRepositorio $raizRepositorio -ClienteId $ClienteId -AmbienteId $AmbienteId
+        return Resolver-ContextoConfiguracion -ConfiguracionRaw $configuracionRaw -ConfigPath $ConfigPath -RaizRepositorio $raizRepositorio -ClienteId $ClienteId -AmbienteId $AmbienteId -Modulo $Modulo
     }
 
     if ($XpzPath) {

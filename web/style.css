@@ -388,6 +388,8 @@ body[data-job="on"] .job-indicator { display: inline-flex; }
 }
 .tag-testing { background: var(--brand-weak); color: var(--brand); border-color: var(--brand); }
 .tag-produccion { background: var(--ok-bg); color: var(--ok-fg); border-color: var(--ok-bd); }
+.tag-comercial { background: var(--brand-weak); color: var(--brand); border-color: var(--brand); }
+.tag-erp { background: var(--processed-bg); color: var(--processed-fg); border-color: var(--processed-bd); }
 .tag-selected { background: var(--ok-bg); color: var(--ok-fg); border-color: var(--ok-bd); }
 .tag-recent { background: var(--brand-weak); color: var(--brand); border-color: var(--brand); }
 .tag-processed { background: var(--processed-bg); color: var(--processed-fg); border-color: var(--processed-bd); }
@@ -630,7 +632,10 @@ button .label-busy { display: none; }
 
 /* ============ CONFIGURACIÓN ============ */
 .config-client { background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 10px; }
-.configuration-environments { display: grid; gap: 5px; margin: 8px 0 0 18px; }
+.config-client-heading > span:first-child, .config-module-heading > span:first-child { display: grid; gap: 2px; min-width: 0; }
+.config-module { display: grid; gap: 5px; margin: 8px 0 0 18px; }
+.config-module-heading { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; }
+.configuration-environments { display: grid; gap: 5px; margin-left: 14px; }
 .config-client-heading { background: var(--surface); }
 .config-environment { background: var(--surface); }
 .config-row { display: flex; justify-content: space-between; gap: 10px; align-items: center; }
@@ -644,6 +649,8 @@ button .label-busy { display: none; }
 .config-icon svg { width: 15px; height: 15px; }
 .config-env-name { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
 .config-env-name small { flex-basis: 100%; }
+.config-tags { display: inline-flex; flex-wrap: wrap; gap: 5px; }
+.configuration-module-filter { max-width: 180px; }
 
 /* ============ TABLA (Endpoints) ============ */
 .table-wrap { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); overflow-x: auto; }
@@ -734,10 +741,10 @@ code { color: var(--brand); font-size: 12px; overflow-wrap: anywhere; }
 .form-grid label { color: var(--text-muted); display: grid; font-size: 12px; font-weight: 600; gap: 5px; }
 .form-grid fieldset { border: 1px solid var(--border); border-radius: var(--radius-sm); display: grid; gap: 13px; margin: 0; padding: 13px; }
 .form-grid legend { color: var(--text); font-size: 12px; font-weight: 700; padding: 0 5px; }
-.form-grid #configuration-tipo-field, .form-grid #configuration-export-profile-field { align-items: center; display: flex; gap: 13px; padding: 8px 13px; }
-.form-grid #configuration-tipo-field legend, .form-grid #configuration-export-profile-field legend { margin-right: 2px; }
-.form-grid #configuration-tipo-field label, .form-grid #configuration-export-profile-field label { align-items: center; display: inline-flex; gap: 6px; white-space: nowrap; }
-.form-grid #configuration-tipo-field input[type="radio"], .form-grid #configuration-export-profile-field input[type="radio"] { accent-color: var(--brand); height: 15px; margin: 0; min-height: 15px; padding: 0; width: 15px; }
+.form-grid #configuration-tipo-field, .form-grid #configuration-export-profile-field, .form-grid #configuration-module-fields { align-items: center; display: flex; gap: 13px; padding: 8px 13px; }
+.form-grid #configuration-tipo-field legend, .form-grid #configuration-export-profile-field legend, .form-grid #configuration-module-fields legend { margin-right: 2px; }
+.form-grid #configuration-tipo-field label, .form-grid #configuration-export-profile-field label, .form-grid #configuration-module-fields label { align-items: center; display: inline-flex; gap: 6px; white-space: nowrap; }
+.form-grid #configuration-tipo-field input[type="radio"], .form-grid #configuration-export-profile-field input[type="radio"], .form-grid #configuration-module-fields input[type="radio"] { accent-color: var(--brand); height: 15px; margin: 0; min-height: 15px; padding: 0; width: 15px; }
 .modal-actions { align-items: center; display: flex; gap: 8px; justify-content: flex-end; margin-top: auto; padding-top: 18px; }
 .modal-actions button { border-color: transparent; }
 .modal > .action-card { justify-content: flex-end; margin-top: auto; }

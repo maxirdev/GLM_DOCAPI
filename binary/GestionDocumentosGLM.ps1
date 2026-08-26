@@ -369,7 +369,7 @@ function Ejecutar-Exportacion {
     Write-Host '==============================================================' -ForegroundColor Cyan
     Write-Host ''
     $rutaExportador = Join-Path $PSScriptRoot 'EjecutarExportacionGLM.ps1'
-    $codigoSalida = Invocar-ScriptPowerShell -RutaScript $rutaExportador -Argumentos @('-Repositorio', $raizRepositorio, '-ClienteId', $script:Contexto.ClienteId, '-AmbienteId', $script:Contexto.AmbienteId)
+    $codigoSalida = Invocar-ScriptPowerShell -RutaScript $rutaExportador -Argumentos @('-Repositorio', $raizRepositorio, '-ClienteId', $script:Contexto.ClienteId, '-Modulo', $script:Contexto.Modulo, '-AmbienteId', $script:Contexto.AmbienteId)
     if ($codigoSalida -eq $codigoAbortado) {
         Write-Host 'Exportacion abortada por el usuario.' -ForegroundColor Yellow
         return $codigoAbortado

@@ -4,7 +4,10 @@ param(
     [string]$CatalogPath,
     [string]$OutputDirectory,
     [string]$ConfigPath,
-    [string]$ManifiestoPath
+    [string]$ManifiestoPath,
+    [string]$ClienteId,
+    [ValidateSet('comercial', 'erp')][string]$Modulo,
+    [string]$AmbienteId
 )
 
 $ErrorActionPreference = 'Stop'
@@ -63,6 +66,7 @@ function Write-ContextualEndpointGeneration {
         generationId = $GenerationId
         contextId = [string]$Manifest.contextId
         clienteId = [string]$Manifest.clienteId
+        modulo = [string]$Manifest.modulo
         ambienteId = [string]$Manifest.ambienteId
         xpz = [System.IO.Path]::GetFullPath([string]$Manifest.xpz)
         xpzSha256 = $xpzHash
@@ -136,13 +140,15 @@ try {
 
     $faseActual = 'configuracion'
     Write-Step 1 'Cargando configuracion y abriendo el XPZ...'
-    $clienteId = ''
-    $ambienteId = ''
+    $clienteId = $ClienteId
+    $modulo = $Modulo
+    $ambienteId = $AmbienteId
     if ($ManifiestoPath) {
         $manifiestoEjecucion = Leer-ManifiestoEjecucion -RutaManifiesto $ManifiestoPath
         $XpzPath = [string]$manifiestoEjecucion.xpz
         $ConfigPath = [string]$manifiestoEjecucion.configPath
         $clienteId = [string]$manifiestoEjecucion.clienteId
+        $modulo = [string]$manifiestoEjecucion.modulo
         $ambienteId = [string]$manifiestoEjecucion.ambienteId
         $ejecucionId = [string]$manifiestoEjecucion.ejecucionId
         $OutputDirectory = Join-Path ([string]$manifiestoEjecucion.servicesDirectory) ('Endpoints\generations\' + $ejecucionId)
@@ -156,6 +162,7 @@ try {
     if ($XpzPath) { $cargarConfiguracionParametros.XpzPath = $XpzPath }
     if ($clienteId) {
         $cargarConfiguracionParametros.ClienteId = $clienteId
+        $cargarConfiguracionParametros.Modulo = $modulo
         $cargarConfiguracionParametros.AmbienteId = $ambienteId
     }
     $configuracion = Cargar-Configuracion @cargarConfiguracionParametros
@@ -306,6 +313,7 @@ try {
             generatedAt = $StartTime.ToString('s')
             ejecucionId = $ejecucionId
             contextId = if ($ManifiestoPath) { [string]$manifiestoEjecucion.contextId } else { '' }
+            modulo = if ($clienteId) { [string]$configuracion.Modulo } else { '' }
             manifiesto = $ManifiestoPath
             source = $XpzName
             xpzFiles = @($indiceMultiXpz.NombresXpz)

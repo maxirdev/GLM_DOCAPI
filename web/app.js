@@ -2,6 +2,7 @@
     'use strict';
 
     var clientDropdown = null;
+    var moduleDropdown = null;
     var environmentDropdown = null;
     var currentJobId = null;
     var pollingTimer = null;
@@ -23,8 +24,10 @@
     var exportConsoleVisible = false;
     var pdfConsoleVisible = false;
     var contextLocked = false;
+    var modulesByClient = {};
     var environments = {};
-    var persistedContextStorageKey = 'glm-panel-context:v1';
+    var persistedContextStorageKey = 'glm-panel-context:v2';
+    var legacyPersistedContextStorageKey = 'glm-panel-context:v1';
     var pendingPersistedContext = null;
     var pendingContextRestoreError = '';
     var contextResolutionPending = false;
@@ -58,10 +61,23 @@
         return String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
     }
 
+    function clasificarModulo(modulo) {
+        var normalizedModule = String(modulo || '').trim().toLowerCase();
+        return normalizedModule === 'comercial' || normalizedModule === 'erp' ? normalizedModule : '';
+    }
+
+    function nombreModulo(modulo, fallback) {
+        var normalizedModule = clasificarModulo(modulo);
+        if (normalizedModule === 'comercial') { return 'Comercial'; }
+        if (normalizedModule === 'erp') { return 'ERP'; }
+        return fallback || '';
+    }
+
     /* ============ CONTEXTO PERSISTIDO ============ */
     function isPersistedContextValid(context) {
         return Boolean(context && typeof context === 'object' &&
             typeof context.clienteId === 'string' && context.clienteId.trim() &&
+            typeof context.modulo === 'string' && clasificarModulo(context.modulo) &&
             typeof context.ambienteId === 'string' && context.ambienteId.trim());
     }
 
@@ -71,12 +87,12 @@
             if (!serializedContext) { return null; }
             var context = JSON.parse(serializedContext);
             if (isPersistedContextValid(context)) {
-                return { clienteId: context.clienteId, ambienteId: context.ambienteId };
+                return { clienteId: context.clienteId, modulo: clasificarModulo(context.modulo), ambienteId: context.ambienteId };
             }
         } catch (error) {
             /* Una clave dañada se trata igual que una estructura inválida. */
         }
-        removePersistedContext();
+        try { window.localStorage.removeItem(persistedContextStorageKey); } catch (error) { }
         return null;
     }
 
@@ -85,8 +101,10 @@
         try {
             window.localStorage.setItem(persistedContextStorageKey, JSON.stringify({
                 clienteId: context.clienteId,
+                modulo: clasificarModulo(context.modulo),
                 ambienteId: context.ambienteId
             }));
+            window.localStorage.removeItem(legacyPersistedContextStorageKey);
             return true;
         } catch (error) {
             return false;
@@ -96,25 +114,70 @@
     function removePersistedContext() {
         try {
             window.localStorage.removeItem(persistedContextStorageKey);
+            window.localStorage.removeItem(legacyPersistedContextStorageKey);
         } catch (error) { }
+    }
+
+    function removeLegacyPersistedContext() {
+        try { window.localStorage.removeItem(legacyPersistedContextStorageKey); } catch (error) { }
+    }
+
+    function readLegacyPersistedContext() {
+        try {
+            var serializedContext = window.localStorage.getItem(legacyPersistedContextStorageKey);
+            if (!serializedContext) { return null; }
+            var context = JSON.parse(serializedContext);
+            if (context && typeof context === 'object' &&
+                typeof context.clienteId === 'string' && context.clienteId.trim() &&
+                typeof context.ambienteId === 'string' && context.ambienteId.trim()) {
+                return { clienteId: context.clienteId, ambienteId: context.ambienteId };
+            }
+        } catch (error) { }
+        try { window.localStorage.removeItem(legacyPersistedContextStorageKey); } catch (error) { }
+        return null;
     }
 
     function contextsMatch(firstContext, secondContext) {
         return Boolean(firstContext && secondContext &&
             firstContext.clienteId === getProperty(secondContext, 'clienteId', 'ClienteId') &&
+            firstContext.modulo === clasificarModulo(getProperty(secondContext, 'modulo', 'Modulo')) &&
             firstContext.ambienteId === getProperty(secondContext, 'ambienteId', 'AmbienteId'));
     }
 
     function getSelectedContextKey() {
-        return (clientDropdown && clientDropdown.value && environmentDropdown && environmentDropdown.value)
-            ? clientDropdown.value + '/' + environmentDropdown.value
+        return (clientDropdown && clientDropdown.value && moduleDropdown && moduleDropdown.value && environmentDropdown && environmentDropdown.value)
+            ? clientDropdown.value + '/' + moduleDropdown.value + '/' + environmentDropdown.value
             : '';
     }
 
     function contextExistsInServerList(context, contextList) {
         return Boolean(context && contextList.some(function (availableContext) {
-            return availableContext.clienteId === context.clienteId && availableContext.ambienteId === context.ambienteId;
+            return availableContext.clienteId === context.clienteId &&
+                clasificarModulo(availableContext.modulo) === context.modulo &&
+                availableContext.ambienteId === context.ambienteId;
         }));
+    }
+
+    function migrateLegacyPersistedContext(legacyContext, contextList) {
+        if (!legacyContext) { return null; }
+        var matches = contextList.filter(function (availableContext) {
+            return availableContext.clienteId === legacyContext.clienteId && availableContext.ambienteId === legacyContext.ambienteId;
+        });
+        if (matches.length === 1 && clasificarModulo(matches[0].modulo) === 'comercial') {
+            var migratedContext = {
+                clienteId: matches[0].clienteId,
+                modulo: 'comercial',
+                ambienteId: matches[0].ambienteId
+            };
+            /* La v1 se descarta al migrar; la v2 solo se escribe tras activar. */
+            removeLegacyPersistedContext();
+            return migratedContext;
+        }
+        removePersistedContext();
+        pendingContextRestoreError = matches.length === 1
+            ? 'El contexto guardado anterior no identifica el módulo con seguridad. Selecciona un contexto nuevo.'
+            : 'El contexto guardado anterior es ambiguo u obsoleto. Selecciona un contexto nuevo.';
+        return null;
     }
 
     function svgIcon(name) {
@@ -318,39 +381,102 @@
         fetch('/api/contextos', { cache: 'no-store' }).then(function (response) { return response.json(); }).then(function (payload) {
             if (!payload.ok) { return; }
             var clients = {};
-            payload.data.contextos.forEach(function (context) {
-                clients[context.clienteId] = clients[context.clienteId] || { name: context.clienteNombre, environments: [] };
-                clients[context.clienteId].environments.push({ id: context.ambienteId, name: nombreAmbienteCanonico(context.ambienteTipo, context.ambienteNombre), tipo: context.ambienteTipo });
+            var contextList = payload.data.contextos || [];
+            contextList.forEach(function (context) {
+                var modulo = clasificarModulo(getProperty(context, 'modulo', 'Modulo'));
+                if (!modulo) { return; }
+                var clientId = getProperty(context, 'clienteId', 'ClienteId');
+                clients[clientId] = clients[clientId] || { name: getProperty(context, 'clienteNombre', 'ClienteNombre'), modules: {} };
+                clients[clientId].modules[modulo] = clients[clientId].modules[modulo] || {
+                    name: nombreModulo(modulo, getProperty(context, 'moduloNombre', 'ModuloNombre')),
+                    environments: []
+                };
+                clients[clientId].modules[modulo].environments.push({
+                    id: getProperty(context, 'ambienteId', 'AmbienteId'),
+                    name: nombreAmbienteCanonico(getProperty(context, 'ambienteTipo', 'AmbienteTipo'), getProperty(context, 'ambienteNombre', 'AmbienteNombre')),
+                    tipo: getProperty(context, 'ambienteTipo', 'AmbienteTipo'),
+                    modulo: modulo
+                });
             });
             clientDropdown.setOptions(Object.keys(clients).map(function (clientId) {
                 var tipos = [];
-                clients[clientId].environments.forEach(function (e) { if (e.tipo && tipos.indexOf(e.tipo) < 0) { tipos.push(e.tipo); } });
+                Object.keys(clients[clientId].modules).forEach(function (modulo) {
+                    clients[clientId].modules[modulo].environments.forEach(function (e) { if (e.tipo && tipos.indexOf(e.tipo) < 0) { tipos.push(e.tipo); } });
+                });
                 return { value: clientId, label: clients[clientId].name, tags: tipos };
             }));
-            environments = Object.keys(clients).reduce(function (result, clientId) { result[clientId] = clients[clientId].environments; return result; }, {});
+            modulesByClient = Object.keys(clients).reduce(function (result, clientId) {
+                result[clientId] = clients[clientId].modules;
+                return result;
+            }, {});
+            environments = Object.keys(clients).reduce(function (result, clientId) {
+                result[clientId] = Object.keys(clients[clientId].modules).reduce(function (moduleResult, modulo) {
+                    moduleResult[modulo] = clients[clientId].modules[modulo].environments;
+                    return moduleResult;
+                }, {});
+                return result;
+            }, {});
             var persistedContext = readPersistedContext();
-            if (persistedContext && contextExistsInServerList(persistedContext, payload.data.contextos || [])) {
+            if (persistedContext && contextExistsInServerList(persistedContext, contextList)) {
                 pendingPersistedContext = persistedContext;
             } else if (persistedContext) {
                 removePersistedContext();
-                pendingContextRestoreError = 'No se pudo restaurar el contexto guardado porque el cliente o ambiente ya no existe.';
+                pendingContextRestoreError = 'No se pudo restaurar el contexto guardado porque el cliente, módulo o ambiente ya no existe.';
+            } else {
+                pendingPersistedContext = migrateLegacyPersistedContext(readLegacyPersistedContext(), contextList);
+            }
+            if (pendingPersistedContext) {
+                clientDropdown.value = pendingPersistedContext.clienteId;
+                selectModule();
+                moduleDropdown.value = pendingPersistedContext.modulo;
+                selectEnvironment();
+                environmentDropdown.value = pendingPersistedContext.ambienteId;
+            } else if (!pendingContextRestoreError) {
+                applyAutomaticContextSelection();
             }
             loadState();
         }).catch(function () { /* El esqueleto sigue funcionando sin servidor. */ });
     }
 
+    function selectModule() {
+        var modules = modulesByClient[clientDropdown.value] || {};
+        var options = Object.keys(modules).map(function (modulo) {
+            return { value: modulo, label: nombreModulo(modulo, modules[modulo].name) };
+        });
+        moduleDropdown.setOptions(options);
+        moduleDropdown.disabled = options.length === 0;
+    }
+
     function selectEnvironment() {
-        var options = (environments[clientDropdown.value] || []).map(function (environment) {
+        var options = ((environments[clientDropdown.value] || {})[moduleDropdown.value] || []).map(function (environment) {
             return { value: environment.id, label: nombreAmbienteCanonico(environment.tipo, environment.name), tags: [environment.tipo] };
         });
         environmentDropdown.setOptions(options);
         environmentDropdown.disabled = options.length === 0;
     }
 
+    function applyAutomaticContextSelection() {
+        if (contextLocked || contextActivationPending) { return; }
+        var clientIds = Object.keys(modulesByClient);
+        if (!clientDropdown.value && clientIds.length === 1) { clientDropdown.value = clientIds[0]; }
+        if (!clientDropdown.value) { return; }
+        selectModule();
+        var moduleIds = Object.keys(modulesByClient[clientDropdown.value] || {});
+        if (!moduleDropdown.value && moduleIds.length === 1) { moduleDropdown.value = moduleIds[0]; }
+        if (!moduleDropdown.value) { return; }
+        selectEnvironment();
+        var environmentOptions = (environments[clientDropdown.value] || {})[moduleDropdown.value] || [];
+        if (!environmentDropdown.value && environmentOptions.length === 1) {
+            environmentDropdown.value = environmentOptions[0].id;
+            activateContext();
+        }
+    }
+
     /* ============ BLOQUEO DE CONTEXTO ============ */
     function lockContext() {
         contextLocked = true;
         clientDropdown.disabled = true;
+        moduleDropdown.disabled = true;
         environmentDropdown.disabled = true;
         document.getElementById('change-client').hidden = false;
         document.body.setAttribute('data-context', 'active');
@@ -359,7 +485,8 @@
     function unlockContext() {
         contextLocked = false;
         clientDropdown.disabled = false;
-        environmentDropdown.disabled = !clientDropdown.value;
+        moduleDropdown.disabled = !clientDropdown.value;
+        environmentDropdown.disabled = !(clientDropdown.value && moduleDropdown.value);
         document.getElementById('change-client').hidden = true;
         document.body.setAttribute('data-context', 'none');
         document.getElementById('dashboard-title').textContent = 'Dashboard';
@@ -397,7 +524,8 @@
             pending: Boolean(isBusy)
         };
         clientDropdown.disabled = Boolean(isBusy) || contextLocked;
-        environmentDropdown.disabled = Boolean(isBusy) || contextLocked || !clientDropdown.value;
+        moduleDropdown.disabled = Boolean(isBusy) || contextLocked || !clientDropdown.value;
+        environmentDropdown.disabled = Boolean(isBusy) || contextLocked || !(clientDropdown.value && moduleDropdown.value);
         environmentDropdown.setBusy(Boolean(isBusy));
         document.getElementById('change-client').disabled = Boolean(isBusy);
         document.getElementById('change-client').hidden = Boolean(isBusy) || !contextLocked;
@@ -411,7 +539,7 @@
         if (state && state.configurationValid === false) {
             notices.push({ type: 'error', text: 'Configuración inválida. Corrige los errores desde Configuración. Las demás solapas están bloqueadas.' });
         } else if (!(state && state.context)) {
-            notices.push({ type: 'info', text: 'Debe seleccionar contexto de Cliente y Ambiente' });
+            notices.push({ type: 'info', text: 'Debe seleccionar contexto de Cliente, Módulo y Ambiente' });
         }
         if (state && state.context) {
             var documentedServices = endpointServices.filter(function (service) { return service.pdf && service.pdf.disponible; });
@@ -524,17 +652,19 @@
         }
         var context = dashboard.contexto;
         var clientName = getProperty(context, 'clienteNombre', 'ClienteNombre') || getProperty(context, 'clienteId', 'ClienteId');
+        var moduleName = nombreModulo(getProperty(context, 'modulo', 'Modulo'), getProperty(context, 'moduloNombre', 'ModuloNombre')) || getProperty(context, 'modulo', 'Modulo');
         var environmentName = nombreAmbienteCanonico(getProperty(context, 'ambienteTipo', 'AmbienteTipo'), getProperty(context, 'ambienteNombre', 'AmbienteNombre')) || getProperty(context, 'ambienteId', 'AmbienteId');
         var environmentTipo = getProperty(context, 'ambienteTipo', 'AmbienteTipo');
         var documents = dashboard.documentos || {};
         var processing = dashboard.procesamiento || {};
         var validaciones = dashboard.validaciones || [];
 
-        document.getElementById('dashboard-title').textContent = 'Dashboard ' + clientName + ' - ' + environmentName;
+        document.getElementById('dashboard-title').textContent = 'Dashboard ' + clientName + ' - ' + moduleName + ' - ' + environmentName;
 
         var ultimaActualizacion = processing.ultimaActualizacion ? formatDateTime(processing.ultimaActualizacion) : 'No registrada';
         var items = [
             { label: 'Cliente', value: clientName },
+            { label: 'Módulo', value: moduleName },
             { label: 'Ambiente', value: environmentName, tag: environmentTipo },
             { label: 'Documentos', value: String(documents.total || 0) + ' PDF' },
             { label: 'Últ. actualización', value: ultimaActualizacion },
@@ -609,8 +739,11 @@
                 showContextConflictModal(pendingPersistedContext, serverContext);
                 return;
             }
+            if (pendingPersistedContext && serverContext) { pendingPersistedContext = null; }
             if (pendingPersistedContext && !serverContext) {
                 clientDropdown.value = pendingPersistedContext.clienteId;
+                selectModule();
+                moduleDropdown.value = pendingPersistedContext.modulo;
                 selectEnvironment();
                 environmentDropdown.value = pendingPersistedContext.ambienteId;
                 pendingPersistedContext = null;
@@ -640,8 +773,10 @@
             var context = payload.data.context;
             if (context) {
                 var clientId = getProperty(context, 'clienteId', 'ClienteId');
+                var moduleId = clasificarModulo(getProperty(context, 'modulo', 'Modulo'));
                 var environmentId = getProperty(context, 'ambienteId', 'AmbienteId');
-                if (clientDropdown.value !== clientId) { clientDropdown.value = clientId; selectEnvironment(); }
+                if (clientDropdown.value !== clientId) { clientDropdown.value = clientId; selectModule(); }
+                if (moduleDropdown.value !== moduleId) { moduleDropdown.value = moduleId; selectEnvironment(); }
                 if (environmentDropdown.value !== environmentId) { environmentDropdown.value = environmentId; }
                 lockContext();
                 setWorkBusy(false);
@@ -710,7 +845,7 @@
     }
 
     function loadXpz() {
-        if (!useServerApi() || !(clientDropdown.value && environmentDropdown.value)) {
+        if (!useServerApi() || !(clientDropdown.value && moduleDropdown.value && environmentDropdown.value)) {
             renderXpzList(null);
             return;
         }
@@ -878,10 +1013,11 @@
 
     function setWorkBusy(isBusy) {
         clientDropdown.disabled = isBusy || contextLocked;
-        environmentDropdown.disabled = isBusy || contextLocked || !clientDropdown.value;
+        moduleDropdown.disabled = isBusy || contextLocked || !clientDropdown.value;
+        environmentDropdown.disabled = isBusy || contextLocked || !(clientDropdown.value && moduleDropdown.value);
         document.getElementById('change-client').hidden = isBusy;
-        exportButton.disabled = isBusy || !(clientDropdown.value && environmentDropdown.value);
-        updateServicesButton.disabled = isBusy || !(clientDropdown.value && environmentDropdown.value);
+        exportButton.disabled = isBusy || !(clientDropdown.value && moduleDropdown.value && environmentDropdown.value);
+        updateServicesButton.disabled = isBusy || !(clientDropdown.value && moduleDropdown.value && environmentDropdown.value);
         document.getElementById('generate-pdf').disabled = isBusy || !(lastState && lastState.xpz && lastState.xpz.activo);
         updatePdfButton.disabled = isBusy || !(lastState && lastState.dashboard && lastState.dashboard.xpz && lastState.dashboard.xpz.activo) || Boolean(lastState && lastState.dashboard && lastState.dashboard.xpz && lastState.dashboard.xpz.activo.procesado);
         generateOpenApiButton.disabled = isBusy;
@@ -973,7 +1109,7 @@
     }
 
     function startValidation(xpzName, button) {
-        if (!useServerApi() || currentJobId || !(clientDropdown.value && environmentDropdown.value)) { return; }
+        if (!useServerApi() || currentJobId || !(clientDropdown.value && moduleDropdown.value && environmentDropdown.value)) { return; }
         exportConsoleVisible = true;
         document.getElementById('export-work-card').setAttribute('operation', 'validarXpz');
         document.querySelectorAll('.validate-xpz-option').forEach(function (item) { item.disabled = true; });
@@ -1099,6 +1235,8 @@
         conflictingServerContext = null;
         pendingPersistedContext = null;
         clientDropdown.value = savedContext.clienteId;
+        selectModule();
+        moduleDropdown.value = savedContext.modulo;
         selectEnvironment();
         environmentDropdown.value = savedContext.ambienteId;
         closeContextModal();
@@ -1110,6 +1248,7 @@
         var serverContext = conflictingServerContext;
         var serverContextIds = {
             clienteId: getProperty(serverContext, 'clienteId', 'ClienteId'),
+            modulo: clasificarModulo(getProperty(serverContext, 'modulo', 'Modulo')),
             ambienteId: getProperty(serverContext, 'ambienteId', 'AmbienteId')
         };
         savePersistedContext(serverContextIds);
@@ -1117,6 +1256,8 @@
         conflictingServerContext = null;
         pendingPersistedContext = null;
         clientDropdown.value = serverContextIds.clienteId;
+        selectModule();
+        moduleDropdown.value = serverContextIds.modulo;
         selectEnvironment();
         environmentDropdown.value = serverContextIds.ambienteId;
         closeContextModal();
@@ -1125,7 +1266,7 @@
 
     /* ============ ACTIVAR CONTEXTO ============ */
     function activateContext() {
-        var active = Boolean(clientDropdown.value && environmentDropdown.value);
+        var active = Boolean(clientDropdown.value && moduleDropdown.value && environmentDropdown.value);
         if (active && useServerApi() && !contextActivationPending) {
             clearContextDependentState();
             contextActivationPending = true;
@@ -1133,17 +1274,17 @@
             fetch('/api/contexto/activar', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'X-Panel-Token': window.PANEL_TOKEN || '' },
-                body: JSON.stringify({ clienteId: clientDropdown.value, ambienteId: environmentDropdown.value })
+                body: JSON.stringify({ clienteId: clientDropdown.value, modulo: moduleDropdown.value, ambienteId: environmentDropdown.value })
             }).then(function (response) { return response.json(); }).then(function (payload) {
                 if (payload.ok) {
-                    savePersistedContext({ clienteId: clientDropdown.value, ambienteId: environmentDropdown.value });
+                    savePersistedContext({ clienteId: clientDropdown.value, modulo: moduleDropdown.value, ambienteId: environmentDropdown.value });
                     lockContext();
                     contextActivationPending = false;
                     setContextActivationBusy(false);
                     setWorkBusy(false);
-                    var selectedEnvironment = (environments[clientDropdown.value] || []).filter(function (item) { return item.id === environmentDropdown.value; })[0];
+                    var selectedEnvironment = ((environments[clientDropdown.value] || {})[moduleDropdown.value] || []).filter(function (item) { return item.id === environmentDropdown.value; })[0];
                     var activeEnvironmentType = payload.data.ambienteTipo || (selectedEnvironment && selectedEnvironment.tipo);
-                    showToast('Contexto activo: ' + payload.data.clienteNombre + ' / ' + nombreAmbienteCanonico(activeEnvironmentType, payload.data.ambienteNombre), 'ok');
+                    showToast('Contexto activo: ' + payload.data.clienteNombre + ' / ' + nombreModulo(moduleDropdown.value) + ' / ' + nombreAmbienteCanonico(activeEnvironmentType, payload.data.ambienteNombre), 'ok');
                     loadState();
                     if (payload.jobId) { currentJobId = payload.jobId; setWorkBusy(true); pollWork(); }
                 } else {
@@ -1165,7 +1306,7 @@
 
     /* ============ LOGS ============ */
     function loadContextArtifacts() {
-        if (!useServerApi() || !(clientDropdown.value && environmentDropdown.value)) { return; }
+        if (!useServerApi() || !(clientDropdown.value && moduleDropdown.value && environmentDropdown.value)) { return; }
         fetch('/api/logs', { cache: 'no-store' }).then(function (response) { return response.json(); }).then(function (payload) {
             if (payload.ok) { contextLogs = payload.data.logs || []; renderLogs(document.getElementById('log-filter').value); }
         }).catch(function () { contextLogs = []; renderLogs('todos'); });
@@ -1256,23 +1397,125 @@
     function renderConfigurationList() {
         var configuration = configurationData.configuration;
         var configurationList = document.getElementById('configuration-list');
+        var configurationFilter = document.getElementById('configuration-filter').value;
+        var moduleFilter = document.getElementById('configuration-module-filter').value;
         if (window.panelViews) {
-            window.panelViews.configuration.setConfiguration((configuration && configuration.clientes) || [], configurationData.errores || [], document.getElementById('configuration-filter').value);
+            window.panelViews.configuration.setConfiguration((configuration && configuration.clientes) || [], configurationData.errores || [], configurationFilter, moduleFilter);
         } else {
             configurationList.configuration = { clients: (configuration && configuration.clientes) || [], errors: configurationData.errores || [] };
-            configurationList.searchValue = document.getElementById('configuration-filter').value;
+            configurationList.searchValue = configurationFilter;
+            configurationList.moduleValue = moduleFilter;
         }
         bindConfigurationActions(configuration, configurationData.configHash);
     }
 
+    function prepareConfigurationFormFields() {
+        var form = document.getElementById('configuration-form');
+        var environmentFields = document.getElementById('configuration-environment-fields');
+        var moduleFields = document.getElementById('configuration-module-fields');
+        var modulePackageField = document.getElementById('configuration-module-package-field');
+        var packageNames = document.getElementById('configuration-package-names');
+        var legacyPackageField = document.getElementById('configuration-package');
+        if (!form || !environmentFields || !moduleFields || !modulePackageField || !packageNames) { return; }
+        if (moduleFields.parentElement !== form) { form.insertBefore(moduleFields, environmentFields); }
+        if (modulePackageField.parentElement !== form) { form.insertBefore(modulePackageField, environmentFields); }
+        if (packageNames.parentElement !== form) { form.insertBefore(packageNames, environmentFields); }
+        if (legacyPackageField && legacyPackageField.parentElement) { legacyPackageField.parentElement.hidden = true; }
+    }
+
+    function getConfigurationClient(clientId) {
+        return ((configurationSnapshot && configurationSnapshot.clientes) || []).filter(function (client) { return client.id === clientId; })[0] || null;
+    }
+
+    function getClientPackageNames(client) {
+        var packageNames = client && client.packagenames ? client.packagenames : {};
+        return {
+            comercial: String(packageNames.comercial || '').trim(),
+            erp: String(packageNames.erp || '').trim()
+        };
+    }
+
+    function getConfigurationModule() {
+        var selected = document.querySelector('input[name="configuration-modulo"]:checked');
+        return selected ? selected.value : '';
+    }
+
+    function setConfigurationModule(module) {
+        var normalizedModule = clasificarModulo(module) || 'comercial';
+        document.querySelectorAll('input[name="configuration-modulo"]').forEach(function (radio) { radio.checked = radio.value === normalizedModule; });
+    }
+
+    function getConfigurationPackageName(module) {
+        var field = document.getElementById('configuration-module-package');
+        return field && clasificarModulo(module) ? field.value.trim() : '';
+    }
+
+    function setConfigurationPackageName(value) {
+        document.getElementById('configuration-module-package').value = value || '';
+    }
+
+    function setConfigurationPackageNames(packageNames) {
+        var names = packageNames || {};
+        document.getElementById('configuration-package-comercial').value = names.comercial || '';
+        document.getElementById('configuration-package-erp').value = names.erp || '';
+    }
+
+    function getConfigurationPackageNames() {
+        var packageNames = {};
+        var comercial = document.getElementById('configuration-package-comercial').value.trim();
+        var erp = document.getElementById('configuration-package-erp').value.trim();
+        if (comercial) { packageNames.comercial = comercial; }
+        if (erp) { packageNames.erp = erp; }
+        return packageNames;
+    }
+
+    function getAvailableModulesForClient(client) {
+        var environments = client ? (client.ambientes || []) : [];
+        return ['comercial', 'erp'].filter(function (module) {
+            var types = environments.filter(function (environment) { return clasificarModulo(environment.modulo) === module; }).map(function (environment) { return clasificarTipo(environment.tipo); });
+            return types.indexOf('test') < 0 || types.indexOf('prod') < 0;
+        });
+    }
+
+    function getAvailableTypesForModule(client, module) {
+        var types = (client ? (client.ambientes || []) : []).filter(function (environment) {
+            return clasificarModulo(environment.modulo) === module;
+        }).map(function (environment) { return clasificarTipo(environment.tipo); });
+        return ['test', 'prod'].filter(function (type) { return types.indexOf(type) < 0; });
+    }
+
+    function syncConfigurationModuleFields() {
+        var module = getConfigurationModule();
+        var clientId = document.getElementById('configuration-client-id').value;
+        var client = getConfigurationClient(clientId);
+        var availableTypes = getAvailableTypesForModule(client, module);
+        var moduleFields = document.getElementById('configuration-module-fields');
+        var modulePackageField = document.getElementById('configuration-module-package-field');
+        var isNewClient = !clientId && !document.getElementById('configuration-original-id').value;
+        var isNewEnvironment = Boolean(clientId) && !document.getElementById('configuration-original-id').value;
+        if (isNewClient || isNewEnvironment) {
+            document.querySelectorAll('input[name="configuration-tipo"]').forEach(function (radio) {
+                radio.disabled = availableTypes.indexOf(radio.value) < 0;
+            });
+        }
+        if ((isNewClient || isNewEnvironment) && availableTypes.length === 1) {
+            setConfigurationEnvironmentType(availableTypes[0]);
+        }
+        var packageNames = getClientPackageNames(client);
+        modulePackageField.hidden = !(isNewClient || (isNewEnvironment && !packageNames[module]));
+        moduleFields.setAttribute('aria-invalid', availableTypes.length ? 'false' : 'true');
+    }
+
     function openConfigurationModal(values) {
+        prepareConfigurationFormFields();
         configurationModalOrigin = document.activeElement;
         document.getElementById('configuration-original-id').value = values.originalId || '';
         document.getElementById('configuration-client-id').value = values.clientId || '';
         document.getElementById('configuration-id').value = (values.id || '').toLowerCase();
         document.getElementById('configuration-id').disabled = Boolean(values.originalId);
         document.getElementById('configuration-name').value = values.name || '';
-        document.getElementById('configuration-package').value = values.packageName || '';
+        setConfigurationPackageNames(values.packageNames || {});
+        setConfigurationPackageName(values.packageName || '');
         var exportProfileField = document.getElementById('configuration-export-profile-field');
         var exportProfile = values.geneXusExportProfile || (configurationData.configuration && configurationData.configuration.herramientas && configurationData.configuration.herramientas.geneXusExportProfile);
         setConfigurationExportProfile(exportProfile);
@@ -1287,15 +1530,24 @@
         var tipoRadios = document.querySelectorAll('input[name="configuration-tipo"]');
         var isEnvironment = Boolean(values.environment);
         var isNewClient = !isEnvironment && !values.originalId;
+        var moduleFields = document.getElementById('configuration-module-fields');
+        var packageNamesField = document.getElementById('configuration-package-names');
         clientFields.hidden = isEnvironment;
-        exportProfileField.hidden = !isNewClient;
+        exportProfileField.hidden = true;
         environmentFields.hidden = !(isEnvironment || isNewClient);
+        moduleFields.hidden = !(isNewClient || (isEnvironment && !values.originalId));
+        packageNamesField.hidden = isEnvironment || !values.originalId;
+        setConfigurationModule(values.modulo || (values.availableModules && values.availableModules[0]) || 'comercial');
+        document.querySelectorAll('input[name="configuration-modulo"]').forEach(function (radio) {
+            radio.disabled = Boolean(isEnvironment && values.originalId) || (values.availableModules && values.availableModules.indexOf(radio.value) < 0);
+        });
         setConfigurationEnvironmentType(clasificarTipo(values.tipo) === 'prod' ? 'prod' : 'test');
         tipoRadios.forEach(function (radio) { radio.disabled = Boolean(values.tipoInmutable) || (Boolean(values.lockedTipo) && radio.value !== values.lockedTipo); });
-        document.getElementById('configuration-environment-legend').textContent = values.originalId ? 'Editar ambiente' : 'Primer ambiente';
+        document.getElementById('configuration-environment-legend').textContent = values.originalId ? 'Editar ambiente' : (values.environment ? 'Agregar ambiente' : 'Primer ambiente');
         document.getElementById('configuration-modal-title').textContent = values.environment ? (values.originalId ? 'Editar ambiente' : 'Agregar ambiente') : (values.originalId ? 'Editar cliente' : 'Agregar cliente');
         document.getElementById('configuration-modal-message').textContent = values.environment ? 'Completa los datos del ambiente.' : (values.originalId ? 'Actualiza los datos del cliente.' : 'El cliente y su primer ambiente se guardarán juntos.');
         document.getElementById('configuration-feedback').hidden = true;
+        syncConfigurationModuleFields();
         var modal = document.getElementById('configuration-modal');
         modal.hidden = false;
         focusFirstModalControl(modal);
@@ -1384,12 +1636,12 @@
             ['configuration-kb-path', 'El ambiente requiere una ruta de KB.']
         ] : [
             ['configuration-id', 'El cliente requiere un id.'],
-            ['configuration-name', 'El cliente requiere un nombre.'],
-            ['configuration-package', 'El cliente requiere packagename.']
+            ['configuration-name', 'El cliente requiere un nombre.']
         ];
         if (!isEnvironment && !isEditing) {
             fields = fields.concat([
-                ['configuration-kb-path', 'El primer ambiente requiere una ruta de KB.']
+                ['configuration-kb-path', 'El primer ambiente requiere una ruta de KB.'],
+                ['configuration-module-package', 'El primer ambiente requiere el package name de su módulo.']
             ]);
         }
         for (var fieldIndex = 0; fieldIndex < fields.length; fieldIndex++) {
@@ -1397,6 +1649,34 @@
                 showConfigurationFeedback(fields[fieldIndex][1], 'error');
                 document.getElementById(fields[fieldIndex][0]).focus();
                 return false;
+            }
+        }
+        var module = getConfigurationModule();
+        if (isEnvironment && !module) {
+            showConfigurationFeedback('El ambiente requiere un módulo.', 'error');
+            return false;
+        }
+        if (isEnvironment && !isEditing) {
+            var client = getConfigurationClient(document.getElementById('configuration-client-id').value);
+            var packageNames = getClientPackageNames(client);
+            if (!packageNames[module] && !getConfigurationPackageName(module)) {
+                showConfigurationFeedback('El primer ambiente del módulo requiere su package name.', 'error');
+                document.getElementById('configuration-module-package').focus();
+                return false;
+            }
+        }
+        if (!isEnvironment && isEditing) {
+            var existingClient = getConfigurationClient(document.getElementById('configuration-original-id').value);
+            var configuredModules = ['comercial', 'erp'].filter(function (configuredModule) {
+                return (existingClient && (existingClient.ambientes || []).some(function (environment) { return clasificarModulo(environment.modulo) === configuredModule; }));
+            });
+            var packageNamesToValidate = getConfigurationPackageNames();
+            for (var moduleIndex = 0; moduleIndex < configuredModules.length; moduleIndex++) {
+                if (!packageNamesToValidate[configuredModules[moduleIndex]]) {
+                    showConfigurationFeedback('El cliente requiere el package name de ' + configuredModules[moduleIndex] + '.', 'error');
+                    document.getElementById('configuration-package-' + configuredModules[moduleIndex]).focus();
+                    return false;
+                }
             }
         }
         return true;
@@ -1433,6 +1713,8 @@
             clearContextDependentState();
             unlockContext();
             clientDropdown.value = '';
+            moduleDropdown.setOptions([]);
+            moduleDropdown.value = '';
             environmentDropdown.setOptions([]);
             environmentDropdown.value = '';
             loadConfiguration();
@@ -1451,7 +1733,7 @@
         document.querySelectorAll('[data-action="edit-client"]').forEach(function (button) {
             button.addEventListener('click', function () {
                 var client = findClient(button.dataset.clientId);
-                if (client) { openConfigurationModal({ originalId: client.id, id: client.id, name: client.nombre, packageName: client.packagename }); }
+                if (client) { openConfigurationModal({ originalId: client.id, id: client.id, name: client.nombre, packageNames: getClientPackageNames(client) }); }
             });
         });
         document.querySelectorAll('[data-action="delete-client"]').forEach(function (button) {
@@ -1465,28 +1747,29 @@
             button.addEventListener('click', function () {
                 var client = findClient(button.dataset.clientId);
                 if (!client) { return; }
-                var tipos = (client.ambientes || []).map(function (e) { return clasificarTipo(e.tipo); });
-                var lockedTipo = null;
-                if (tipos.indexOf('test') >= 0 && tipos.indexOf('prod') < 0) { lockedTipo = 'prod'; }
-                else if (tipos.indexOf('prod') >= 0 && tipos.indexOf('test') < 0) { lockedTipo = 'test'; }
-                openConfigurationModal({ environment: true, originalId: '', id: '', name: '', kbPath: '', clientId: button.dataset.clientId, tipo: lockedTipo || 'test', lockedTipo: lockedTipo });
+                var availableModules = getAvailableModulesForClient(client);
+                var selectedModule = availableModules[0] || 'comercial';
+                var availableTypes = getAvailableTypesForModule(client, selectedModule);
+                openConfigurationModal({ environment: true, originalId: '', id: '', name: '', kbPath: '', clientId: button.dataset.clientId, modulo: selectedModule, availableModules: availableModules, tipo: availableTypes[0] || 'test' });
             });
         });
         document.querySelectorAll('[data-action="edit-environment"]').forEach(function (button) {
             button.addEventListener('click', function () {
                 var client = findClient(button.dataset.clientId);
-                var environment = client ? (client.ambientes || []).filter(function (item) { return item.id === button.dataset.environmentId; })[0] : null;
+                var environment = client ? (client.ambientes || []).filter(function (item) {
+                    return item.id === button.dataset.environmentId && clasificarModulo(item.modulo) === clasificarModulo(button.dataset.module);
+                })[0] : null;
                 if (environment) {
-                    var environmentTypes = (client.ambientes || []).map(function (item) { return clasificarTipo(item.tipo); });
+                    var environmentTypes = (client.ambientes || []).filter(function (item) { return clasificarModulo(item.modulo) === clasificarModulo(environment.modulo); }).map(function (item) { return clasificarTipo(item.tipo); });
                     var hasBothEnvironmentTypes = environmentTypes.indexOf('test') >= 0 && environmentTypes.indexOf('prod') >= 0;
-                    openConfigurationModal({ environment: true, originalId: environment.id, environmentId: environment.id, kbPath: environment.kbPath, host: environment.host, baseUrl: environment.baseUrl, clientId: client.id, tipo: environment.tipo, lockedTipo: null, tipoInmutable: hasBothEnvironmentTypes });
+                    openConfigurationModal({ environment: true, originalId: environment.id, environmentId: environment.id, kbPath: environment.kbPath, host: environment.host, baseUrl: environment.baseUrl, clientId: client.id, modulo: environment.modulo, tipo: environment.tipo, lockedTipo: null, tipoInmutable: hasBothEnvironmentTypes });
                 }
             });
         });
         document.querySelectorAll('[data-action="delete-environment"]').forEach(function (button) {
             button.addEventListener('click', function () {
                 openConfigurationConfirmation('¿Eliminar este ambiente?', function () {
-                    configurationRequest('/api/configuracion/clientes/' + encodeURIComponent(button.dataset.clientId) + '/ambientes/' + encodeURIComponent(button.dataset.environmentId), 'DELETE', { configHash: configHash, confirmDelete: true }, 'configuration-confirm-feedback', 'Ambiente eliminado correctamente.').catch(function () { });
+                    configurationRequest('/api/configuracion/clientes/' + encodeURIComponent(button.dataset.clientId) + '/modulos/' + encodeURIComponent(button.dataset.module) + '/ambientes/' + encodeURIComponent(button.dataset.environmentId), 'DELETE', { configHash: configHash, confirmDelete: true }, 'configuration-confirm-feedback', 'Ambiente eliminado correctamente.').catch(function () { });
                 });
             });
         });
@@ -1528,8 +1811,16 @@
         });
         clientDropdown.setOnChange(function () {
             if (contextLocked) { return; }
+            moduleDropdown.value = '';
+            environmentDropdown.value = '';
+            selectModule();
+            applyAutomaticContextSelection();
+        });
+        moduleDropdown.setOnChange(function () {
+            if (contextLocked) { return; }
             environmentDropdown.value = '';
             selectEnvironment();
+            applyAutomaticContextSelection();
         });
         environmentDropdown.setOnChange(function () { if (!contextLocked) { activateContext(); } });
         exportButton.addEventListener('click', function () { exportConsoleVisible = true; setButtonLoading(exportButton, true); startExport({}, true); });
@@ -1554,6 +1845,7 @@
             contextResolutionPending = false;
             clearContextDependentState();
             unlockContext();
+            selectModule();
             selectEnvironment();
             renderGlobalNotices();
         });
@@ -1571,6 +1863,7 @@
             if (event.target === event.currentTarget) { closePdfViewer(); }
         });
         document.getElementById('configuration-filter').addEventListener('input', renderConfigurationList);
+        document.getElementById('configuration-module-filter').addEventListener('change', renderConfigurationList);
         document.getElementById('generate-pdf').addEventListener('click', startPdfGeneration);
         updatePdfButton.addEventListener('click', startPdfUpdate);
         generateOpenApiButton.addEventListener('click', generateOpenApi);
@@ -1611,6 +1904,7 @@
             var id = document.getElementById('configuration-id').value.trim().toLowerCase();
             var name = document.getElementById('configuration-name').value.trim();
             var environmentType = getConfigurationEnvironmentType();
+            var environmentModule = getConfigurationModule();
             syncInferredConfigurationEnvironment();
             var configHash = configurationData.configHash || '';
             if (!configHash) { showToast('No hay configuración vigente.', 'err'); return; }
@@ -1620,17 +1914,22 @@
             var method;
             var body;
             if (isEnvironment) {
-                url = '/api/configuracion/clientes/' + encodeURIComponent(clientId) + '/ambientes' + (isEditing ? '/' + encodeURIComponent(originalId) : '');
+                url = '/api/configuracion/clientes/' + encodeURIComponent(clientId) + '/modulos/' + encodeURIComponent(environmentModule) + '/ambientes' + (isEditing ? '/' + encodeURIComponent(originalId) : '');
                 method = isEditing ? 'PUT' : 'POST';
-                body = { configHash: configHash, data: { tipo: environmentType, kbPath: document.getElementById('configuration-kb-path').value.trim(), host: document.getElementById('configuration-host').value.trim(), baseUrl: document.getElementById('configuration-base-url').value.trim() } };
+                var existingEnvironmentClient = getConfigurationClient(clientId);
+                var existingEnvironmentPackageNames = getClientPackageNames(existingEnvironmentClient);
+                var environmentData = { tipo: environmentType, kbPath: document.getElementById('configuration-kb-path').value.trim(), host: document.getElementById('configuration-host').value.trim(), baseUrl: document.getElementById('configuration-base-url').value.trim() };
+                if (!isEditing && !existingEnvironmentPackageNames[environmentModule]) { environmentData.packageName = getConfigurationPackageName(environmentModule); }
+                body = { configHash: configHash, data: environmentData };
             } else {
                 url = '/api/configuracion/clientes' + (isEditing ? '/' + encodeURIComponent(originalId) : '');
                 method = isEditing ? 'PUT' : 'POST';
-                var existingClient = ((configurationSnapshot && configurationSnapshot.clientes) || []).filter(function (item) { return item.id === (clientId || originalId); })[0];
-                var clientData = { id: id, nombre: name, packagename: document.getElementById('configuration-package').value.trim(), serviciosIgnorados: existingClient ? existingClient.serviciosIgnorados : [] };
+                var existingClient = getConfigurationClient(clientId || originalId);
+                var clientData = { id: id, nombre: name, packagenames: isEditing ? getConfigurationPackageNames() : {}, serviciosIgnorados: existingClient ? existingClient.serviciosIgnorados : [] };
                 if (!isEditing) {
-                    clientData.geneXusExportProfile = getConfigurationExportProfile();
-                    clientData.ambientes = [{ tipo: environmentType, kbPath: document.getElementById('configuration-kb-path').value.trim(), host: document.getElementById('configuration-host').value.trim(), baseUrl: document.getElementById('configuration-base-url').value.trim() }];
+                    clientData.packagenames[environmentModule] = getConfigurationPackageName(environmentModule);
+                    clientData.serviciosIgnorados = [];
+                    clientData.ambientes = [{ modulo: environmentModule, tipo: environmentType, kbPath: document.getElementById('configuration-kb-path').value.trim(), host: document.getElementById('configuration-host').value.trim(), baseUrl: document.getElementById('configuration-base-url').value.trim() }];
                 }
                 body = { configHash: configHash, data: clientData };
             }
@@ -1639,6 +1938,14 @@
         });
         document.getElementById('configuration-id').addEventListener('input', function (event) { event.target.value = event.target.value.toLowerCase(); });
         document.querySelectorAll('input[name="configuration-tipo"]').forEach(function (radio) { radio.addEventListener('change', syncInferredConfigurationEnvironment); });
+        document.querySelectorAll('input[name="configuration-modulo"]').forEach(function (radio) {
+            radio.addEventListener('change', function () {
+                var client = getConfigurationClient(document.getElementById('configuration-client-id').value);
+                var packageNames = getClientPackageNames(client);
+                setConfigurationPackageName(packageNames[radio.value] || '');
+                syncConfigurationModuleFields();
+            });
+        });
         document.getElementById('theme-toggle').addEventListener('click', function () {
             var nextTheme = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
             document.documentElement.setAttribute('data-theme', nextTheme);
@@ -1659,8 +1966,11 @@
     }
 
     clientDropdown = createDropdown({ triggerId: 'client-dropdown-trigger', menuId: 'client-dropdown-menu', labelId: 'client-dropdown-label', placeholder: 'Seleccionar cliente' });
+    moduleDropdown = createDropdown({ triggerId: 'module-dropdown-trigger', menuId: 'module-dropdown-menu', labelId: 'module-dropdown-label', placeholder: 'Seleccionar módulo' });
     environmentDropdown = createDropdown({ triggerId: 'environment-dropdown-trigger', menuId: 'environment-dropdown-menu', labelId: 'environment-dropdown-label', placeholder: 'Seleccionar ambiente' });
+    moduleDropdown.disabled = true;
     environmentDropdown.disabled = true;
+    prepareConfigurationFormFields();
 
     if (window.panelUiPreferences) {
         var loadedDocumentationPreferences = window.panelUiPreferences.current || window.panelUiPreferences.read();
