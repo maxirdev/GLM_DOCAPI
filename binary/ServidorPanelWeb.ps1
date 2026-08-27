@@ -19,6 +19,7 @@ if ([string]::IsNullOrWhiteSpace($ConfigPath)) {
 }
 
 . (Join-Path $PSScriptRoot 'GLMUtilidades.ps1')
+. (Join-Path $PSScriptRoot 'RenderizarMarkdownTypstPdf.ps1')
 . (Join-Path $PSScriptRoot 'CargarConfiguracion.ps1')
 . (Join-Path $PSScriptRoot 'AnalizarServicio.ps1')
 . (Join-Path $PSScriptRoot 'CargarMultiXPZ.ps1')
@@ -42,6 +43,10 @@ $script:LastFinishedWork = $null
 $script:Listener = $null
 $script:WorkOutputTimestampCache = @{}
 $script:XpzSha256ProcesadoCache = $null
+$script:ReportRequestMaximumBytes = 24MB
+$script:ReportDescriptionMaximumGraphemes = 500
+$script:ReportImageMaximumCount = 3
+$script:ReportImageMaximumBytes = 5MB
 
 function Read-PanelConfiguration {
     $script:ConfigurationEvaluation = Evaluar-ConfiguracionIntegral -ConfigPath $ConfigPath -RaizRepositorio $RepositoryRoot
@@ -78,6 +83,464 @@ function Get-ConfiguredContexts {
         }
     }
     return $contexts.ToArray()
+}
+
+function Resolve-ReportContext {
+    <#
+    .SYNOPSIS
+    Resuelve la identidad contextual solicitada por un reporte.
+    .DESCRIPTION
+    Usa unicamente los ids enviados y los nombres canonicos de la configuracion
+    validada. La resolucion calcula un objeto independiente y nunca activa el
+    contexto operativo de la sesion.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]$ReportBody
+    )
+
+    if ($null -eq $ReportBody -or $null -eq $ReportBody.PSObject.Properties['context'] -or $null -eq $ReportBody.context) {
+        throw 'El reporte requiere un contexto con cliente, modulo y ambiente.'
+    }
+
+    $requestedContext = $ReportBody.context
+    foreach ($propertyName in @('clientId', 'module', 'environmentId')) {
+        if ($null -eq $requestedContext.PSObject.Properties[$propertyName] -or [string]::IsNullOrWhiteSpace([string]$requestedContext.$propertyName)) {
+            throw ('El contexto del reporte requiere el campo ' + $propertyName + '.')
+        }
+    }
+
+    $context = Resolver-ContextoConfiguracion -ConfiguracionRaw $script:ConfigurationRaw -ConfigPath $ConfigPath -RaizRepositorio $RepositoryRoot -ClienteId ([string]$requestedContext.clientId) -Modulo ([string]$requestedContext.module) -AmbienteId ([string]$requestedContext.environmentId)
+    return [pscustomobject]@{
+        clientId = $context.ClienteId
+        clientName = $context.ClienteNombre
+        module = $context.Modulo
+        moduleName = $context.ModuloNombre
+        environmentId = $context.AmbienteId
+        environmentName = $context.AmbienteNombre
+        environmentType = $context.AmbienteTipo
+        contextId = $context.ContextId
+    }
+}
+
+function Get-ReportUnicodeCodePoints {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$Text
+    )
+
+    $codePoints = New-Object System.Collections.Generic.List[int]
+    for ($characterIndex = 0; $characterIndex -lt $Text.Length; $characterIndex++) {
+        $codePoint = [int][char]$Text[$characterIndex]
+        if ([char]::IsHighSurrogate($Text[$characterIndex]) -and $characterIndex + 1 -lt $Text.Length -and [char]::IsLowSurrogate($Text[$characterIndex + 1])) {
+            $codePoint = [char]::ConvertToUtf32($Text, $characterIndex)
+            $characterIndex++
+        }
+        [void]$codePoints.Add($codePoint)
+    }
+    return @($codePoints.ToArray())
+}
+
+function Test-ReportUnicodeGraphemeExtend {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][int]$CodePoint
+    )
+
+    if ($CodePoint -eq 0x200C -or
+        ($CodePoint -ge 0xFE00 -and $CodePoint -le 0xFE0F) -or
+        ($CodePoint -ge 0xE0100 -and $CodePoint -le 0xE01EF) -or
+        ($CodePoint -ge 0x1F3FB -and $CodePoint -le 0x1F3FF) -or
+        ($CodePoint -ge 0xE0020 -and $CodePoint -le 0xE007F)) {
+        return $true
+    }
+
+    $codePointText = [char]::ConvertFromUtf32($CodePoint)
+    $category = [System.Globalization.CharUnicodeInfo]::GetUnicodeCategory($codePointText, 0)
+    return $category -in @(
+        [System.Globalization.UnicodeCategory]::NonSpacingMark,
+        [System.Globalization.UnicodeCategory]::SpacingCombiningMark,
+        [System.Globalization.UnicodeCategory]::EnclosingMark
+    )
+}
+
+function Get-ReportGraphemeCount {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$Text
+    )
+
+    $codePoints = @(Get-ReportUnicodeCodePoints -Text $Text)
+    $graphemeCount = 0
+    $codePointIndex = 0
+    while ($codePointIndex -lt $codePoints.Count) {
+        $currentCodePoint = [int]$codePoints[$codePointIndex]
+        $codePointIndex++
+
+        if ($currentCodePoint -eq 0x0D -and $codePointIndex -lt $codePoints.Count -and [int]$codePoints[$codePointIndex] -eq 0x0A) {
+            $codePointIndex++
+        } elseif ($currentCodePoint -ge 0x1F1E6 -and $currentCodePoint -le 0x1F1FF -and $codePointIndex -lt $codePoints.Count -and [int]$codePoints[$codePointIndex] -ge 0x1F1E6 -and [int]$codePoints[$codePointIndex] -le 0x1F1FF) {
+            $codePointIndex++
+        }
+
+        while ($codePointIndex -lt $codePoints.Count) {
+            $nextCodePoint = [int]$codePoints[$codePointIndex]
+            if (Test-ReportUnicodeGraphemeExtend -CodePoint $nextCodePoint) {
+                $codePointIndex++
+                continue
+            }
+            if ($nextCodePoint -eq 0x200D) {
+                $codePointIndex++
+                if ($codePointIndex -lt $codePoints.Count) { $codePointIndex++ }
+                continue
+            }
+            break
+        }
+        $graphemeCount++
+    }
+    return $graphemeCount
+}
+
+function Test-ReportImageSignature {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][byte[]]$ImageBytes,
+        [Parameter(Mandatory = $true)][string]$MimeType
+    )
+
+    switch ($MimeType) {
+        'image/png' {
+            return $ImageBytes.Length -ge 8 -and
+                $ImageBytes[0] -eq 0x89 -and $ImageBytes[1] -eq 0x50 -and
+                $ImageBytes[2] -eq 0x4E -and $ImageBytes[3] -eq 0x47 -and
+                $ImageBytes[4] -eq 0x0D -and $ImageBytes[5] -eq 0x0A -and
+                $ImageBytes[6] -eq 0x1A -and $ImageBytes[7] -eq 0x0A
+        }
+        'image/jpeg' {
+            return $ImageBytes.Length -ge 3 -and
+                $ImageBytes[0] -eq 0xFF -and $ImageBytes[1] -eq 0xD8 -and $ImageBytes[2] -eq 0xFF
+        }
+        'image/webp' {
+            return $ImageBytes.Length -ge 12 -and
+                $ImageBytes[0] -eq 0x52 -and $ImageBytes[1] -eq 0x49 -and
+                $ImageBytes[2] -eq 0x46 -and $ImageBytes[3] -eq 0x46 -and
+                $ImageBytes[8] -eq 0x57 -and $ImageBytes[9] -eq 0x45 -and
+                $ImageBytes[10] -eq 0x42 -and $ImageBytes[11] -eq 0x50
+        }
+        default { return $false }
+    }
+}
+
+function Validate-ReportImage {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]$Image
+    )
+
+    if ($Image -is [string] -or $null -eq $Image.PSObject) {
+        throw 'El adjunto del reporte tiene un formato invalido.'
+    }
+    foreach ($propertyName in @('originalName', 'mimeType', 'base64')) {
+        if ($null -eq $Image.PSObject.Properties[$propertyName] -or [string]::IsNullOrWhiteSpace([string]$Image.$propertyName)) {
+            throw ('El adjunto del reporte requiere el campo ' + $propertyName + '.')
+        }
+    }
+
+    $mimeType = ([string]$Image.mimeType).Trim().ToLowerInvariant()
+    if ($mimeType -notin @('image/png', 'image/jpeg', 'image/webp')) {
+        throw 'El adjunto debe ser una imagen PNG, JPEG o WebP.'
+    }
+    $base64 = [string]$Image.base64
+    if ($base64.Length -eq 0 -or $base64.Length % 4 -ne 0 -or $base64 -notmatch '^[A-Za-z0-9+/]*={0,2}$') {
+        throw 'El contenido Base64 del adjunto no es valido.'
+    }
+
+    $imageBytes = $null
+    try {
+        $imageBytes = [Convert]::FromBase64String($base64)
+    } catch {
+        throw 'El contenido Base64 del adjunto no es valido.'
+    }
+    if ($imageBytes.Length -gt $script:ReportImageMaximumBytes) {
+        throw 'La imagen supera el limite de 5 MiB.'
+    }
+    if (-not (Test-ReportImageSignature -ImageBytes $imageBytes -MimeType $mimeType)) {
+        throw 'La firma binaria del adjunto no coincide con el MIME declarado.'
+    }
+
+    $extension = switch ($mimeType) {
+        'image/png' { '.png' }
+        'image/jpeg' { '.jpg' }
+        'image/webp' { '.webp' }
+    }
+    return [pscustomobject]@{
+        originalName = [string]$Image.originalName
+        mimeType = $mimeType
+        base64 = $base64
+        bytes = $imageBytes
+        extension = $extension
+    }
+}
+
+function Validate-ReportSubmission {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]$ReportBody
+    )
+
+    $category = ([string]$ReportBody.category).Trim().ToLowerInvariant()
+    if ($category -notin @('error', 'sugerencia')) {
+        throw 'La categoria del reporte debe ser error o sugerencia.'
+    }
+    if ($null -eq $ReportBody.PSObject.Properties['description']) {
+        throw 'El reporte requiere una descripcion.'
+    }
+    $description = ([string]$ReportBody.description).Trim()
+    $descriptionGraphemeCount = Get-ReportGraphemeCount -Text $description
+    if ($descriptionGraphemeCount -eq 0) {
+        throw 'La descripcion del reporte no puede estar vacia.'
+    }
+    if ($descriptionGraphemeCount -gt $script:ReportDescriptionMaximumGraphemes) {
+        throw 'La descripcion del reporte no puede superar 500 caracteres visibles.'
+    }
+
+    $context = Resolve-ReportContext -ReportBody $ReportBody
+    $images = @()
+    if ($null -ne $ReportBody.PSObject.Properties['images'] -and $null -ne $ReportBody.images) {
+        if (-not ($ReportBody.images -is [System.Array])) {
+            throw 'Los adjuntos del reporte deben enviarse como una lista.'
+        }
+        $imageCandidates = @($ReportBody.images)
+        if ($imageCandidates.Count -gt $script:ReportImageMaximumCount) {
+            throw 'El reporte no puede contener mas de 3 imagenes.'
+        }
+        $validatedImages = New-Object System.Collections.Generic.List[object]
+        foreach ($imageCandidate in $imageCandidates) {
+            [void]$validatedImages.Add((Validate-ReportImage -Image $imageCandidate))
+        }
+        $images = @($validatedImages.ToArray())
+    }
+    return [pscustomobject]@{
+        category = $category
+        context = $context
+        description = $description
+        characterCount = $descriptionGraphemeCount
+        images = $images
+    }
+}
+
+function Escape-ReportMarkdownText {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)][AllowEmptyString()][string]$Text = ''
+    )
+
+    $charactersToEscape = '\`*_{}[]()#+-.!|>'
+    $builder = New-Object System.Text.StringBuilder
+    foreach ($character in ([string]$Text).ToCharArray()) {
+        if ($charactersToEscape.IndexOf($character) -ge 0) { [void]$builder.Append('\') }
+        [void]$builder.Append($character)
+    }
+    return $builder.ToString()
+}
+
+function Format-ReportMarkdownCode {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)][AllowEmptyString()][string]$Text = ''
+    )
+
+    $value = [string]$Text
+    $maximumBacktickRun = 0
+    foreach ($match in [regex]::Matches($value, '`+')) {
+        if ($match.Length -gt $maximumBacktickRun) { $maximumBacktickRun = $match.Length }
+    }
+    $delimiter = ('`' * ($maximumBacktickRun + 1)) -join ''
+    return $delimiter + $value + $delimiter
+}
+
+function New-ReportIdentity {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)][datetime]$CreatedAtUtc = ([datetime]::UtcNow)
+    )
+
+    $normalizedCreatedAt = $CreatedAtUtc.ToUniversalTime()
+    $timestamp = $normalizedCreatedAt.ToString("yyyyMMdd'T'HHmmssfff'Z'", [System.Globalization.CultureInfo]::InvariantCulture)
+    $identifier = $timestamp + '-' + [Guid]::NewGuid().ToString('N')
+    $createdAt = $normalizedCreatedAt.ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'", [System.Globalization.CultureInfo]::InvariantCulture)
+    return [pscustomobject]@{
+        id = $identifier
+        baseName = $identifier
+        createdAt = $createdAt
+    }
+}
+
+function New-ReportDocumentArtifact {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]$ValidatedSubmission,
+        [Parameter(Mandatory = $true)]$Identity
+    )
+
+    $categoryTitle = if ($ValidatedSubmission.category -eq 'error') { 'error' } else { 'sugerencia' }
+    $clientName = Escape-ReportMarkdownText -Text ([string]$ValidatedSubmission.context.clientName)
+    $clientId = Escape-ReportMarkdownText -Text ([string]$ValidatedSubmission.context.clientId)
+    $moduleName = Escape-ReportMarkdownText -Text ([string]$ValidatedSubmission.context.moduleName)
+    $moduleId = Escape-ReportMarkdownText -Text ([string]$ValidatedSubmission.context.module)
+    $environmentName = Escape-ReportMarkdownText -Text ([string]$ValidatedSubmission.context.environmentName)
+    $environmentId = Escape-ReportMarkdownText -Text ([string]$ValidatedSubmission.context.environmentId)
+    $description = Escape-ReportMarkdownText -Text (Normalizar-SaltosLineaLf -Texto ([string]$ValidatedSubmission.description))
+    $categoryLabel = if ($ValidatedSubmission.category -eq 'error') { 'Error' } else { 'Sugerencia' }
+    $lines = New-Object System.Collections.Generic.List[string]
+    [void]$lines.Add('# Reporte de ' + $categoryTitle)
+    [void]$lines.Add('')
+    [void]$lines.Add('- **ID:** ' + (Format-ReportMarkdownCode -Text ([string]$Identity.id)))
+    [void]$lines.Add('- **Fecha UTC:** ' + [string]$Identity.createdAt)
+    [void]$lines.Add('- **Categor' + [char]0xED + 'a:** ' + $categoryLabel)
+    [void]$lines.Add('- **Cliente:** ' + $clientName + ' (' + (Format-ReportMarkdownCode -Text $clientId) + ')' )
+    [void]$lines.Add('- **M' + [char]0xF3 + 'dulo:** ' + $moduleName + ' (' + (Format-ReportMarkdownCode -Text $moduleId) + ')' )
+    [void]$lines.Add('- **Ambiente:** ' + $environmentName + ' (' + (Format-ReportMarkdownCode -Text $environmentId) + ')' )
+    [void]$lines.Add('')
+    [void]$lines.Add('## Descripci' + [char]0xF3 + 'n')
+    [void]$lines.Add('')
+    [void]$lines.Add($description)
+
+    $imageArtifacts = New-Object System.Collections.Generic.List[object]
+    $images = @($ValidatedSubmission.images)
+    if ($images.Count -gt 0) {
+        [void]$lines.Add('')
+        [void]$lines.Add('## Adjuntos')
+        [void]$lines.Add('')
+        for ($imageIndex = 0; $imageIndex -lt $images.Count; $imageIndex++) {
+            $image = $images[$imageIndex]
+            $imageNumber = $imageIndex + 1
+            $imageFileName = [string]$Identity.baseName + '-' + [string]$imageNumber + [string]$image.extension
+            [void]$lines.Add('- **Imagen ' + [string]$imageNumber + ':** ' + (Format-ReportMarkdownCode -Text ([string]$image.originalName)))
+            [void]$lines.Add('')
+            [void]$lines.Add('![Imagen adjunta ' + [string]$imageNumber + '](' + $imageFileName + ')')
+            [void]$lines.Add('')
+            [void]$imageArtifacts.Add([pscustomobject]@{
+                fileName = $imageFileName
+                bytes = $image.bytes
+            })
+        }
+    }
+
+    return [pscustomobject]@{
+        id = [string]$Identity.id
+        createdAt = [string]$Identity.createdAt
+        baseName = [string]$Identity.baseName
+        markdown = (($lines.ToArray()) -join "`n") + "`n`n"
+        pdfFileName = [string]$Identity.baseName + '.pdf'
+        images = @($imageArtifacts.ToArray())
+    }
+}
+
+function Convert-ReportMarkdownToPdf {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]$Artifact,
+        [Parameter(Mandatory = $true)][string]$RutaSalida,
+        [Parameter(Mandatory = $true)][string]$RutaRecursos
+    )
+
+    if ($null -eq $script:ConfigurationRaw -or $null -eq $script:ConfigurationRaw.herramientas) {
+        throw 'La configuracion no define las herramientas para generar el PDF del reporte.'
+    }
+    $rutaPandoc = [string]$script:ConfigurationRaw.herramientas.pandocPath
+    $rutaTypst = [string]$script:ConfigurationRaw.herramientas.typstPath
+    if ([string]::IsNullOrWhiteSpace($rutaPandoc) -or [string]::IsNullOrWhiteSpace($rutaTypst)) {
+        throw 'La configuracion no define Pandoc y Typst para generar el PDF del reporte.'
+    }
+    if (-not [System.IO.Path]::IsPathRooted($rutaPandoc)) { $rutaPandoc = Join-Path $RepositoryRoot $rutaPandoc }
+    if (-not [System.IO.Path]::IsPathRooted($rutaTypst)) { $rutaTypst = Join-Path $RepositoryRoot $rutaTypst }
+    Convertir-MarkdownAPdf -Markdown ([string]$Artifact.markdown) -RutaSalida $RutaSalida -RutaPandoc $rutaPandoc -RutaTypst $rutaTypst -RutaRecursos $RutaRecursos | Out-Null
+}
+
+function Publish-ReportDocumentArtifact {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]$Artifact,
+        [Parameter(Mandatory = $true)][ValidateSet('error', 'sugerencia')][string]$Category
+    )
+
+    $categoryDirectoryName = if ($Category -eq 'error') { 'errores' } else { 'sugerencias' }
+    $categoryDirectory = Join-Path (Join-Path $RepositoryRoot 'reportes') $categoryDirectoryName
+    $directoryExisted = Test-Path -LiteralPath $categoryDirectory -PathType Container
+    $temporaryMarkdownPath = $null
+    $temporaryImagePaths = New-Object System.Collections.Generic.List[string]
+    $temporaryPdfPath = $null
+    $publishedMarkdown = $false
+    $publishedImagePaths = New-Object System.Collections.Generic.List[string]
+    $publishedPdf = $false
+    $markdownPath = Join-Path $categoryDirectory ($Artifact.baseName + '.md')
+    $pdfPath = Join-Path $categoryDirectory ([string]$Artifact.pdfFileName)
+    $imagePaths = @($Artifact.images | ForEach-Object { Join-Path $categoryDirectory ([string]$_.fileName) })
+
+    try {
+        if (-not $directoryExisted) { New-Item -ItemType Directory -Path $categoryDirectory -Force | Out-Null }
+        $temporarySuffix = [Guid]::NewGuid().ToString('N')
+        $temporaryMarkdownPath = Join-Path $categoryDirectory ('.' + $Artifact.baseName + '.' + $temporarySuffix + '.md.tmp')
+        [System.IO.File]::WriteAllText($temporaryMarkdownPath, (Normalizar-SaltosLineaLf -Texto ([string]$Artifact.markdown)), (New-Object System.Text.UTF8Encoding($false)))
+
+        if ($imagePaths.Count -gt 0) {
+            for ($imageIndex = 0; $imageIndex -lt $imagePaths.Count; $imageIndex++) {
+                $temporaryImagePath = Join-Path $categoryDirectory ('.' + $Artifact.baseName + '.' + $temporarySuffix + '.' + [string]($imageIndex + 1) + '.image.tmp')
+                [System.IO.File]::WriteAllBytes($temporaryImagePath, [byte[]]$Artifact.images[$imageIndex].bytes)
+                [void]$temporaryImagePaths.Add($temporaryImagePath)
+            }
+        }
+
+        [System.IO.File]::Move($temporaryMarkdownPath, $markdownPath)
+        $publishedMarkdown = $true
+        $temporaryMarkdownPath = $null
+        if ($imagePaths.Count -gt 0) {
+            for ($imageIndex = 0; $imageIndex -lt $imagePaths.Count; $imageIndex++) {
+                $imagePath = [string]$imagePaths[$imageIndex]
+                $temporaryImagePath = [string]$temporaryImagePaths[$imageIndex]
+                [System.IO.File]::Move($temporaryImagePath, $imagePath)
+                [void]$publishedImagePaths.Add($imagePath)
+                $temporaryImagePaths[$imageIndex] = $null
+            }
+        }
+
+        $temporaryPdfPath = Join-Path $categoryDirectory ('.' + $Artifact.baseName + '.' + $temporarySuffix + '.pdf.tmp')
+        Convert-ReportMarkdownToPdf -Artifact $Artifact -RutaSalida $temporaryPdfPath -RutaRecursos $categoryDirectory
+        [System.IO.File]::Move($temporaryPdfPath, $pdfPath)
+        $temporaryPdfPath = $null
+        $publishedPdf = $true
+
+        return [pscustomobject]@{
+            id = [string]$Artifact.id
+            category = $Category
+            markdownPath = $markdownPath
+            imagePaths = $imagePaths
+            pdfPath = $pdfPath
+        }
+    } catch {
+        if ($publishedPdf -and (Test-Path -LiteralPath $pdfPath -PathType Leaf)) {
+            Remove-Item -LiteralPath $pdfPath -Force -ErrorAction SilentlyContinue
+        }
+        foreach ($publishedImagePath in $publishedImagePaths) {
+            if ($publishedImagePath -and (Test-Path -LiteralPath $publishedImagePath -PathType Leaf)) {
+                Remove-Item -LiteralPath $publishedImagePath -Force -ErrorAction SilentlyContinue
+            }
+        }
+        if ($publishedMarkdown -and (Test-Path -LiteralPath $markdownPath -PathType Leaf)) {
+            Remove-Item -LiteralPath $markdownPath -Force -ErrorAction SilentlyContinue
+        }
+        throw
+    } finally {
+        foreach ($temporaryPath in @($temporaryMarkdownPath, $temporaryPdfPath) + @($temporaryImagePaths.ToArray())) {
+            if ($temporaryPath -and (Test-Path -LiteralPath $temporaryPath -PathType Leaf)) {
+                Remove-Item -LiteralPath $temporaryPath -Force -ErrorAction SilentlyContinue
+            }
+        }
+        if (-not $directoryExisted -and (Test-Path -LiteralPath $categoryDirectory -PathType Container) -and @(Get-ChildItem -LiteralPath $categoryDirectory -Force -ErrorAction SilentlyContinue).Count -eq 0) {
+            Remove-Item -LiteralPath $categoryDirectory -Force -ErrorAction SilentlyContinue
+        }
+    }
 }
 
 function Get-ActiveXpzCandidates {
@@ -1426,6 +1889,54 @@ function Get-RequestBodyJson {
     try { return ($reader.ReadToEnd() | ConvertFrom-Json) } finally { $reader.Dispose() }
 }
 
+function Get-ReportRequestBodyJson {
+    <#
+    .SYNOPSIS
+    Lee y convierte el cuerpo JSON exclusivo de la mutacion de reportes.
+    .DESCRIPTION
+    Mantiene separado el limite ampliado de reportes del limite global de las demas
+    mutaciones y controla tambien cuerpos cuya longitud no viene declarada.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]$Request
+    )
+
+    if ([string]::IsNullOrWhiteSpace([string]$Request.ContentType) -or $Request.ContentType -notmatch '^application/json(?:\s*;|$)') {
+        throw 'El reporte requiere Content-Type: application/json.'
+    }
+    if ($Request.ContentLength64 -gt $script:ReportRequestMaximumBytes) {
+        throw 'El cuerpo del reporte supera el limite de 24 MiB.'
+    }
+
+    $memoryStream = New-Object System.IO.MemoryStream
+    $buffer = New-Object byte[] 81920
+    $totalBytes = 0L
+    try {
+        while (($bytesRead = $Request.InputStream.Read($buffer, 0, $buffer.Length)) -gt 0) {
+            $totalBytes += $bytesRead
+            if ($totalBytes -gt $script:ReportRequestMaximumBytes) {
+                throw 'El cuerpo del reporte supera el limite de 24 MiB.'
+            }
+            $memoryStream.Write($buffer, 0, $bytesRead)
+        }
+
+        $utf8Strict = New-Object System.Text.UTF8Encoding($false, $true)
+        try {
+            $bodyText = $utf8Strict.GetString($memoryStream.ToArray())
+        } catch {
+            throw 'El cuerpo del reporte no contiene UTF-8 valido.'
+        }
+        try {
+            return ($bodyText | ConvertFrom-Json)
+        } catch {
+            throw 'El cuerpo del reporte debe ser JSON valido.'
+        }
+    } finally {
+        $memoryStream.Dispose()
+    }
+}
+
 function Get-StaticPath {
     param([Parameter(Mandatory = $true)][string]$RequestPath)
     $logicalPath = $RequestPath
@@ -1433,7 +1944,7 @@ function Get-StaticPath {
     if ($logicalPath -match '^/fonts/Poppins-(Regular|SemiBold|Bold)\.ttf$') {
         return Join-Path (Join-Path $RepositoryRoot 'binary\fonts') ([System.IO.Path]::GetFileName($logicalPath))
     }
-    if ($logicalPath -notmatch '^/(index\.html|style\.css|favicon\.svg|version\.md|resources/example\.html|app\.js|app/(main|api-client|state|preferences|render-utils)\.js|app/components/(app-shell|base-states|service-components|operation-console|crud-list)\.js|app/views/(index|dashboard|documentation|logs|configuration)\.js)$') {
+    if ($logicalPath -notmatch '^/(index\.html|style\.css|favicon\.svg|version\.md|resources/example\.html|app\.js|app/(main|api-client|state|preferences|render-utils)\.js|app/components/(app-shell|base-states|service-components|operation-console|crud-list|report-dialog)\.js|app/views/(index|dashboard|documentation|logs|configuration)\.js)$') {
         return $null
     }
     return Join-Path (Join-Path $RepositoryRoot 'web') $logicalPath.TrimStart('/')
@@ -1632,6 +2143,24 @@ function Invoke-ApiRequest {
         }
     }
     Update-CurrentWork
+
+    if ($route -eq '/api/reportes' -and $request.HttpMethod -eq 'POST') {
+        if (-not (Test-SessionToken -Request $request)) {
+            Write-JsonResponse -RequestContext $RequestContext -StatusCode 403 -Payload @{ ok = $false; error = 'Token de sesion invalido.' }
+            return
+        }
+        try {
+            $body = Get-ReportRequestBodyJson -Request $request
+            $validatedSubmission = Validate-ReportSubmission -ReportBody $body
+            $identity = New-ReportIdentity
+            $artifact = New-ReportDocumentArtifact -ValidatedSubmission $validatedSubmission -Identity $identity
+            Publish-ReportDocumentArtifact -Artifact $artifact -Category $validatedSubmission.category | Out-Null
+            Write-JsonResponse -RequestContext $RequestContext -StatusCode 200 -Payload @{ ok = $true; data = @{ id = $identity.id; category = $validatedSubmission.category; createdAt = $identity.createdAt } }
+        } catch {
+            Write-JsonResponse -RequestContext $RequestContext -StatusCode 400 -Payload @{ ok = $false; error = $_.Exception.Message }
+        }
+        return
+    }
 
     if ($route -eq '/api/configuracion' -and $request.HttpMethod -eq 'GET') {
         Write-JsonResponse -RequestContext $RequestContext -StatusCode 200 -Payload @{ ok = $true; data = @{ configuracion = $script:ConfigurationRaw; configHash = Get-ConfigurationHash; valida = [bool]$script:ConfigurationValid; errores = @($script:ConfigurationErrors); configurationValid = [bool]$script:ConfigurationValid; configurationBlocked = [bool]$script:ConfigurationBlocked; configurationErrors = @(Get-ConfigurationErrorsForResponse) } }

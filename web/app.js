@@ -50,6 +50,9 @@
         error: 'No se pudo cargar el historial de versiones.'
     };
     var changelogDialogOrigin = null;
+    var reportToggle = document.getElementById('report-toggle');
+    var reportDialog = document.getElementById('report-dialog');
+    var reportContexts = [];
 
     window.applicationVersion = applicationVersion;
 
@@ -479,12 +482,18 @@
             window.setTimeout(loadContextsFromServer, 25);
             return;
         }
-        if (configurationBlocked) { return; }
+        if (configurationBlocked) {
+            reportContexts = [];
+            updateReportAvailability();
+            return;
+        }
         fetch('/api/contextos', { cache: 'no-store' }).then(function (response) { return response.json(); }).then(function (payload) {
              if (!payload.ok) { return; }
              applyConfigurationStatus(payload.data);
              var clients = {};
             var contextList = payload.data.contextos || [];
+            reportContexts = contextList;
+            updateReportAvailability();
             contextList.forEach(function (context) {
                 var modulo = clasificarModulo(getProperty(context, 'modulo', 'Modulo'));
                 if (!modulo) { return; }
@@ -679,11 +688,75 @@
         var invalid = data.configurationBlocked === true || data.configurationValid === false;
         var errors = getConfigurationErrorList(data);
         setConfigurationInteractionLock(invalid);
+        updateReportAvailability();
         if (invalid) {
             renderConfigurationBlockedModal(errors);
         } else {
             document.getElementById('configuration-blocked-modal').hidden = true;
         }
+    }
+
+    function updateReportAvailability() {
+        var canReport = !configurationBlocked && reportContexts.length > 0;
+        var unavailableReason = configurationBlocked
+            ? 'No se pueden crear reportes porque la configuración está bloqueada.'
+            : 'No hay clientes y ambientes válidos disponibles para crear un reporte.';
+        if (reportToggle) {
+            reportToggle.disabled = !canReport;
+            reportToggle.setAttribute('aria-disabled', canReport ? 'false' : 'true');
+            reportToggle.title = canReport ? 'Reportar un error o enviar una sugerencia' : unavailableReason;
+        }
+        if (reportDialog) {
+            reportDialog.contextOptions = reportContexts;
+            reportDialog.disabledReason = canReport ? '' : unavailableReason;
+            reportDialog.disabled = !canReport;
+        }
+    }
+
+    function readReportImageAsBase64(imageFile) {
+        if (!imageFile) { return Promise.resolve(null); }
+        return new Promise(function (resolve, reject) {
+            if (typeof FileReader === 'undefined') {
+                reject(new Error('El navegador no permite leer el adjunto seleccionado.'));
+                return;
+            }
+            var reader = new FileReader();
+            reader.onload = function () {
+                var dataUrl = String(reader.result || '');
+                var separatorPosition = dataUrl.indexOf(',');
+                if (separatorPosition < 0) {
+                    reject(new Error('No se pudo codificar el adjunto seleccionado.'));
+                    return;
+                }
+                resolve({ originalName: imageFile.name, mimeType: imageFile.type, base64: dataUrl.slice(separatorPosition + 1) });
+            };
+            reader.onerror = function () { reject(new Error('No se pudo leer el adjunto seleccionado.')); };
+            reader.onabort = function () { reject(new Error('La lectura del adjunto fue cancelada.')); };
+            reader.readAsDataURL(imageFile);
+        });
+    }
+
+    function readReportImagesAsBase64(imageFiles) {
+        var files = Array.isArray(imageFiles) ? imageFiles : [];
+        return Promise.all(files.map(readReportImageAsBase64));
+    }
+
+    function submitReport(reportData) {
+        if (!reportDialog || !window.panelApiClient || !reportData) { return; }
+        reportDialog.setSubmitting(true);
+        readReportImagesAsBase64(reportData.images).then(function (imageData) {
+            return window.panelApiClient.sendJson('/api/reportes', 'POST', {
+                category: reportData.category,
+                context: reportData.context,
+                description: reportData.description,
+                images: imageData
+            });
+        }).then(function () {
+            reportDialog.showSuccess();
+        }).catch(function (error) {
+            reportDialog.setSubmitting(false);
+            reportDialog.setError(error.message || 'No se pudo enviar el reporte.');
+        });
     }
 
     /* ============ NOTIFICACIONES GLOBALES ============ */
@@ -887,6 +960,7 @@
             if (!payload.ok) { return; }
             applyConfigurationStatus(payload.data);
             var serverContext = payload.data.context;
+            if (reportDialog) { reportDialog.activeContext = serverContext || null; }
             if (contextResolutionPending) { return; }
             if (pendingPersistedContext && serverContext && !contextsMatch(pendingPersistedContext, serverContext)) {
                 contextResolutionPending = true;
@@ -2129,6 +2203,8 @@
         document.querySelectorAll('[data-target-tab]').forEach(function (button) {
             button.addEventListener('click', function () { selectTab(button.getAttribute('data-target-tab')); });
         });
+        reportToggle.addEventListener('click', function () { reportDialog.open(reportToggle); });
+        reportDialog.addEventListener('report-submit', function (event) { submitReport(event.detail); });
         document.getElementById('configuration-toggle').addEventListener('click', function () { selectTab('configuracion'); });
         document.querySelectorAll('.tab').forEach(function (tab) {
             tab.addEventListener('click', function () { selectTab(tab.dataset.tab); });

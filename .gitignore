@@ -18,6 +18,7 @@ resources/
 !web/resources/example.html
 tmp/
 estado/
+/reportes/
 
 binary/tools/pandoc.exe
 binary/tools/typst.exe

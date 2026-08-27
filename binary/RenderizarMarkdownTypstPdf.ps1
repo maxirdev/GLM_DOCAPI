@@ -92,6 +92,35 @@ function Quitar-ContenedoresFiguraTablaTypst {
     })
 }
 
+function Copiar-RecursosMarkdownTypst {
+    param(
+        [Parameter(Mandatory = $true)][string]$Contenido,
+        [Parameter(Mandatory = $true)][string]$RutaRecursos,
+        [Parameter(Mandatory = $true)][string]$DirectorioDestino
+    )
+
+    if ([string]::IsNullOrWhiteSpace($RutaRecursos)) { return }
+    $directorioRecursos = [System.IO.Path]::GetFullPath($RutaRecursos).TrimEnd('\') + '\'
+    foreach ($coincidencia in [regex]::Matches($Contenido, '!?\[[^\]]*\]\(([^)\s]+)')) {
+        $referencia = [System.Uri]::UnescapeDataString([string]$coincidencia.Groups[1].Value)
+        if ([string]::IsNullOrWhiteSpace($referencia) -or $referencia -match '^(?i)(?:[a-z][a-z0-9+.-]*:|//)') { continue }
+        $referenciaRelativa = $referencia.Replace('/', '\')
+        $rutaRecurso = [System.IO.Path]::GetFullPath((Join-Path $RutaRecursos $referenciaRelativa))
+        if (-not $rutaRecurso.StartsWith($directorioRecursos, [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw ('La imagen del reporte queda fuera de su carpeta de recursos: ' + $referencia)
+        }
+        if (-not (Test-Path -LiteralPath $rutaRecurso -PathType Leaf)) {
+            throw ('No se encontro la imagen referenciada por el Markdown: ' + $referencia)
+        }
+        $rutaDestino = Join-Path $DirectorioDestino $referenciaRelativa
+        $directorioDestino = Split-Path -Parent $rutaDestino
+        if (-not (Test-Path -LiteralPath $directorioDestino -PathType Container)) {
+            New-Item -ItemType Directory -Path $directorioDestino -Force | Out-Null
+        }
+        Copy-Item -LiteralPath $rutaRecurso -Destination $rutaDestino -Force
+    }
+}
+
 function Obtener-NombreWsPieDePagina {
     param(
         [Parameter(Mandatory = $true)][AllowEmptyString()][string]$Titulo,
@@ -145,7 +174,7 @@ function Invoke-HerramientaPdf {
 
     $informacionInicio = New-Object System.Diagnostics.ProcessStartInfo
     $informacionInicio.FileName = $RutaEjecutable
-    $informacionInicio.Arguments = ($Argumentos | ForEach-Object { Quote-ProcessArgument -Valor $_ }) -join ' '
+    $informacionInicio.Arguments = ($Argumentos | ForEach-Object { Quote-ProcessArgument $_ }) -join ' '
     $informacionInicio.WorkingDirectory = Split-Path -Parent $RutaEjecutable
     $informacionInicio.UseShellExecute = $false
     $informacionInicio.CreateNoWindow = $true
@@ -181,7 +210,8 @@ function Convertir-MarkdownAPdf {
         [Parameter(Mandatory = $true)][string]$Markdown,
         [Parameter(Mandatory = $true)][string]$RutaSalida,
         [Parameter(Mandatory = $true)][string]$RutaPandoc,
-        [Parameter(Mandatory = $true)][string]$RutaTypst
+        [Parameter(Mandatory = $true)][string]$RutaTypst,
+        [Parameter(Mandatory = $false)][string]$RutaRecursos = ''
     )
 
     foreach ($herramienta in @(
@@ -215,8 +245,9 @@ function Convertir-MarkdownAPdf {
         }
         $codificacion = New-Object System.Text.UTF8Encoding($false)
         [System.IO.File]::WriteAllText($rutaMarkdown, $Markdown, $codificacion)
+        Copiar-RecursosMarkdownTypst -Contenido $Markdown -RutaRecursos $RutaRecursos -DirectorioDestino $directorioTemporal
 
-        [void](Invoke-HerramientaPdf -RutaEjecutable $RutaPandoc -Nombre 'Pandoc' -TiempoMaximoMs 120000 -Argumentos @(
+        $argumentosPandoc = @(
             '--from=gfm',
             '--to=typst',
             '--standalone',
@@ -224,7 +255,11 @@ function Convertir-MarkdownAPdf {
             ('--template=' + $rutaPlantillaTypst),
             ('--output=' + $rutaFuenteTypst),
             $rutaMarkdown
-        ))
+        )
+        if (-not [string]::IsNullOrWhiteSpace($RutaRecursos)) {
+            $argumentosPandoc = @('--resource-path=' + [System.IO.Path]::GetFullPath($RutaRecursos)) + $argumentosPandoc
+        }
+        [void](Invoke-HerramientaPdf -RutaEjecutable $RutaPandoc -Nombre 'Pandoc' -TiempoMaximoMs 120000 -Argumentos $argumentosPandoc)
 
         $contenidoTypst = [System.IO.File]::ReadAllText($rutaFuenteTypst)
         $contenidoTypst = Ajustar-TablasTypst -Contenido $contenidoTypst

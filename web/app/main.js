@@ -11,6 +11,7 @@ import { registerBaseStateComponents } from './components/base-states.js';
 import { registerServiceComponents } from './components/service-components.js';
 import { registerOperationConsole } from './components/operation-console.js?v=20260820-pdf-oneclick-v6';
 import { registerCrudList } from './components/crud-list.js';
+import { registerReportDialog } from './components/report-dialog.js';
 import { createPanelViews } from './views/index.js';
 import { registerAppShell } from './components/app-shell.js';
 
@@ -29,6 +30,7 @@ registerBaseStateComponents();
 registerServiceComponents();
 registerOperationConsole();
 registerCrudList();
+registerReportDialog();
 registerAppShell();
 window.panelViews = createPanelViews();
 

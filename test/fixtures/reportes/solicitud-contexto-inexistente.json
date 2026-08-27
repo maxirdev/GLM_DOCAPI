@@ -1,0 +1,10 @@
+{
+  "category": "error",
+  "context": {
+    "clientId": "cliente-inexistente",
+    "module": "comercial",
+    "environmentId": "testing"
+  },
+  "description": "El contexto no existe en la configuracion vigente.",
+  "images": []
+}

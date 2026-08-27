@@ -1,0 +1,10 @@
+{
+  "category": "sugerencia",
+  "context": {
+    "clientId": "otrocliente",
+    "module": "comercial",
+    "environmentId": "testing"
+  },
+  "description": "Podria mostrarse un resumen mas visible al finalizar la operacion.",
+  "images": []
+}
