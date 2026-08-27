@@ -21,6 +21,7 @@ $DirectorioFixtures = Join-Path $DirectorioScript 'fixtures'
 $DirectorioFixturesXml = Join-Path $DirectorioFixtures 'xml'
 $DirectorioFixturesJson = Join-Path $DirectorioFixtures 'json'
 $DirectorioFixturesXpz = Join-Path $DirectorioFixtures 'xpz'
+$DirectorioFixturesReportes = Join-Path $DirectorioFixtures 'reportes'
 $DirectorioTmp = Join-Path $DirectorioScript 'tmp'
 $DirectorioLogs = Join-Path $DirectorioScript 'Logs'
 $DirectorioServiciosProduccion = Join-Path $RaizRepositorio 'documentacionServicios'
@@ -2274,6 +2275,64 @@ function Cargar-WebJsonFixture {
     return ($texto | ConvertFrom-Json)
 }
 
+function Cargar-SolicitudReporteFixture {
+    <#
+    .SYNOPSIS
+    Carga una solicitud JSON de reporte y agrega opcionalmente imágenes fixture.
+    .DESCRIPTION
+    Los fixtures de imagen se almacenan como Base64 separado del JSON para poder
+    reutilizar la misma muestra con PNG, JPEG y WebP en las pruebas de la API.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$Nombre,
+        [Parameter(Mandatory = $false)][string[]]$NombresImagen = @(),
+        [Parameter(Mandatory = $false)][string[]]$NombresOriginalesImagen = @(),
+        [Parameter(Mandatory = $false)][string[]]$TiposMimeImagen = @()
+    )
+
+    $rutaSolicitud = Join-Path $DirectorioFixturesReportes $Nombre
+    $textoSolicitud = [System.IO.File]::ReadAllText($rutaSolicitud, (New-Object System.Text.UTF8Encoding($false)))
+    $solicitud = $textoSolicitud | ConvertFrom-Json
+
+    $solicitud.images = @()
+    for ($imageIndex = 0; $imageIndex -lt $NombresImagen.Count; $imageIndex++) {
+        $nombreImagen = $NombresImagen[$imageIndex]
+        $rutaImagen = Join-Path $DirectorioFixturesReportes $nombreImagen
+        $base64 = ([System.IO.File]::ReadAllText($rutaImagen, (New-Object System.Text.UTF8Encoding($false))).Trim())
+        $nombreOriginal = if ($imageIndex -lt $NombresOriginalesImagen.Count) { $NombresOriginalesImagen[$imageIndex] } else { '' }
+        if ([string]::IsNullOrWhiteSpace($nombreOriginal)) {
+            $nombreOriginal = [System.IO.Path]::GetFileNameWithoutExtension($nombreImagen)
+        }
+        $tipoMime = if ($imageIndex -lt $TiposMimeImagen.Count) { $TiposMimeImagen[$imageIndex] } else { '' }
+        $solicitud.images += [pscustomobject]@{
+            originalName = $nombreOriginal
+            mimeType = $tipoMime
+            base64 = $base64
+        }
+    }
+
+    return $solicitud
+}
+
+function Crear-SolicitudReporteConDescripcionFixture {
+    <#
+    .SYNOPSIS
+    Crea una solicitud fixture con una cantidad exacta de grafemas ASCII.
+    .DESCRIPTION
+    Se usa para cubrir los limites de 500 y 501 caracteres sin duplicar en disco
+    cuerpos JSON extensos. La unidad ASCII equivale a un grafema visible.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][ValidateRange(0, 501)][int]$CantidadGrafemas
+    )
+
+    $solicitud = Cargar-SolicitudReporteFixture -Nombre 'solicitud-error-valida.json'
+    $solicitud.description = (('a' * $CantidadGrafemas) -join '')
+    return $solicitud
+}
+
 function Ejecutar-CasosFixturesPanelWeb {
     <#
     .SYNOPSIS
@@ -3650,7 +3709,7 @@ function Ejecutar-CasosVersionChangelog {
     $primeraLineaCorrupta = @($contenidoVersionCorrupta -split '\r?\n' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })[0].Trim()
     $versionesFixtureValido = @([regex]::Matches($contenidoVersionValida, '(?m)^#\s+V1\.(\d+)\s*$') | ForEach-Object { [int]$_.Groups[1].Value })
     $revisionDiezPosterior = $versionesFixtureValido.Count -ge 2 -and $versionesFixtureValido[0] -eq 10 -and $versionesFixtureValido[1] -eq 9 -and $versionesFixtureValido[0] -gt $versionesFixtureValido[1]
-    Test-Asercion -Id 'versionChangelog.archivoReal' -Condicion ($primeraLineaVersion -eq '# V1.0' -and $contenidoVersion -match '(?m)^\*\*Fecha:\*\*\s+\d{4}-\d{2}-\d{2}\s*$' -and $contenidoVersion -match 'SPEC 26' -and $contenidoVersion -match 'SPEC 27' -and $contenidoVersion -match 'SPEC 28') -DetalleExito 'web/version.md inicia en V1.0, contiene fecha y documenta las SPEC 26, 27 y 28.' -DetalleFallo 'web/version.md no cumple el contrato inicial de version.'
+    Test-Asercion -Id 'versionChangelog.archivoReal' -Condicion ($primeraLineaVersion -eq '# V1.1' -and $contenidoVersion -match '(?m)^\*\*Fecha:\*\*\s+\d{4}-\d{2}-\d{2}\s*$' -and $contenidoVersion -match 'SPEC 26' -and $contenidoVersion -match 'SPEC 27' -and $contenidoVersion -match 'SPEC 28' -and $contenidoVersion -match 'SPEC 30') -DetalleExito 'web/version.md inicia en V1.1, contiene fecha y documenta las SPEC 26, 27, 28 y 30.' -DetalleFallo 'web/version.md no cumple el contrato vigente de version.'
     Test-Asercion -Id 'versionChangelog.formatoVersion' -Condicion ($primeraLineaValida -match '^#\s+V1\.\d+$' -and $primeraLineaCorrupta -notmatch '^#\s+V1\.\d+$' -and $revisionDiezPosterior) -DetalleExito 'El formato V1.<entero> se valida y V1.10 queda posterior a V1.9.' -DetalleFallo 'El formato de version o la comparacion entera no esta cubierta por los fixtures.'
     Test-Asercion -Id 'versionChangelog.fixtureMalicioso' -Condicion ($contenidoVersionMaliciosa -match '<script>' -and $contenidoVersionMaliciosa -match '<img ' -and $contenidoVersionMaliciosa -match '\[Enlace\]\(javascript:' -and $contenidoVersionMaliciosa -match '!\[Imagen\]\(') -DetalleExito 'El fixture hostil contiene HTML, imagen, enlace y javascript para probar el renderer.' -DetalleFallo 'El fixture hostil no cubre todas las entradas Markdown peligrosas.'
 
@@ -3679,7 +3738,9 @@ function Ejecutar-CasosPanelWeb {
     $contenidoAplicacionPanel = [System.IO.File]::ReadAllText((Join-Path $RaizRepositorio 'web\app.js'))
     $contenidoHtmlPanel = [System.IO.File]::ReadAllText((Join-Path $RaizRepositorio 'web\index.html'))
     $contenidoEstilosPanel = [System.IO.File]::ReadAllText((Join-Path $RaizRepositorio 'web\style.css'))
+    $contenidoDialogoReporte = [System.IO.File]::ReadAllText((Join-Path $RaizRepositorio 'web\app\components\report-dialog.js'))
     $contenidoServidorPanel = [System.IO.File]::ReadAllText($rutaServidorPanel)
+    $contenidoRendererPdf = [System.IO.File]::ReadAllText((Join-Path $RaizRepositorio 'binary\RenderizarMarkdownTypstPdf.ps1'))
     Test-Asercion -Id 'panelWeb.persistenciaContexto' -Condicion (
         $contenidoAplicacionPanel -match 'glm-panel-context:v1' -and
         $contenidoAplicacionPanel -match 'localStorage\.getItem' -and
@@ -3744,6 +3805,24 @@ function Ejecutar-CasosPanelWeb {
         $contenidoAplicacionPanel -match '/api/reportes/review-ultimo' -and
         $contenidoHtmlPanel -match 'configuration-modal'
     ) -DetalleExito 'El servidor y frontend declaran los contratos de servicios, reinicio, recuperación, reportes y configuración.' -DetalleFallo 'Falta algún contrato operativo del rediseño.'
+    Test-Asercion -Id 'panelWeb.reportesTresImagenes' -Condicion (
+        $contenidoServidorPanel -match 'ReportImageMaximumCount = 3' -and
+        $contenidoServidorPanel -match 'ReportRequestMaximumBytes = 24MB' -and
+        $contenidoServidorPanel -match 'images\.Count' -and
+        $contenidoAplicacionPanel -match 'readReportImagesAsBase64' -and
+        $contenidoAplicacionPanel -match 'images: imageData' -and
+        $contenidoDialogoReporte -match 'multiple' -and
+        $contenidoDialogoReporte -match 'reportImageMaximumCount = 3' -and
+        $contenidoDialogoReporte -match 'reportFormState\.images' -and
+        $contenidoDialogoReporte -notmatch 'Captura local'
+    ) -DetalleExito 'Los reportes admiten hasta tres imágenes y el diálogo no muestra la leyenda eliminada.' -DetalleFallo 'El contrato de tres imágenes o la eliminación de la leyenda no está completo.'
+    Test-Asercion -Id 'panelWeb.reportesPdf' -Condicion (
+        $contenidoServidorPanel -match 'Convert-ReportMarkdownToPdf' -and
+        $contenidoServidorPanel -match 'pdfFileName' -and
+        $contenidoServidorPanel -match 'publishedPdf' -and
+        $contenidoRendererPdf -match 'RutaRecursos' -and
+        $contenidoRendererPdf -match '--resource-path='
+    ) -DetalleExito 'Cada reporte prepara un PDF y el renderer resuelve las imágenes relativas desde su carpeta.' -DetalleFallo 'Falta la generación del PDF del reporte o la resolución de sus imágenes.'
     Test-Asercion -Id 'panelWeb.estadosSemanticos' -Condicion (
         $contenidoServidorPanel -match 'function Get-VisibleWorkStatus' -and
         $contenidoServidorPanel -match 'COMPLETADO PARCIALMENTE' -and
@@ -3834,7 +3913,7 @@ function Ejecutar-CasosPanelWeb {
             $respuestaVersion.StatusCode -eq 200 -and
             $respuestaVersion.Headers['Content-Type'] -match '^text/markdown;\s*charset=utf-8' -and
             $respuestaVersion.Headers['Cache-Control'] -eq 'no-store' -and
-            $respuestaVersion.Content -match '^# V1\.0'
+            $respuestaVersion.Content -match '^# V1\.1'
         ) -DetalleExito 'GET /version.md responde Markdown UTF-8 con Cache-Control no-store.' -DetalleFallo 'GET /version.md no respeta el contrato de serving, MIME o cache.'
 
         $rechazoMetodoVersion = $false

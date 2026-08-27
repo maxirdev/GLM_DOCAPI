@@ -236,7 +236,7 @@ try {
         try {
             $markdown = [System.IO.File]::ReadAllText($documento.FullName)
             $cronometro = [Diagnostics.Stopwatch]::StartNew()
-            Convertir-MarkdownAPdf -Markdown $markdown -RutaSalida $rutaPdf -RutaPandoc $rutaPandoc -RutaTypst $rutaTypst | Out-Null
+            Convertir-MarkdownAPdf -Markdown $markdown -RutaSalida $rutaPdf -RutaPandoc $rutaPandoc -RutaTypst $rutaTypst -RutaRecursos (Split-Path -Parent $documento.FullName) | Out-Null
             $cronometro.Stop()
             $segundos = [math]::Round($cronometro.Elapsed.TotalSeconds, 2)
             if (-not (Test-PdfValidoParaPromocion -Ruta $rutaPdf)) {

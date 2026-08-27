@@ -1,0 +1,10 @@
+{
+  "category": "error",
+  "context": {
+    "clientId": "trunk",
+    "module": "comercial",
+    "environmentId": "testing"
+  },
+  "description": "   \n  ",
+  "images": []
+}

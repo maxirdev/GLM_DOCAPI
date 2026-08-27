@@ -1,0 +1,10 @@
+{
+  "category": "incidencia",
+  "context": {
+    "clientId": "trunk",
+    "module": "comercial",
+    "environmentId": "testing"
+  },
+  "description": "La categoria no pertenece al contrato permitido.",
+  "images": []
+}

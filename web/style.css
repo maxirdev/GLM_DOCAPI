@@ -749,6 +749,134 @@ code { color: var(--brand); font-size: 12px; overflow-wrap: anywhere; }
 @keyframes toast-duration { from { transform: scaleX(1); } to { transform: scaleX(0); } }
 @keyframes notice-exit { from { opacity: 1; transform: translateY(0); } to { opacity: 0; transform: translateY(-4px); } }
 
+/* ============ REPORTES ============ */
+glm-report-dialog { display: block; }
+.report-dialog {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-lg);
+    color: var(--text);
+    margin: auto;
+    max-height: calc(100vh - 32px);
+    max-width: 600px;
+    overflow: auto;
+    padding: 0;
+    width: calc(100vw - 32px);
+}
+.report-dialog::backdrop { background: rgba(10, 15, 24, .64); }
+.report-form { display: flex; flex-direction: column; min-height: 0; }
+.report-dialog-header {
+    align-items: flex-start;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    gap: 16px;
+    justify-content: space-between;
+    padding: 18px 20px 15px;
+}
+.report-dialog-header h2 { font-size: 18px; line-height: 1.3; }
+.report-dialog-header .eyebrow { margin-bottom: 3px; }
+.report-dialog .dialog-close {
+    background: transparent;
+    border: 0;
+    color: var(--text-muted);
+    font-size: 24px;
+    line-height: 1;
+    min-height: 32px;
+    padding: 4px 8px;
+}
+.report-dialog .dialog-close:hover:not(:disabled) { background: var(--surface-2); color: var(--text); }
+.report-dialog-error {
+    background: var(--err-bg);
+    border: 1px solid var(--err-bd);
+    border-radius: var(--radius-sm);
+    color: var(--err-fg);
+    line-height: 1.4;
+    margin: 16px 20px 0;
+    padding: 9px 11px;
+}
+.report-dialog-fields { display: grid; gap: 13px; padding: 18px 20px 0; }
+.report-dialog-fields > label {
+    color: var(--text-muted);
+    display: grid;
+    font-size: 12px;
+    font-weight: 600;
+    gap: 5px;
+}
+.report-dialog-fields select,
+.report-dialog-fields textarea,
+.report-dialog-fields input[type="file"] { width: 100%; }
+.report-dialog-fields textarea { min-height: 126px; resize: vertical; }
+.report-image-field {
+    background: var(--surface-2);
+    border: 1px dashed var(--border-strong);
+    border-radius: var(--radius-sm);
+    padding: 11px 12px 10px;
+    transition: background .18s ease, border-color .18s ease;
+}
+.report-image-field:focus-within { background: var(--surface); border-color: var(--focus); }
+.report-image-field input[type="file"] {
+    background: transparent;
+    border: 0;
+    border-radius: 0;
+    color: var(--text);
+    min-height: 36px;
+    padding: 0;
+}
+.report-image-field input[type="file"]::file-selector-button {
+    background: var(--surface);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+    color: var(--text);
+    cursor: pointer;
+    font: 600 12px var(--font-sans);
+    margin-right: 10px;
+    padding: 7px 11px;
+    transition: background .18s ease, border-color .18s ease;
+}
+.report-image-field input[type="file"]:hover::file-selector-button { background: var(--surface-3); border-color: var(--brand); }
+.report-image-field input[type="file"]:disabled::file-selector-button { cursor: not-allowed; opacity: .6; }
+.report-description-field { position: relative; }
+.report-character-count {
+    color: var(--text-faint);
+    font-size: 11px;
+    font-weight: 500;
+    justify-self: end;
+    margin-top: -2px;
+}
+.report-image-help { color: var(--text-faint); font-size: 11px; font-weight: 400; }
+.report-dialog-actions { display: flex; gap: 8px; justify-content: flex-end; padding: 18px 20px 20px; }
+.report-dialog-actions .button { min-width: 118px; }
+.report-success {
+    align-items: center;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    justify-content: center;
+    min-height: 300px;
+    padding: 28px 20px;
+    text-align: center;
+}
+.report-success h2 { font-size: 18px; line-height: 1.35; }
+.report-success-icon {
+    align-items: center;
+    background: var(--ok-bg);
+    border: 1px solid var(--ok-bd);
+    border-radius: 50%;
+    color: var(--ok-fg);
+    display: inline-flex;
+    font-size: 25px;
+    font-weight: 700;
+    height: 58px;
+    justify-content: center;
+    line-height: 1;
+    width: 58px;
+}
+.report-success .button { margin-top: 8px; min-width: 118px; }
+.report-dialog select:disabled,
+.report-dialog textarea:disabled,
+.report-dialog input[type="file"]:disabled { opacity: .6; }
+
 /* ============ MODAL ============ */
 .modal-backdrop {
     align-items: center;
@@ -830,6 +958,11 @@ code { color: var(--brand); font-size: 12px; overflow-wrap: anywhere; }
     .file-row > span:first-child { flex: 1 1 180px; min-width: 0; overflow-wrap: anywhere; }
     .xpz-actions { flex: 1 1 100%; justify-content: flex-start; }
     .pdf-xpz-actions { flex: 1 1 100%; justify-content: flex-start; }
+    .report-dialog { max-height: calc(100vh - 24px); width: calc(100vw - 24px); }
+    .report-dialog-header { padding-left: 16px; padding-right: 16px; }
+    .report-dialog-fields { padding-left: 16px; padding-right: 16px; }
+    .report-dialog-error { margin-left: 16px; margin-right: 16px; }
+    .report-dialog-actions { padding-left: 16px; padding-right: 16px; }
 }
 @media (max-width: 460px) {
     .brand-block, .context-controls { min-width: 0; width: 100%; }
@@ -840,6 +973,11 @@ code { color: var(--brand); font-size: 12px; overflow-wrap: anywhere; }
     .context-controls .dropdown, .context-controls .dropdown-trigger { min-width: 0; width: 100%; }
     .context-controls .icon-button { grid-column: 1 / -1; }
     .tabs { overflow-x: auto; }
+    .report-dialog-header { gap: 8px; }
+    .report-dialog-header h2 { font-size: 16px; }
+    .report-dialog-actions { flex-direction: column-reverse; }
+    .report-dialog-actions .button { width: 100%; }
+    .report-success { min-height: 250px; }
 }
 @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { animation-duration: .01ms !important; scroll-behavior: auto !important; transition-duration: .01ms !important; }

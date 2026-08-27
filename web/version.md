@@ -1,3 +1,11 @@
+# V1.1
+
+**Fecha:** 2026-08-27
+
+## Cambios
+
+- SPEC 30: se agregó la captura local de errores y sugerencias con contexto, descripción y hasta tres imágenes opcionales.
+
 # V1.0
 
 **Fecha:** 2026-08-25
