@@ -3,17 +3,20 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="description" content="Panel local de documentación APIGLM">
-    <title>Panel APIGLM</title>
+    <meta name="description" content="Gestor local de documentación GLM">
+    <title>Gestor Documentación GLM</title>
     <link rel="icon" href="favicon.svg" type="image/svg+xml">
-    <link rel="stylesheet" href="style.css?v=20260826-context-module-v2">
+    <link rel="stylesheet" href="style.css?v=20260826-dashboard-kb-row-v3">
 </head>
 <body data-context="none" data-job="off" data-config="valid">
     <glm-app-shell>
     <header class="site-header">
         <div class="brand-block">
-            <p class="eyebrow">DOCUMENTACIÓN LOCAL</p>
-            <h1>Panel APIGLM</h1>
+            <h1>Gestor Documentación GLM</h1>
+            <div class="product-version" aria-live="polite">
+                <span id="application-version">Versión no disponible</span>
+                <button id="changelog-toggle" type="button" disabled aria-haspopup="dialog">Novedades</button>
+            </div>
         </div>
         <div class="context-controls" aria-label="Contexto activo">
             <div class="dropdown" id="client-dropdown">
@@ -124,6 +127,13 @@
         </section>
     </main>
     <dialog class="pdf-viewer-dialog" id="pdf-viewer-dialog" aria-labelledby="pdf-viewer-title"><div class="pdf-viewer-header"><h2 id="pdf-viewer-title">Documento PDF</h2><button id="close-pdf-viewer" type="button" aria-label="Cerrar visor PDF">Cerrar</button></div><iframe id="pdf-viewer-frame" title="Vista previa del PDF" src="about:blank"></iframe></dialog>
+    <dialog class="changelog-dialog" id="changelog-dialog" aria-labelledby="changelog-title">
+        <div class="changelog-dialog-header">
+            <div><h2 id="changelog-title">Novedades</h2><p>Historial de cambios del producto</p></div>
+            <button id="close-changelog" type="button" aria-label="Cerrar novedades">Cerrar</button>
+        </div>
+        <div class="changelog-content" id="changelog-content" tabindex="0"></div>
+    </dialog>
 
     <div class="modal-backdrop" id="context-modal" hidden><div class="modal" role="dialog" aria-modal="true" aria-labelledby="context-modal-title"><div class="modal-header"><h3 id="context-modal-title">Contexto del panel</h3><button id="close-context-modal" type="button" aria-label="Cerrar">Cerrar</button></div><p id="context-modal-message"></p><div class="action-card context-modal-actions"><button id="use-saved-context" class="primary" type="button">Usar contexto guardado</button><button id="use-server-context" class="primary" type="button">Usar contexto del servidor</button></div></div></div>
      <div class="modal-backdrop" id="configuration-modal" hidden><div class="modal" role="dialog" aria-modal="true" aria-labelledby="configuration-modal-title" aria-describedby="configuration-modal-message configuration-feedback"><div class="modal-header"><h3 id="configuration-modal-title">Editar configuración</h3><button id="close-configuration-modal" class="modal-close" type="button" aria-label="Cerrar">Cerrar</button></div><p id="configuration-modal-message" class="modal-message"></p><p id="configuration-feedback" class="modal-feedback" role="status" aria-live="polite" hidden></p><form class="form-grid" id="configuration-form" novalidate><input id="configuration-original-id" type="hidden"><input id="configuration-client-id" type="hidden"><div id="configuration-client-fields"><label>ID cliente<input id="configuration-id" required></label><label>Nombre<input id="configuration-name" required></label><label>Package name<input id="configuration-package"></label><fieldset id="configuration-export-profile-field"><legend>Entorno</legend><label><input type="radio" name="configuration-export-profile" value="Gx18"> Gx18</label><label><input type="radio" name="configuration-export-profile" value="Evo3"> Evo3</label></fieldset></div><fieldset id="configuration-environment-fields" hidden><legend id="configuration-environment-legend">Ambiente</legend><input id="configuration-environment-id" type="hidden"><label>Kb Path (de donde se exporta XPZ)<input id="configuration-kb-path"></label><label>Host (opcional)<input id="configuration-host" type="url" placeholder="https://servidor.example.com"></label><label>Base URL (opcional)<input id="configuration-base-url" placeholder="/testing/rest"></label><fieldset id="configuration-tipo-field"><legend>Tipo</legend><label><input type="radio" name="configuration-tipo" value="test"> Testing</label><label><input type="radio" name="configuration-tipo" value="prod"> Producción</label></fieldset></fieldset><div class="modal-actions"><button class="primary" type="submit">Guardar</button><button id="cancel-configuration" type="button">Cancelar</button></div></form></div></div>

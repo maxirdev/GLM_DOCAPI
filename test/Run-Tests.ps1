@@ -3610,6 +3610,62 @@ function Ejecutar-CasosConfiguracionPanelTemporal {
     }
 }
 
+function Ejecutar-CasosVersionChangelog {
+    <#
+    .SYNOPSIS
+    Verifica el contrato local de versionado y renderer del panel web.
+    .DESCRIPTION
+    Lee los fixtures Markdown de version, comprueba el formato de las entradas,
+    valida el caso hostil y revisa que el frontend mantenga una degradacion
+    independiente de configurationBlocked y sin dependencias externas.
+    #>
+    [CmdletBinding()]
+    param()
+
+    $directorioFixturesWeb = Join-Path $DirectorioFixtures 'web'
+    $rutaVersionReal = Join-Path $RaizRepositorio 'web\version.md'
+    $rutaVersionValida = Join-Path $directorioFixturesWeb 'version-valido.md'
+    $rutaVersionCorrupta = Join-Path $directorioFixturesWeb 'version-corrupto.md'
+    $rutaVersionMaliciosa = Join-Path $directorioFixturesWeb 'version-malicioso.md'
+    $rutaRenderer = Join-Path $RaizRepositorio 'web\app\render-utils.js'
+    $rutaAplicacion = Join-Path $RaizRepositorio 'web\app.js'
+    $rutaServidor = Join-Path $DirectorioBinario 'ServidorPanelWeb.ps1'
+    $rutaLanzador = Join-Path $RaizRepositorio 'IniciarPanelWeb.cmd'
+    $contenidoVersion = ''
+    $contenidoVersionValida = ''
+    $contenidoVersionCorrupta = ''
+    $contenidoVersionMaliciosa = ''
+    try {
+        $contenidoVersion = [System.IO.File]::ReadAllText($rutaVersionReal, (New-Object System.Text.UTF8Encoding($false)))
+        $contenidoVersionValida = [System.IO.File]::ReadAllText($rutaVersionValida, (New-Object System.Text.UTF8Encoding($false)))
+        $contenidoVersionCorrupta = [System.IO.File]::ReadAllText($rutaVersionCorrupta, (New-Object System.Text.UTF8Encoding($false)))
+        $contenidoVersionMaliciosa = [System.IO.File]::ReadAllText($rutaVersionMaliciosa, (New-Object System.Text.UTF8Encoding($false)))
+    } catch {
+        Test-Asercion -Id 'versionChangelog.fixturesLectura' -Condicion $false -DetalleFallo ('No se pudieron leer los fixtures de version: ' + $_.Exception.Message)
+        return
+    }
+
+    $primeraLineaVersion = @($contenidoVersion -split '\r?\n' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })[0].Trim()
+    $primeraLineaValida = @($contenidoVersionValida -split '\r?\n' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })[0].Trim()
+    $primeraLineaCorrupta = @($contenidoVersionCorrupta -split '\r?\n' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })[0].Trim()
+    $versionesFixtureValido = @([regex]::Matches($contenidoVersionValida, '(?m)^#\s+V1\.(\d+)\s*$') | ForEach-Object { [int]$_.Groups[1].Value })
+    $revisionDiezPosterior = $versionesFixtureValido.Count -ge 2 -and $versionesFixtureValido[0] -eq 10 -and $versionesFixtureValido[1] -eq 9 -and $versionesFixtureValido[0] -gt $versionesFixtureValido[1]
+    Test-Asercion -Id 'versionChangelog.archivoReal' -Condicion ($primeraLineaVersion -eq '# V1.0' -and $contenidoVersion -match '(?m)^\*\*Fecha:\*\*\s+\d{4}-\d{2}-\d{2}\s*$' -and $contenidoVersion -match 'SPEC 26' -and $contenidoVersion -match 'SPEC 27' -and $contenidoVersion -match 'SPEC 28') -DetalleExito 'web/version.md inicia en V1.0, contiene fecha y documenta las SPEC 26, 27 y 28.' -DetalleFallo 'web/version.md no cumple el contrato inicial de version.'
+    Test-Asercion -Id 'versionChangelog.formatoVersion' -Condicion ($primeraLineaValida -match '^#\s+V1\.\d+$' -and $primeraLineaCorrupta -notmatch '^#\s+V1\.\d+$' -and $revisionDiezPosterior) -DetalleExito 'El formato V1.<entero> se valida y V1.10 queda posterior a V1.9.' -DetalleFallo 'El formato de version o la comparacion entera no esta cubierta por los fixtures.'
+    Test-Asercion -Id 'versionChangelog.fixtureMalicioso' -Condicion ($contenidoVersionMaliciosa -match '<script>' -and $contenidoVersionMaliciosa -match '<img ' -and $contenidoVersionMaliciosa -match '\[Enlace\]\(javascript:' -and $contenidoVersionMaliciosa -match '!\[Imagen\]\(') -DetalleExito 'El fixture hostil contiene HTML, imagen, enlace y javascript para probar el renderer.' -DetalleFallo 'El fixture hostil no cubre todas las entradas Markdown peligrosas.'
+
+    $contenidoRenderer = [System.IO.File]::ReadAllText($rutaRenderer, (New-Object System.Text.UTF8Encoding($false)))
+    $contenidoAplicacion = [System.IO.File]::ReadAllText($rutaAplicacion, (New-Object System.Text.UTF8Encoding($false)))
+    $contenidoServidor = [System.IO.File]::ReadAllText($rutaServidor, (New-Object System.Text.UTF8Encoding($false)))
+    $contenidoLanzador = [System.IO.File]::ReadAllText($rutaLanzador, (New-Object System.Text.UTF8Encoding($false)))
+    $rendererSeguro = $contenidoRenderer -match 'function renderInlineMarkdown' -and $contenidoRenderer -match 'escapeHtml\(value\)' -and $contenidoRenderer -match 'function renderMarkdown' -and $contenidoRenderer -notmatch '(?i)DOMParser|marked|showdown|markdown-it'
+    Test-Asercion -Id 'versionChangelog.rendererSeguro' -Condicion $rendererSeguro -DetalleExito 'El renderer admite el subconjunto acordado y escapa el texto sin librerias externas.' -DetalleFallo 'El renderer no declara el escape seguro o referencia una dependencia externa.'
+    $degradacionVersion = $contenidoAplicacion -match 'available: false' -and $contenidoAplicacion -match 'Versión no disponible' -and $contenidoAplicacion -match 'console\.warn' -and $contenidoAplicacion -match 'configurationBlocked' -and $contenidoAplicacion -notmatch 'function loadApplicationVersion[\s\S]{0,2500}configurationBlocked\s*='
+    Test-Asercion -Id 'versionChangelog.degradacionNoBloqueante' -Condicion $degradacionVersion -DetalleExito 'La ausencia o invalidez del changelog conserva Versión no disponible y no modifica configurationBlocked.' -DetalleFallo 'La degradacion del changelog no esta separada del bloqueo de configuracion.'
+    Test-Asercion -Id 'versionChangelog.cargaSinCache' -Condicion (($contenidoAplicacion -match "fetch\('/version\.md'\s*,\s*\{\s*cache:\s*'no-store'") -and ($contenidoAplicacion -match 'validateApplicationVersion')) -DetalleExito 'El frontend carga version.md sin cache y valida su primera version.' -DetalleFallo 'El frontend no declara la carga sin cache o la validacion de version.'
+    Test-Asercion -Id 'versionChangelog.marcadorTecnicoSincronizado' -Condicion (($contenidoServidor.Contains('20260820-client-export-profile')) -and ($contenidoLanzador.Contains('20260820-client-export-profile')) -and (-not $contenidoLanzador.Contains('V1.'))) -DetalleExito 'El marcador técnico del servidor coincide con el lanzador y no usa la versión funcional.' -DetalleFallo 'El marcador técnico no está sincronizado o se confundió con V1.<revisión>.'
+}
+
 function Ejecutar-CasosPanelWeb {
     $rutaServidorPanel = Join-Path $DirectorioBinario 'ServidorPanelWeb.ps1'
     $archivosWeb = @('web/index.html', 'web/app.js', 'web/style.css') | ForEach-Object { Join-Path $RaizRepositorio $_ }
@@ -3644,10 +3700,12 @@ function Ejecutar-CasosPanelWeb {
         $contenidoHtmlPanel -match 'class="spinner'
     ) -DetalleExito 'El frontend declara un estado ocupado comun y un indicador de espera para la activacion.' -DetalleFallo 'Falta el contrato de estado ocupado para la activacion del contexto.'
     Test-Asercion -Id 'panelWeb.dashboardKb' -Condicion (
-        $contenidoAplicacionPanel -match 'label: ''KB''' -and
+        $contenidoAplicacionPanel -match 'dashboard-kb-row' -and
+        $contenidoAplicacionPanel -match 'summary-item-kb" label="KB"' -and
         $contenidoAplicacionPanel -match 'kbPath' -and
-        $contenidoAplicacionPanel -match 'summary-item'
-    ) -DetalleExito 'El Dashboard declara la tarjeta de KB y utiliza la ruta del contexto.' -DetalleFallo 'Falta el contrato visual de la tarjeta KB del Dashboard.'
+        $contenidoEstilosPanel -match '\.dashboard-kb-row \{[^}]*grid-column:\s*1 / -1' -and
+        $contenidoEstilosPanel -match '\.dashboard-kb-row \{[^}]*grid-template-columns:\s*minmax\(0,\s*3fr\) minmax\(0,\s*1fr\)'
+    ) -DetalleExito 'El Dashboard declara la fila KB + Últ. actualización en 75/25 con la ruta del contexto.' -DetalleFallo 'Falta el contrato visual de la tarjeta KB del Dashboard.'
     Test-Asercion -Id 'panelWeb.estilosEstadoOcupado' -Condicion (
         $contenidoEstilosPanel -match 'animation:\s*spinner-rotate' -and
         $contenidoEstilosPanel -match '-webkit-animation:\s*spinner-rotate' -and
@@ -3768,6 +3826,35 @@ function Ejecutar-CasosPanelWeb {
         }
         Test-Asercion -Id 'panelWeb.estaticos' -Condicion ($null -ne $respuestaInicio -and $respuestaInicio.StatusCode -eq 200) -DetalleExito 'El servidor entrega el frontend por loopback.' -DetalleFallo 'El servidor no entregó index.html.'
         if ($null -eq $respuestaInicio) { return }
+
+        $respuestaVersion = $null
+        try { $respuestaVersion = Invoke-WebRequest -UseBasicParsing -Uri ('http://127.0.0.1:' + $puerto + '/version.md') -ErrorAction Stop } catch { }
+        Test-Asercion -Id 'panelWeb.versionServing' -Condicion (
+            $null -ne $respuestaVersion -and
+            $respuestaVersion.StatusCode -eq 200 -and
+            $respuestaVersion.Headers['Content-Type'] -match '^text/markdown;\s*charset=utf-8' -and
+            $respuestaVersion.Headers['Cache-Control'] -eq 'no-store' -and
+            $respuestaVersion.Content -match '^# V1\.0'
+        ) -DetalleExito 'GET /version.md responde Markdown UTF-8 con Cache-Control no-store.' -DetalleFallo 'GET /version.md no respeta el contrato de serving, MIME o cache.'
+
+        $rechazoMetodoVersion = $false
+        try { Invoke-WebRequest -Method Post -UseBasicParsing -Uri ('http://127.0.0.1:' + $puerto + '/version.md') -ErrorAction Stop | Out-Null } catch {
+            $codigoMetodoVersion = if ($_.Exception.Response) { [int]$_.Exception.Response.StatusCode.value__ } else { 0 }
+            $rechazoMetodoVersion = $codigoMetodoVersion -eq 405
+        }
+        Test-Asercion -Id 'panelWeb.versionMetodoNoPermitido' -Condicion $rechazoMetodoVersion -DetalleExito 'La entrega estática de version.md rechaza métodos distintos de GET con HTTP 405.' -DetalleFallo 'version.md fue accesible mediante un método HTTP no permitido.'
+
+        $rechazoRutasVersion = $true
+        foreach ($rutaNoPermitida in @('/version.md.bak', '/version.mdx', '/version.md%2f..%2fconfiguracion.json')) {
+            try {
+                $respuestaRutaVersion = Invoke-WebRequest -UseBasicParsing -Uri ('http://127.0.0.1:' + $puerto + $rutaNoPermitida) -ErrorAction Stop
+                if ($respuestaRutaVersion.StatusCode -eq 200) { $rechazoRutasVersion = $false; break }
+            } catch {
+                $codigoRutaVersion = if ($_.Exception.Response) { [int]$_.Exception.Response.StatusCode.value__ } else { 0 }
+                if ($codigoRutaVersion -eq 200) { $rechazoRutasVersion = $false; break }
+            }
+        }
+        Test-Asercion -Id 'panelWeb.versionRutasNoPermitidas' -Condicion $rechazoRutasVersion -DetalleExito 'Rutas similares y traversal no exponen archivos Markdown fuera de la allowlist.' -DetalleFallo 'Una ruta similar o de traversal expuso un archivo estático.'
 
         $fuentesValidas = $true
         foreach ($nombreFuente in @('Poppins-Regular.ttf', 'Poppins-SemiBold.ttf', 'Poppins-Bold.ttf')) {
@@ -3898,6 +3985,7 @@ try {
     Ejecutar-CasosMigracionConfiguracionModular
     Ejecutar-CasosConfiguracionPanelTemporal
     Ejecutar-CasosFixturesPanelWeb
+    Ejecutar-CasosVersionChangelog
     Ejecutar-CasosEstadosOperacionPanel
     Ejecutar-CasosMulticontexto
     Ejecutar-CasosIntegridadTransaccional

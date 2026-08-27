@@ -6,7 +6,7 @@ import {
     readUiPreferences,
     saveUiPreferences
 } from './preferences.js';
-import { escapeHtml, getProperty, normalize, renderTextList } from './render-utils.js';
+import { escapeHtml, getProperty, normalize, renderTextList, renderInlineMarkdown, renderMarkdown } from './render-utils.js';
 import { registerBaseStateComponents } from './components/base-states.js';
 import { registerServiceComponents } from './components/service-components.js';
 import { registerOperationConsole } from './components/operation-console.js?v=20260820-pdf-oneclick-v6';
@@ -24,7 +24,7 @@ window.panelUiPreferences = {
     read: readUiPreferences,
     save: saveUiPreferences
 };
-window.panelRenderUtils = { escapeHtml, getProperty, normalize, renderTextList };
+window.panelRenderUtils = { escapeHtml, getProperty, normalize, renderTextList, renderInlineMarkdown, renderMarkdown };
 registerBaseStateComponents();
 registerServiceComponents();
 registerOperationConsole();

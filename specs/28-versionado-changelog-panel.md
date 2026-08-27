@@ -1,6 +1,6 @@
 # SPEC 28 — Versión y changelog del panel
 
-> **Estado:** Borrador
+> **Estado:** Aprobado
 > **Depende de:** SPEC 25, SPEC 26, SPEC 27
 > **Fecha:** 2026-08-25
 > **Objetivo:** Identificar el producto como Gestor Documentación GLM y publicar su versión y changelog desde un archivo Markdown local visible en el header del panel.

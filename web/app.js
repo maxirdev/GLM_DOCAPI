@@ -43,6 +43,15 @@
     var documentationView = 'cards';
     var documentationLoadSequence = 0;
     var stateLoadSequence = 0;
+    var applicationVersion = {
+        available: false,
+        version: null,
+        markdown: null,
+        error: 'No se pudo cargar el historial de versiones.'
+    };
+    var changelogDialogOrigin = null;
+
+    window.applicationVersion = applicationVersion;
 
     function useServerApi() {
         return window.location.protocol === 'http:' && typeof window.fetch === 'function';
@@ -61,6 +70,92 @@
 
     function normalize(value) {
         return String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+    }
+
+    function setApplicationVersionState(available, version, markdown, error) {
+        applicationVersion = {
+            available: Boolean(available),
+            version: available ? version : null,
+            markdown: available ? markdown : null,
+            error: available ? null : (error || 'No se pudo cargar el historial de versiones.')
+        };
+        window.applicationVersion = applicationVersion;
+        var versionElement = document.getElementById('application-version');
+        var changelogButton = document.getElementById('changelog-toggle');
+        if (!versionElement || !changelogButton) { return; }
+        versionElement.textContent = available ? version : 'Versión no disponible';
+        changelogButton.disabled = !available;
+    }
+
+    function getFirstSignificantLine(markdown) {
+        var lines = String(markdown || '').replace(/^\uFEFF/, '').split(/\r\n?|\n/);
+        for (var lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+            var trimmedLine = lines[lineIndex].trim();
+            if (trimmedLine) { return trimmedLine; }
+        }
+        return '';
+    }
+
+    function validateApplicationVersion(markdown) {
+        var firstSignificantLine = getFirstSignificantLine(markdown);
+        var versionMatch = firstSignificantLine.match(/^#\s+V1\.(\d+)\s*$/);
+        if (!versionMatch) { throw new Error('El primer encabezado no contiene una version funcional valida.'); }
+        var revision = Number(versionMatch[1]);
+        if (!isFinite(revision) || revision < 0 || Math.floor(revision) !== revision) {
+            throw new Error('La revision de la version funcional no es un entero valido.');
+        }
+        return firstSignificantLine.match(/^#\s+(V1\.\d+)\s*$/)[1];
+    }
+
+    function loadApplicationVersion() {
+        if (typeof window.fetch !== 'function') {
+            setApplicationVersionState(false, null, null, 'No se pudo cargar el historial de versiones.');
+            return;
+        }
+        fetch('/version.md', { cache: 'no-store' }).then(function (response) {
+            if (!response.ok) { throw new Error('El historial de versiones no esta disponible.'); }
+            return response.text();
+        }).then(function (markdown) {
+            var version = validateApplicationVersion(markdown);
+            setApplicationVersionState(true, version, markdown, null);
+        }).catch(function (error) {
+            setApplicationVersionState(false, null, null, 'No se pudo cargar el historial de versiones.');
+            console.warn('[version] No se pudo cargar el historial de versiones.', error);
+        });
+    }
+
+    function openApplicationChangelog() {
+        if (!applicationVersion.available) { return; }
+        var dialog = document.getElementById('changelog-dialog');
+        var content = document.getElementById('changelog-content');
+        var renderMarkdown = window.panelRenderUtils && window.panelRenderUtils.renderMarkdown;
+        var changelogButton = document.getElementById('changelog-toggle');
+        if (!dialog || !content || !renderMarkdown || dialog.open) { return; }
+        changelogDialogOrigin = document.activeElement;
+        content.innerHTML = renderMarkdown(applicationVersion.markdown);
+        changelogButton.setAttribute('aria-expanded', 'true');
+        if (typeof dialog.showModal === 'function') {
+            dialog.showModal();
+        } else {
+            dialog.setAttribute('open', '');
+        }
+        content.focus();
+    }
+
+    function closeApplicationChangelog() {
+        var dialog = document.getElementById('changelog-dialog');
+        var changelogButton = document.getElementById('changelog-toggle');
+        if (!dialog) { return; }
+        if (dialog.open && typeof dialog.close === 'function') {
+            dialog.close();
+        } else {
+            dialog.removeAttribute('open');
+        }
+        changelogButton.setAttribute('aria-expanded', 'false');
+        if (changelogDialogOrigin && document.contains(changelogDialogOrigin)) {
+            changelogDialogOrigin.focus();
+        }
+        changelogDialogOrigin = null;
     }
 
     function clasificarModulo(modulo) {
@@ -726,17 +821,16 @@
             { label: 'Cliente', value: clientName },
             { label: 'Módulo', value: moduleName },
             { label: 'Ambiente', value: environmentName, tag: environmentTipo },
-            { label: 'Documentos', value: String(documents.total || 0) + ' PDF' },
-            { label: 'Últ. actualización', value: ultimaActualizacion },
-            { label: 'KB', value: getProperty(context, 'kbPath', 'KbPath') || 'No disponible' }
+            { label: 'Documentos', value: String(documents.total || 0) + ' PDF' }
         ];
         summary.innerHTML = items.map(function (item) {
             var tag = item.tag ? ' · ' + item.tag : '';
-            if (item.label === 'KB') {
-                return '<glm-stat-card class="summary-item-kb" label="KB" value="' + escapeHtml(item.value) + '" detail="Ruta de la Knowledge Base"></glm-stat-card>';
-            }
             return '<glm-stat-card label="' + escapeHtml(item.label) + '" value="' + escapeHtml(item.value) + '" detail="' + escapeHtml(tag.replace(/^ · /, '')) + '"></glm-stat-card>';
-        }).join('');
+        }).join('') +
+        '<div class="dashboard-kb-row">' +
+            '<glm-stat-card class="summary-item-kb" label="KB" value="' + escapeHtml(getProperty(context, 'kbPath', 'KbPath') || 'No disponible') + '" detail="Ruta de la Knowledge Base"></glm-stat-card>' +
+            '<glm-stat-card label="Últ. actualización" value="' + escapeHtml(ultimaActualizacion) + '"></glm-stat-card>' +
+        '</div>';
 
         document.getElementById('validation-list').innerHTML = validaciones.map(function (item) {
             return '<div class="validation-item"><span class="v-name">' + escapeHtml(item.item) + '</span>' + statusBadge(item.estado) + '<span class="v-msg">' + escapeHtml(item.mensaje) + '</span></div>';
@@ -2026,6 +2120,12 @@
                 window.panelUiPreferences.current = currentPreferences;
             }
         });
+        document.getElementById('changelog-toggle').addEventListener('click', openApplicationChangelog);
+        document.getElementById('close-changelog').addEventListener('click', closeApplicationChangelog);
+        document.getElementById('changelog-dialog').addEventListener('cancel', function (event) {
+            event.preventDefault();
+            closeApplicationChangelog();
+        });
         document.querySelectorAll('[data-target-tab]').forEach(function (button) {
             button.addEventListener('click', function () { selectTab(button.getAttribute('data-target-tab')); });
         });
@@ -2059,4 +2159,5 @@
     selectTab('estado');
     loadContextsFromServer();
     loadConfiguration();
+    loadApplicationVersion();
 }());

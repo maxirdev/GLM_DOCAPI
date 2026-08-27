@@ -28,7 +28,7 @@ if ([string]::IsNullOrWhiteSpace($ConfigPath)) {
 Inicializar-ConsolaUtf8
 
 $script:SessionToken = $null
-$script:PanelServerVersion = '20260820-msbuild-timeout-cleanup-v5'
+$script:PanelServerVersion = '20260820-client-export-profile'
 $script:ConfigurationRaw = $null
 $script:ConfigurationErrors = New-Object System.Collections.Generic.List[string]
 $script:ConfigurationEvaluation = $null
@@ -1433,7 +1433,7 @@ function Get-StaticPath {
     if ($logicalPath -match '^/fonts/Poppins-(Regular|SemiBold|Bold)\.ttf$') {
         return Join-Path (Join-Path $RepositoryRoot 'binary\fonts') ([System.IO.Path]::GetFileName($logicalPath))
     }
-    if ($logicalPath -notmatch '^/(index\.html|style\.css|favicon\.svg|resources/example\.html|app\.js|app/(main|api-client|state|preferences|render-utils)\.js|app/components/(app-shell|base-states|service-components|operation-console|crud-list)\.js|app/views/(index|dashboard|documentation|logs|configuration)\.js)$') {
+    if ($logicalPath -notmatch '^/(index\.html|style\.css|favicon\.svg|version\.md|resources/example\.html|app\.js|app/(main|api-client|state|preferences|render-utils)\.js|app/components/(app-shell|base-states|service-components|operation-console|crud-list)\.js|app/views/(index|dashboard|documentation|logs|configuration)\.js)$') {
         return $null
     }
     return Join-Path (Join-Path $RepositoryRoot 'web') $logicalPath.TrimStart('/')
@@ -1445,6 +1445,7 @@ function Get-ContentType {
         '.html' { return 'text/html; charset=utf-8' }
         '.js' { return 'text/javascript; charset=utf-8' }
         '.css' { return 'text/css; charset=utf-8' }
+        '.md' { return 'text/markdown; charset=utf-8' }
         '.svg' { return 'image/svg+xml' }
         '.ttf' { return 'font/ttf' }
         default { return 'application/octet-stream' }
@@ -1453,6 +1454,10 @@ function Get-ContentType {
 
 function Send-StaticFile {
     param([Parameter(Mandatory = $true)]$RequestContext)
+    if ($RequestContext.Request.HttpMethod -ne 'GET') {
+        Write-TextResponse -RequestContext $RequestContext -StatusCode 405 -Content 'Metodo no permitido.' -ContentType 'text/plain; charset=utf-8'
+        return
+    }
     $path = Get-StaticPath -RequestPath $RequestContext.Request.Url.AbsolutePath
     if ($null -eq $path -or -not (Test-Path -LiteralPath $path -PathType Leaf)) {
         Write-TextResponse -RequestContext $RequestContext -StatusCode 404 -Content 'Recurso no encontrado.' -ContentType 'text/plain; charset=utf-8'
@@ -1508,9 +1513,7 @@ function Get-ObservacionCambioServicioDesdeArchivo {
 function Get-ContextValidaciones {
     $validaciones = New-Object System.Collections.Generic.List[object]
     if ($null -eq $script:ActiveContext) { return @($validaciones.ToArray()) }
-    if ($script:ConfigurationErrors.Count -eq 0) {
-        [void]$validaciones.Add([pscustomobject]@{ item = 'Configuracion'; estado = 'OK'; mensaje = 'Esquema multicliente valido.' })
-    } else {
+    if ($script:ConfigurationErrors.Count -gt 0) {
         [void]$validaciones.Add([pscustomobject]@{ item = 'Configuracion'; estado = 'ERROR'; mensaje = ($script:ConfigurationErrors -join '; ') })
     }
     $herramientasDefinidas = @(
@@ -1546,7 +1549,6 @@ function Get-ContextValidaciones {
     [void]$validaciones.Add([pscustomobject]@{ item = 'Contexto'; estado = 'OK'; mensaje = ($script:ActiveContext.ContextId + ' (' + $script:ActiveContext.ClienteNombre + ' / ' + $script:ActiveContext.AmbienteNombre + ')') })
     try {
         Validar-RutaKnowledgeBase -Ruta $script:ActiveContext.KbPath -Contexto 'La Knowledge Base del ambiente' | Out-Null
-        [void]$validaciones.Add([pscustomobject]@{ item = 'Knowledge Base'; estado = 'OK'; mensaje = $script:ActiveContext.KbPath })
     } catch {
         [void]$validaciones.Add([pscustomobject]@{ item = 'Knowledge Base'; estado = 'ERROR'; mensaje = $_.Exception.Message })
     }
