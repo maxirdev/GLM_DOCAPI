@@ -1,6 +1,6 @@
 # SPEC 27 — Validación integral de configuración al iniciar
 
-> **Estado:** Borrador
+> **Estado:** Aprobado
 > **Depende de:** SPEC 23, SPEC 26
 > **Fecha:** 2026-08-25
 > **Objetivo:** Validar íntegramente el `configuracion.json` compartido antes de habilitar el panel y bloquear toda operación cuando algún contexto no pueda cargarse de forma coherente.

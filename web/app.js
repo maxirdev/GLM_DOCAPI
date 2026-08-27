@@ -36,6 +36,8 @@
     var conflictingServerContext = null;
     var configurationModalOrigin = null;
     var configurationConfirmationAction = null;
+    var configurationBlocked = false;
+    var configurationStatusKnown = false;
     var documentationCurrentPage = 1;
     var documentationPageSize = 25;
     var documentationView = 'cards';
@@ -378,9 +380,15 @@
     /* ============ CARGA DE CONTEXTOS ============ */
     function loadContextsFromServer() {
         if (!useServerApi()) { return; }
+        if (!configurationStatusKnown) {
+            window.setTimeout(loadContextsFromServer, 25);
+            return;
+        }
+        if (configurationBlocked) { return; }
         fetch('/api/contextos', { cache: 'no-store' }).then(function (response) { return response.json(); }).then(function (payload) {
-            if (!payload.ok) { return; }
-            var clients = {};
+             if (!payload.ok) { return; }
+             applyConfigurationStatus(payload.data);
+             var clients = {};
             var contextList = payload.data.contextos || [];
             contextList.forEach(function (context) {
                 var modulo = clasificarModulo(getProperty(context, 'modulo', 'Modulo'));
@@ -444,7 +452,7 @@
             return { value: modulo, label: nombreModulo(modulo, modules[modulo].name) };
         });
         moduleDropdown.setOptions(options);
-        moduleDropdown.disabled = options.length === 0;
+             moduleDropdown.disabled = configurationBlocked || options.length === 0;
     }
 
     function selectEnvironment() {
@@ -452,11 +460,11 @@
             return { value: environment.id, label: nombreAmbienteCanonico(environment.tipo, environment.name), tags: [environment.tipo] };
         });
         environmentDropdown.setOptions(options);
-        environmentDropdown.disabled = options.length === 0;
+         environmentDropdown.disabled = configurationBlocked || options.length === 0;
     }
 
     function applyAutomaticContextSelection() {
-        if (contextLocked || contextActivationPending) { return; }
+        if (configurationBlocked || contextLocked || contextActivationPending) { return; }
         var clientIds = Object.keys(modulesByClient);
         if (!clientDropdown.value && clientIds.length === 1) { clientDropdown.value = clientIds[0]; }
         if (!clientDropdown.value) { return; }
@@ -484,9 +492,9 @@
 
     function unlockContext() {
         contextLocked = false;
-        clientDropdown.disabled = false;
-        moduleDropdown.disabled = !clientDropdown.value;
-        environmentDropdown.disabled = !(clientDropdown.value && moduleDropdown.value);
+        clientDropdown.disabled = configurationBlocked;
+        moduleDropdown.disabled = configurationBlocked || !clientDropdown.value;
+        environmentDropdown.disabled = configurationBlocked || !(clientDropdown.value && moduleDropdown.value);
         document.getElementById('change-client').hidden = true;
         document.body.setAttribute('data-context', 'none');
         document.getElementById('dashboard-title').textContent = 'Dashboard';
@@ -523,12 +531,64 @@
             controlId: isBusy ? 'environment-dropdown-trigger' : '',
             pending: Boolean(isBusy)
         };
-        clientDropdown.disabled = Boolean(isBusy) || contextLocked;
-        moduleDropdown.disabled = Boolean(isBusy) || contextLocked || !clientDropdown.value;
-        environmentDropdown.disabled = Boolean(isBusy) || contextLocked || !(clientDropdown.value && moduleDropdown.value);
+        clientDropdown.disabled = Boolean(isBusy) || contextLocked || configurationBlocked;
+        moduleDropdown.disabled = Boolean(isBusy) || contextLocked || configurationBlocked || !clientDropdown.value;
+        environmentDropdown.disabled = Boolean(isBusy) || contextLocked || configurationBlocked || !(clientDropdown.value && moduleDropdown.value);
         environmentDropdown.setBusy(Boolean(isBusy));
         document.getElementById('change-client').disabled = Boolean(isBusy);
         document.getElementById('change-client').hidden = Boolean(isBusy) || !contextLocked;
+    }
+
+    function getConfigurationErrorList(data) {
+        var source = data && (data.configurationErrors || data.errores || []);
+        return Array.isArray(source) ? source : [];
+    }
+
+    function renderConfigurationBlockedModal(errors) {
+        var modal = document.getElementById('configuration-blocked-modal');
+        var container = document.getElementById('configuration-blocked-errors');
+        if (!modal || !container) { return; }
+        container.innerHTML = errors.map(function (error) {
+            var scope = getProperty(error, 'scope', 'Scope') || 'global';
+            var field = getProperty(error, 'field', 'Field');
+            var message = getProperty(error, 'message', 'Message') || String(error || 'Error de configuración.');
+            var location = field ? scope + ' / ' + field : scope;
+            return '<div class="config-error" role="listitem"><strong>' + escapeHtml(location) + '</strong><span>' + escapeHtml(message) + '</span></div>';
+        }).join('');
+        modal.hidden = false;
+        window.setTimeout(function () {
+            var dialog = modal.querySelector('.configuration-blocked-modal');
+            if (configurationBlocked && !modal.hidden && dialog) { dialog.focus(); }
+        }, 0);
+    }
+
+    function setConfigurationInteractionLock(locked) {
+        configurationBlocked = Boolean(locked);
+        document.body.setAttribute('data-config', configurationBlocked ? 'invalid' : 'valid');
+        clientDropdown.disabled = configurationBlocked || contextLocked;
+        moduleDropdown.disabled = configurationBlocked || contextLocked || !clientDropdown.value;
+        environmentDropdown.disabled = configurationBlocked || contextLocked || !(clientDropdown.value && moduleDropdown.value);
+        document.querySelectorAll('.page-shell button').forEach(function (button) { button.disabled = configurationBlocked; });
+        document.getElementById('configuration-toggle').disabled = false;
+        if (configurationBlocked) {
+            document.getElementById('change-client').hidden = true;
+            document.body.setAttribute('data-context', 'none');
+        } else {
+            setWorkBusy(Boolean(currentJobId));
+        }
+    }
+
+    function applyConfigurationStatus(data) {
+        if (!data || (data.configurationValid === undefined && data.configurationBlocked === undefined)) { return; }
+        configurationStatusKnown = true;
+        var invalid = data.configurationBlocked === true || data.configurationValid === false;
+        var errors = getConfigurationErrorList(data);
+        setConfigurationInteractionLock(invalid);
+        if (invalid) {
+            renderConfigurationBlockedModal(errors);
+        } else {
+            document.getElementById('configuration-blocked-modal').hidden = true;
+        }
     }
 
     /* ============ NOTIFICACIONES GLOBALES ============ */
@@ -717,7 +777,7 @@
         var hasContext = Boolean(stateData && stateData.context);
         var configurationValid = !stateData || stateData.configurationValid !== false;
         document.querySelectorAll('.tab').forEach(function (tab) {
-            var allowed = tab.dataset.tab === 'estado' || (hasContext && configurationValid);
+            var allowed = !configurationBlocked && (tab.dataset.tab === 'estado' || (hasContext && configurationValid));
             tab.disabled = !allowed;
             tab.setAttribute('aria-disabled', allowed ? 'false' : 'true');
         });
@@ -731,6 +791,7 @@
         fetch('/api/estado', { cache: 'no-store' }).then(function (response) { return response.json(); }).then(function (payload) {
             if (requestSequence !== stateLoadSequence || (requestedContextKey && requestedContextKey !== getSelectedContextKey())) { return; }
             if (!payload.ok) { return; }
+            applyConfigurationStatus(payload.data);
             var serverContext = payload.data.context;
             if (contextResolutionPending) { return; }
             if (pendingPersistedContext && serverContext && !contextsMatch(pendingPersistedContext, serverContext)) {
@@ -1012,15 +1073,15 @@
     }
 
     function setWorkBusy(isBusy) {
-        clientDropdown.disabled = isBusy || contextLocked;
-        moduleDropdown.disabled = isBusy || contextLocked || !clientDropdown.value;
-        environmentDropdown.disabled = isBusy || contextLocked || !(clientDropdown.value && moduleDropdown.value);
+        clientDropdown.disabled = isBusy || contextLocked || configurationBlocked;
+        moduleDropdown.disabled = isBusy || contextLocked || configurationBlocked || !clientDropdown.value;
+        environmentDropdown.disabled = isBusy || contextLocked || configurationBlocked || !(clientDropdown.value && moduleDropdown.value);
         document.getElementById('change-client').hidden = isBusy;
-        exportButton.disabled = isBusy || !(clientDropdown.value && moduleDropdown.value && environmentDropdown.value);
-        updateServicesButton.disabled = isBusy || !(clientDropdown.value && moduleDropdown.value && environmentDropdown.value);
-        document.getElementById('generate-pdf').disabled = isBusy || !(lastState && lastState.xpz && lastState.xpz.activo);
-        updatePdfButton.disabled = isBusy || !(lastState && lastState.dashboard && lastState.dashboard.xpz && lastState.dashboard.xpz.activo) || Boolean(lastState && lastState.dashboard && lastState.dashboard.xpz && lastState.dashboard.xpz.activo.procesado);
-        generateOpenApiButton.disabled = isBusy;
+        exportButton.disabled = isBusy || configurationBlocked || !(clientDropdown.value && moduleDropdown.value && environmentDropdown.value);
+        updateServicesButton.disabled = isBusy || configurationBlocked || !(clientDropdown.value && moduleDropdown.value && environmentDropdown.value);
+        document.getElementById('generate-pdf').disabled = isBusy || configurationBlocked || !(lastState && lastState.xpz && lastState.xpz.activo);
+        updatePdfButton.disabled = isBusy || configurationBlocked || !(lastState && lastState.dashboard && lastState.dashboard.xpz && lastState.dashboard.xpz.activo) || Boolean(lastState && lastState.dashboard && lastState.dashboard.xpz && lastState.dashboard.xpz.activo.procesado);
+        generateOpenApiButton.disabled = isBusy || configurationBlocked;
         if (!isBusy) { document.getElementById('openapi-running').hidden = true; }
         if (isBusy) { document.getElementById('documentation-running').hidden = false; }
         document.body.setAttribute('data-job', isBusy ? 'on' : 'off');
@@ -1267,7 +1328,7 @@
     /* ============ ACTIVAR CONTEXTO ============ */
     function activateContext() {
         var active = Boolean(clientDropdown.value && moduleDropdown.value && environmentDropdown.value);
-        if (active && useServerApi() && !contextActivationPending) {
+        if (active && useServerApi() && !contextActivationPending && !configurationBlocked) {
             clearContextDependentState();
             contextActivationPending = true;
             setContextActivationBusy(true);
@@ -1385,6 +1446,7 @@
             configurationData.configuration = payload.data.configuracion;
             configurationData.configHash = payload.data.configHash || '';
             configurationData.errores = payload.data.errores || [];
+            applyConfigurationStatus(payload.data);
             configurationSnapshot = payload.data.configuracion;
             renderConfigurationList();
         }).catch(function () { });
@@ -1683,6 +1745,13 @@
     }
 
     function trapModalFocus(event, modal) {
+        var blockedModal = document.getElementById('configuration-blocked-modal');
+        if (blockedModal && !blockedModal.hidden) {
+            event.preventDefault();
+            var blockedDialog = blockedModal.querySelector('.configuration-blocked-modal');
+            if ((event.key === 'Tab' || event.key === 'Escape') && blockedDialog) { blockedDialog.focus(); }
+            return;
+        }
         if (event.key === 'Escape') {
             if (!document.getElementById('configuration-modal').hidden) { closeConfigurationModal(); }
             if (!document.getElementById('configuration-confirm-modal').hidden) { closeConfigurationConfirmation(); }
@@ -1777,6 +1846,7 @@
 
     /* ============ PESTAÑAS ============ */
     function selectTab(tabName) {
+        if (configurationBlocked && tabName !== 'estado') { return; }
         activeTab = tabName;
         if (window.panelUiPreferences) {
             var tabPreferences = window.panelUiPreferences.read();

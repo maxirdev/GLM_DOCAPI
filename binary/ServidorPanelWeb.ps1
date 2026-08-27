@@ -27,10 +27,13 @@ if ([string]::IsNullOrWhiteSpace($ConfigPath)) {
 
 Inicializar-ConsolaUtf8
 
-$script:SessionToken = [Guid]::NewGuid().ToString('N')
+$script:SessionToken = $null
 $script:PanelServerVersion = '20260820-msbuild-timeout-cleanup-v5'
 $script:ConfigurationRaw = $null
 $script:ConfigurationErrors = New-Object System.Collections.Generic.List[string]
+$script:ConfigurationEvaluation = $null
+$script:ConfigurationValid = $false
+$script:ConfigurationBlocked = $true
 $script:ActiveContext = $null
 $script:ActiveXpz = $null
 $script:XpzOverride = $false
@@ -41,14 +44,13 @@ $script:WorkOutputTimestampCache = @{}
 $script:XpzSha256ProcesadoCache = $null
 
 function Read-PanelConfiguration {
-    try {
-        if (-not (Test-Path -LiteralPath $ConfigPath)) {
-            throw ('No se encontro el archivo de configuracion: ' + $ConfigPath)
-        }
-        $script:ConfigurationRaw = Get-Content -LiteralPath $ConfigPath -Raw | ConvertFrom-Json
-        Validar-ConfiguracionMulticliente -ConfiguracionRaw $script:ConfigurationRaw -RaizRepositorio $RepositoryRoot -ConfigPath $ConfigPath | Out-Null
-    } catch {
-        $script:ConfigurationErrors.Add($_.Exception.Message)
+    $script:ConfigurationEvaluation = Evaluar-ConfiguracionIntegral -ConfigPath $ConfigPath -RaizRepositorio $RepositoryRoot
+    $script:ConfigurationRaw = $script:ConfigurationEvaluation.configurationRaw
+    $script:ConfigurationValid = [bool]$script:ConfigurationEvaluation.configurationValid
+    $script:ConfigurationBlocked = [bool]$script:ConfigurationEvaluation.configurationBlocked
+    $script:ConfigurationErrors.Clear()
+    foreach ($errorConfiguracion in @($script:ConfigurationEvaluation.configurationErrors)) {
+        $script:ConfigurationErrors.Add(([string]$errorConfiguracion.scope + ' / ' + [string]$errorConfiguracion.field + ': ' + [string]$errorConfiguracion.message))
     }
 }
 
@@ -1149,6 +1151,17 @@ function Get-ConfigurationHash {
     }
 }
 
+function Get-ConfigurationErrorsForResponse {
+    if ($null -eq $script:ConfigurationEvaluation) { return @() }
+    return @($script:ConfigurationEvaluation.configurationErrors | ForEach-Object {
+        [pscustomobject]@{
+            scope = [string]$_.scope
+            field = [string]$_.field
+            message = [string]$_.message
+        }
+    })
+}
+
 function Test-PanelPortValue {
     param($Configuration)
     if ($null -eq $Configuration.panel -or $null -eq $Configuration.panel.puerto) { return $true }
@@ -1158,8 +1171,14 @@ function Test-PanelPortValue {
 
 function Test-ConfigurationCandidate {
     param([Parameter(Mandatory = $true)]$Candidate)
-    if (-not (Test-PanelPortValue -Configuration $Candidate)) { throw 'panel.puerto debe ser un entero entre 1 y 65535.' }
-    Validar-ConfiguracionMulticliente -ConfiguracionRaw $Candidate -RaizRepositorio $RepositoryRoot -ConfigPath $ConfigPath -ValidarContenidoKnowledgeBase | Out-Null
+    $evaluacionCandidata = Evaluar-ConfiguracionIntegral -ConfiguracionRaw $Candidate -ConfigPath $ConfigPath -RaizRepositorio $RepositoryRoot
+    if (-not $evaluacionCandidata.configurationValid) {
+        $mensajesError = @($evaluacionCandidata.configurationErrors | ForEach-Object {
+            [string]$_.scope + ' / ' + [string]$_.field + ': ' + [string]$_.message
+        })
+        throw ('La configuracion candidata es invalida: ' + ($mensajesError -join ' | '))
+    }
+    return $evaluacionCandidata
 }
 
 function Normalize-CandidateEnvironmentNames {
@@ -1188,12 +1207,30 @@ function Write-ConfigurationCandidate {
     )
     $contextBeforeWrite = $script:ActiveContext
     Normalize-CandidateEnvironmentNames -Candidate $Candidate
-    # Las mutaciones validan el contenido de la KB afectada; el candidato completo
-    # se valida aqui por esquema para no exigir acceso a todas las KB existentes.
-    Validar-ConfiguracionMulticliente -ConfiguracionRaw $Candidate -RaizRepositorio $RepositoryRoot -ConfigPath $ConfigPath | Out-Null
+    # Las mutaciones validan el contenido de la KB afectada antes de llegar aqui;
+    # el candidato completo se valida en memoria y sin exigir acceso a las demas KB.
+    Test-ConfigurationCandidate -Candidate $Candidate | Out-Null
     $content = Normalizar-SaltosLineaLf -Texto ($Candidate | ConvertTo-Json -Depth 15)
     Escribir-ArchivoAtomico -Ruta $ConfigPath -Contenido $content | Out-Null
-    $script:ConfigurationRaw = Get-Content -LiteralPath $ConfigPath -Raw | ConvertFrom-Json
+
+    $configuracionPublicada = $null
+    try {
+        $configuracionPublicada = Get-Content -LiteralPath $ConfigPath -Raw | ConvertFrom-Json
+    } catch {
+        throw ('La configuracion publicada no se pudo releer como JSON valido: ' + $_.Exception.Message)
+    }
+    $evaluacionPublicada = Evaluar-ConfiguracionIntegral -ConfiguracionRaw $configuracionPublicada -ConfigPath $ConfigPath -RaizRepositorio $RepositoryRoot
+    if (-not $evaluacionPublicada.configurationValid) {
+        $mensajesErrorPublicacion = @($evaluacionPublicada.configurationErrors | ForEach-Object {
+            [string]$_.scope + ' / ' + [string]$_.field + ': ' + [string]$_.message
+        })
+        throw ('La configuracion publicada no supera la validacion integral: ' + ($mensajesErrorPublicacion -join ' | '))
+    }
+
+    $script:ConfigurationEvaluation = $evaluacionPublicada
+    $script:ConfigurationRaw = $evaluacionPublicada.configurationRaw
+    $script:ConfigurationValid = [bool]$evaluacionPublicada.configurationValid
+    $script:ConfigurationBlocked = [bool]$evaluacionPublicada.configurationBlocked
     $script:ConfigurationErrors.Clear()
     Reset-PanelSession
     if ($contextBeforeWrite) {
@@ -1367,6 +1404,14 @@ function Test-LoopbackRequest {
 function Test-SessionToken {
     param([Parameter(Mandatory = $true)]$Request)
     return ([string]$Request.Headers['X-Panel-Token'] -eq $script:SessionToken)
+}
+
+function Test-ConfigurationDiagnosticRoute {
+    param(
+        [Parameter(Mandatory = $true)][string]$Route,
+        [Parameter(Mandatory = $true)][string]$HttpMethod
+    )
+    return $HttpMethod -eq 'GET' -and $Route -in @('/api/estado', '/api/configuracion')
 }
 
 function Get-RequestBodyJson {
@@ -1550,8 +1595,9 @@ function Get-StateData {
     }
     [pscustomobject]@{
         panelVersion = $script:PanelServerVersion
-        configurationValid = ($script:ConfigurationErrors.Count -eq 0)
-        configurationErrors = @($script:ConfigurationErrors)
+        configurationValid = [bool]$script:ConfigurationValid
+        configurationBlocked = [bool]$script:ConfigurationBlocked
+        configurationErrors = @(Get-ConfigurationErrorsForResponse)
         context = $script:ActiveContext
         xpz = if ($script:ActiveXpz) { Convert-XpzForResponse -Xpz $script:ActiveXpz } else { $null }
         work = $publicWork
@@ -1569,6 +1615,14 @@ function Invoke-ApiRequest {
         Write-JsonResponse -RequestContext $RequestContext -StatusCode 403 -Payload @{ ok = $false; error = 'El panel solo acepta solicitudes loopback.' }
         return
     }
+    if ($script:ConfigurationBlocked -and -not (Test-ConfigurationDiagnosticRoute -Route $route -HttpMethod $request.HttpMethod)) {
+        Write-JsonResponse -RequestContext $RequestContext -StatusCode 409 -Payload @{
+            ok = $false
+            blocked = $true
+            error = 'La configuracion global es invalida. Corrija configuracion.json y reinicie el panel.'
+        }
+        return
+    }
     if ($request.HttpMethod -eq 'GET' -and $route -match '^/api/trabajos/([^/]+)$') {
         $heartbeatJobId = [System.Uri]::UnescapeDataString($Matches[1])
         if ($script:CurrentWork -and [string]$script:CurrentWork.id -eq $heartbeatJobId -and [string]$script:CurrentWork.estado -in @('QUEUED', 'RUNNING')) {
@@ -1578,7 +1632,7 @@ function Invoke-ApiRequest {
     Update-CurrentWork
 
     if ($route -eq '/api/configuracion' -and $request.HttpMethod -eq 'GET') {
-        Write-JsonResponse -RequestContext $RequestContext -StatusCode 200 -Payload @{ ok = $true; data = @{ configuracion = $script:ConfigurationRaw; configHash = Get-ConfigurationHash; valida = ($script:ConfigurationErrors.Count -eq 0); errores = @($script:ConfigurationErrors) } }
+        Write-JsonResponse -RequestContext $RequestContext -StatusCode 200 -Payload @{ ok = $true; data = @{ configuracion = $script:ConfigurationRaw; configHash = Get-ConfigurationHash; valida = [bool]$script:ConfigurationValid; errores = @($script:ConfigurationErrors); configurationValid = [bool]$script:ConfigurationValid; configurationBlocked = [bool]$script:ConfigurationBlocked; configurationErrors = @(Get-ConfigurationErrorsForResponse) } }
         return
     }
     if ($route -match '^/api/configuracion/clientes/([^/]+)/modulos/([^/]+)/ambientes$' -and $request.HttpMethod -eq 'POST') {
@@ -1731,7 +1785,7 @@ function Invoke-ApiRequest {
         return
     }
     if ($route -eq '/api/contextos' -and $request.HttpMethod -eq 'GET') {
-        Write-JsonResponse -RequestContext $RequestContext -StatusCode 200 -Payload @{ ok = $true; data = @{ contextos = @(Get-ConfiguredContexts); configurationValid = ($script:ConfigurationErrors.Count -eq 0); errors = @($script:ConfigurationErrors) } }
+        Write-JsonResponse -RequestContext $RequestContext -StatusCode 200 -Payload @{ ok = $true; data = @{ contextos = @(Get-ConfiguredContexts); configurationValid = [bool]$script:ConfigurationValid; configurationBlocked = [bool]$script:ConfigurationBlocked; configurationErrors = @(Get-ConfigurationErrorsForResponse); errors = @($script:ConfigurationErrors) } }
         return
     }
     if ($route -eq '/api/contexto/activar' -and $request.HttpMethod -eq 'POST') {
@@ -2092,6 +2146,7 @@ function Invoke-PanelRequest {
 }
 
 Read-PanelConfiguration
+$script:SessionToken = [Guid]::NewGuid().ToString('N')
 $portToUse = Get-PanelPort
 $script:Listener = New-Object System.Net.HttpListener
 $script:Listener.Prefixes.Add(('http://127.0.0.1:' + $portToUse + '/'))
