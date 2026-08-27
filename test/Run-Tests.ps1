@@ -664,6 +664,165 @@ function Crear-ConfiguracionMulticontextoPrueba {
     return $RutaConfiguracion
 }
 
+function Crear-ConfiguracionesPreflightTemporales {
+    <#
+    .SYNOPSIS
+    Crea las configuraciones temporales que usaran las pruebas del preflight integral.
+    .DESCRIPTION
+    Genera un JSON corrupto, un documento con errores globales, otro con errores
+    distribuidos entre varios contextos y uno valido cuyas rutas no existen. Las
+    rutas declaradas no se crean: solo se crea el directorio que contiene los
+    archivos de configuracion para mantener los escenarios aislados.
+    #>
+    [CmdletBinding()]
+    param()
+
+    $directorioConfiguracionesPreflight = Join-Path $DirectorioTmp 'configuraciones-preflight'
+    New-DirectorioSiNoExiste -Directorio $directorioConfiguracionesPreflight | Out-Null
+
+    $rutaJsonInvalido = Join-Path $directorioConfiguracionesPreflight 'configuracion-json-invalido.json'
+    $rutaErroresGlobales = Join-Path $directorioConfiguracionesPreflight 'configuracion-errores-globales.json'
+    $rutaErroresContextuales = Join-Path $directorioConfiguracionesPreflight 'configuracion-errores-contextuales.json'
+    $rutaRutasInexistentes = Join-Path $directorioConfiguracionesPreflight 'configuracion-rutas-inexistentes.json'
+
+    Escribir-TextoUtf8SinBom -Ruta $rutaJsonInvalido -Contenido '{"rutas":{"clientesRoot":"clientes"'
+
+    $configuracionErroresGlobales = [ordered]@{
+        rutas = [ordered]@{ clientesRoot = '' }
+        exportacion = [ordered]@{ onlyModuleAPIGLM = 'si' }
+        panel = [ordered]@{
+            timeoutOperacionSegundos = 'indefinido'
+            timeoutMsbuildSegundos = 0
+            maxPdfConcurrentProcesses = -1
+        }
+        herramientas = [ordered]@{
+            geneXusProgramDir = ''
+            msbuildPath = ''
+            pandocPath = 'binary/tools/pandoc.exe'
+            typstPath = 'binary/tools/typst.exe'
+        }
+        clientes = @()
+    }
+    Escribir-TextoUtf8SinBom -Ruta $rutaErroresGlobales -Contenido ($configuracionErroresGlobales | ConvertTo-Json -Depth 10)
+
+    $configuracionErroresContextuales = [ordered]@{
+        rutas = [ordered]@{ clientesRoot = 'contextos-con-errores/clientes' }
+        exportacion = [ordered]@{ onlyModuleAPIGLM = $true }
+        panel = [ordered]@{
+            timeoutOperacionSegundos = 600
+            timeoutMsbuildSegundos = 300
+            maxPdfConcurrentProcesses = 2
+        }
+        herramientas = [ordered]@{
+            geneXusProgramDir = 'herramientas/gx'
+            msbuildPath = 'herramientas/msbuild.exe'
+            pandocPath = 'herramientas/pandoc.exe'
+            typstPath = 'herramientas/typst.exe'
+        }
+        clientes = @(
+            [ordered]@{
+                id = 'cliente-a'
+                nombre = 'Cliente A'
+                packagenames = [ordered]@{ comercial = 'cliente-a.comercial.' }
+                serviciosIgnorados = @()
+                ambientes = @(
+                    [ordered]@{
+                        id = 'testing'
+                        nombre = 'Testing'
+                        modulo = 'comercial'
+                        tipo = 'test'
+                        kbPath = 'contextos-con-errores/kb/cliente-a-testing'
+                        host = 'https://cliente-a.example.com'
+                        baseUrl = 'testing/rest'
+                    }
+                    [ordered]@{
+                        id = 'produccion'
+                        nombre = 'Produccion'
+                        modulo = 'comercial'
+                        tipo = 'prod'
+                        kbPath = 'contextos-con-errores/kb/cliente-a-produccion'
+                        host = 'https://cliente-a.example.com/api'
+                        baseUrl = '/produccion/rest'
+                    }
+                )
+            }
+            [ordered]@{
+                id = 'cliente-b'
+                nombre = 'Cliente B'
+                packagenames = [ordered]@{ comercial = 'cliente-b.comercial.' }
+                serviciosIgnorados = @()
+                ambientes = @(
+                    [ordered]@{
+                        id = 'testing'
+                        nombre = 'Testing'
+                        modulo = 'finanzas'
+                        tipo = 'test'
+                        kbPath = 'contextos-con-errores/kb/cliente-b-testing'
+                        host = 'https://cliente-b.example.com'
+                        baseUrl = '/testing/rest'
+                    }
+                    [ordered]@{
+                        id = 'produccion'
+                        nombre = 'Produccion'
+                        modulo = 'comercial'
+                        tipo = 'prod'
+                        host = 'https://cliente-b.example.com'
+                        baseUrl = '/produccion/rest'
+                    }
+                )
+            }
+        )
+    }
+    Escribir-TextoUtf8SinBom -Ruta $rutaErroresContextuales -Contenido ($configuracionErroresContextuales | ConvertTo-Json -Depth 10)
+
+    $directorioRutasInexistentes = Join-Path $directorioConfiguracionesPreflight 'rutas-validas-inexistentes'
+    $configuracionRutasInexistentes = [ordered]@{
+        rutas = [ordered]@{
+            clientesRoot = (Join-Path $directorioRutasInexistentes 'clientes')
+        }
+        exportacion = [ordered]@{ onlyModuleAPIGLM = $true }
+        panel = [ordered]@{
+            timeoutOperacionSegundos = 600
+            timeoutMsbuildSegundos = 300
+            maxPdfConcurrentProcesses = 2
+        }
+        herramientas = [ordered]@{
+            geneXusProgramDir = (Join-Path $directorioRutasInexistentes 'herramientas\GeneXus')
+            msbuildPath = (Join-Path $directorioRutasInexistentes 'herramientas\MSBuild.exe')
+            pandocPath = (Join-Path $directorioRutasInexistentes 'herramientas\Pandoc.exe')
+            typstPath = (Join-Path $directorioRutasInexistentes 'herramientas\Typst.exe')
+        }
+        clientes = @(
+            [ordered]@{
+                id = 'cliente-rutas'
+                nombre = 'Cliente de rutas inexistentes'
+                packagenames = [ordered]@{ comercial = 'cliente-rutas.comercial.' }
+                serviciosIgnorados = @()
+                ambientes = @(
+                    [ordered]@{
+                        id = 'testing'
+                        nombre = 'Testing'
+                        modulo = 'comercial'
+                        tipo = 'test'
+                        kbPath = (Join-Path $directorioRutasInexistentes 'kb\cliente-rutas-testing')
+                        host = 'https://cliente-rutas.example.com'
+                        baseUrl = '/testing/rest'
+                    }
+                )
+            }
+        )
+    }
+    Escribir-TextoUtf8SinBom -Ruta $rutaRutasInexistentes -Contenido ($configuracionRutasInexistentes | ConvertTo-Json -Depth 10)
+
+    return [pscustomobject]@{
+        Directorio = $directorioConfiguracionesPreflight
+        JsonInvalido = $rutaJsonInvalido
+        ErroresGlobales = $rutaErroresGlobales
+        ErroresContextuales = $rutaErroresContextuales
+        RutasInexistentes = $rutaRutasInexistentes
+    }
+}
+
 function Obtener-EstadoDirectoriosGlobales {
     <#
     .SYNOPSIS
@@ -726,6 +885,138 @@ function Obtener-DiferenciasDirectoriosGlobales {
         [void]$diferencias.Add($clave + ': directorio agregado despues')
     }
     return @($diferencias.ToArray())
+}
+
+function Ejecutar-CasosPreflightSoloLectura {
+    <#
+    .SYNOPSIS
+    Verifica el preflight integral con configuraciones aisladas y sin efectos laterales.
+    #>
+    [CmdletBinding()]
+    param()
+
+    $fixtures = $script:ConfiguracionesPreflightTemporales
+    if ($null -eq $fixtures) {
+        Test-Skip -Id 'preflight.configuraciones' -Detalle 'No se pudieron crear las configuraciones temporales.'
+        return
+    }
+
+    $capturarArbol = {
+        param([string]$Ruta)
+        if (-not (Test-Path -LiteralPath $Ruta)) { return '' }
+        return @(
+            Get-ChildItem -LiteralPath $Ruta -Recurse -Force | Sort-Object FullName | ForEach-Object {
+                $tipo = if ($_.PSIsContainer) { 'D' } else { 'F' }
+                $longitud = if ($_.PSIsContainer) { 0 } else { $_.Length }
+                $tipo + '|' + $_.FullName + '|' + $longitud + '|' + $_.LastWriteTimeUtc.Ticks
+            }
+        ) -join "`n"
+    }
+
+    $arbolAntes = & $capturarArbol $fixtures.Directorio
+    $evaluacionJsonInvalido = Evaluar-ConfiguracionIntegral -ConfigPath $fixtures.JsonInvalido -RaizRepositorio $RaizRepositorio
+    $evaluacionErroresGlobales = Evaluar-ConfiguracionIntegral -ConfigPath $fixtures.ErroresGlobales -RaizRepositorio $RaizRepositorio
+    $evaluacionErroresContextuales = Evaluar-ConfiguracionIntegral -ConfigPath $fixtures.ErroresContextuales -RaizRepositorio $RaizRepositorio
+    $evaluacionRutasInexistentes = Evaluar-ConfiguracionIntegral -ConfigPath $fixtures.RutasInexistentes -RaizRepositorio $RaizRepositorio
+
+    Test-Asercion -Id 'preflight.jsonInvalido' -Condicion (
+        (-not $evaluacionJsonInvalido.configurationValid) -and
+        @($evaluacionJsonInvalido.configurationErrors | Where-Object { $_.field -eq 'json' }).Count -eq 1 -and
+        @($evaluacionJsonInvalido.simulations).Count -eq 0
+    ) -DetalleExito 'El JSON corrupto queda bloqueado con diagnostico sintactico y sin simulaciones inventadas.' -DetalleFallo 'El JSON corrupto no produjo el diagnostico esperado.'
+
+    Test-Asercion -Id 'preflight.erroresGlobales' -Condicion (
+        (-not $evaluacionErroresGlobales.configurationValid) -and
+        @($evaluacionErroresGlobales.configurationErrors | Where-Object { $_.scope -eq 'global' }).Count -ge 4
+    ) -DetalleExito 'El preflight acumula errores independientes del esquema global.' -DetalleFallo 'El preflight detuvo o perdió errores globales independientes.'
+
+    Test-Asercion -Id 'preflight.erroresContextuales' -Condicion (
+        (-not $evaluacionErroresContextuales.configurationValid) -and
+        @($evaluacionErroresContextuales.configurationErrors | Where-Object { $_.scope -match '^cliente-a/' }).Count -ge 1 -and
+        @($evaluacionErroresContextuales.configurationErrors | Where-Object { $_.scope -match '^cliente-b/' }).Count -ge 2
+    ) -DetalleExito 'El preflight identifica y acumula errores de varios contextos.' -DetalleFallo 'El preflight no acumuló errores contextuales de todos los clientes.'
+
+    Test-Asercion -Id 'preflight.rutasInexistentes' -Condicion (
+        $evaluacionRutasInexistentes.configurationValid -and
+        @($evaluacionRutasInexistentes.simulations).Count -eq 1 -and
+        @($evaluacionRutasInexistentes.simulations)[0].pathsResolved
+    ) -DetalleExito 'Las rutas normalizables pero inexistentes se simulan sin exigir presencia física.' -DetalleFallo 'El preflight bloqueó rutas inexistentes o no derivó la simulación.'
+
+    $rutasQueNoDebenCrearse = @(
+        (Join-Path $fixtures.Directorio 'rutas-validas-inexistentes\clientes'),
+        (Join-Path $fixtures.Directorio 'rutas-validas-inexistentes\kb'),
+        (Join-Path $fixtures.Directorio 'rutas-validas-inexistentes\herramientas')
+    )
+    $arbolDespues = & $capturarArbol $fixtures.Directorio
+    $sinEfectosLaterales = $arbolAntes -eq $arbolDespues -and @($rutasQueNoDebenCrearse | Where-Object { Test-Path -LiteralPath $_ }).Count -eq 0
+    Test-Asercion -Id 'preflight.soloLectura' -Condicion $sinEfectosLaterales -DetalleExito 'La validacion integral no modifica archivos ni crea directorios contextuales.' -DetalleFallo 'El preflight produjo efectos laterales en sus configuraciones temporales.'
+}
+
+function Ejecutar-CasosConfiguracionBloqueada {
+    <#
+    .SYNOPSIS
+    Verifica que el servidor iniciado con una configuracion invalida conserve solo sus APIs diagnosticas.
+    #>
+    [CmdletBinding()]
+    param()
+
+    $rutaServidor = Join-Path $DirectorioBinario 'ServidorPanelWeb.ps1'
+    $rutaConfiguracion = Join-Path $DirectorioFixturesJson 'configuracion-multicliente-tipo-faltante.json'
+    $contenidoAntes = [System.IO.File]::ReadAllBytes($rutaConfiguracion)
+    $puerto = 8360 + (Get-Random -Minimum 0 -Maximum 80)
+    $proceso = $null
+    try {
+        $proceso = Start-Process -FilePath (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe') -ArgumentList @(
+            '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $rutaServidor,
+            '-RepositoryRoot', $RaizRepositorio, '-ConfigPath', $rutaConfiguracion,
+            '-Port', $puerto, '-NoBrowser'
+        ) -WindowStyle Hidden -PassThru
+
+        $inicio = $null
+        for ($intento = 0; $intento -lt 20; $intento++) {
+            Start-Sleep -Milliseconds 250
+            try { $inicio = Invoke-WebRequest -UseBasicParsing -Uri ('http://127.0.0.1:' + $puerto + '/') -ErrorAction Stop; break } catch { }
+        }
+        $tokenMatch = if ($inicio) { [regex]::Match($inicio.Content, 'window\.PANEL_TOKEN="([a-f0-9]+)"') } else { $null }
+        $estado = if ($inicio -and $tokenMatch.Success) { Invoke-RestMethod -Uri ('http://127.0.0.1:' + $puerto + '/api/estado') } else { $null }
+        Test-Asercion -Id 'configuracionBloqueada.diagnostico' -Condicion (
+            $null -ne $estado -and [bool]$estado.ok -and
+            $estado.data.configurationValid -eq $false -and
+            $estado.data.configurationBlocked -eq $true -and
+            @($estado.data.configurationErrors).Count -ge 1
+        ) -DetalleExito 'El estado diagnostico expone la invalidez y todos los errores acumulados.' -DetalleFallo 'El servidor bloqueado no expuso correctamente el diagnostico.'
+
+        $headers = @{ 'X-Panel-Token' = if ($tokenMatch) { $tokenMatch.Groups[1].Value } else { '' } }
+        $rutasBloqueadas = @(
+            [pscustomobject]@{ Ruta = '/api/contextos'; Metodo = 'GET'; Cuerpo = $null },
+            [pscustomobject]@{ Ruta = '/api/contexto/activar'; Metodo = 'POST'; Cuerpo = '{}' },
+            [pscustomobject]@{ Ruta = '/api/exportar'; Metodo = 'POST'; Cuerpo = '{}' },
+            [pscustomobject]@{ Ruta = '/api/configuracion/clientes'; Metodo = 'POST'; Cuerpo = '{}' }
+        )
+        $respuestasUniformes = $true
+        foreach ($rutaBloqueada in $rutasBloqueadas) {
+            $respuesta = $null
+            try {
+                $parametros = @{ Method = $rutaBloqueada.Metodo; UseBasicParsing = $true; Uri = ('http://127.0.0.1:' + $puerto + $rutaBloqueada.Ruta); Headers = $headers; ErrorAction = 'Stop' }
+                if ($rutaBloqueada.Cuerpo) { $parametros.ContentType = 'application/json'; $parametros.Body = $rutaBloqueada.Cuerpo }
+                $respuesta = Invoke-WebRequest @parametros
+                $respuestasUniformes = $false
+                break
+            } catch {
+                $codigo = if ($_.Exception.Response) { [int]$_.Exception.Response.StatusCode.value__ } else { 0 }
+                if ($codigo -ne 409) { $respuestasUniformes = $false; break }
+            }
+        }
+        Test-Asercion -Id 'configuracionBloqueada.apisOperativas' -Condicion $respuestasUniformes -DetalleExito 'Las APIs operativas bloqueadas responden uniformemente con HTTP 409 y no inician trabajos.' -DetalleFallo 'Alguna API operativa no respetó el contrato uniforme de bloqueo.'
+    } catch {
+        Registrar-Caso -Id 'configuracionBloqueada.error' -Estado 'FAIL' -Detalle $_.Exception.Message
+    } finally {
+        if ($proceso -and -not $proceso.HasExited) {
+            try { & taskkill.exe /PID $proceso.Id /T /F | Out-Null } catch { try { Stop-Process -Id $proceso.Id -Force -ErrorAction SilentlyContinue } catch { } }
+        }
+    }
+    $contenidoDespues = [System.IO.File]::ReadAllBytes($rutaConfiguracion)
+    Test-Asercion -Id 'configuracionBloqueada.sinEscritura' -Condicion ([System.Linq.Enumerable]::SequenceEqual($contenidoAntes, $contenidoDespues)) -DetalleExito 'El servidor bloqueado no modifica el configuracion.json usado para el diagnostico.' -DetalleFallo 'El servidor bloqueado modificó la configuración.'
 }
 
 function Ejecutar-PipelineContextoPrueba {
@@ -3592,6 +3883,9 @@ try {
     }
     Resolver-DirectoriosPrueba | Out-Null
     New-DirectorioSiNoExiste -Directorio $DirectorioTmp | Out-Null
+    $script:ConfiguracionesPreflightTemporales = Crear-ConfiguracionesPreflightTemporales
+    Ejecutar-CasosPreflightSoloLectura
+    Ejecutar-CasosConfiguracionBloqueada
 
     Write-Host '==============================================================' -ForegroundColor Cyan
     Write-Host '  PRUEBAS LOCALES APIGLM (pipeline, analizador y visor)' -ForegroundColor Cyan

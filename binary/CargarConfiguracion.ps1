@@ -207,16 +207,19 @@ function Validar-RutaKnowledgeBase {
     return $true
 }
 
-function Validar-ConfiguracionMulticliente {
+function Validar-ConfiguracionEstructural {
     <#
     .SYNOPSIS
-    Valida el esquema multicliente de configuracion.json.
+    Valida estructuralmente el esquema multicliente de configuracion.json.
     .DESCRIPTION
     Comprueba rutas.clientesRoot, herramientas globales y la coleccion clientes
     con sus ambientes. Exige ids en formato slug, unicos sin distinguir
     mayusculas en cada nivel, y rechaza dos ambientes que resuelvan a la misma
     ruta de Knowledge Base una vez normalizada. Lanza con el primer error y
-    devuelve la configuracion cruda si es valida.
+    devuelve la configuracion cruda si es valida. En el modo predeterminado no
+    crea directorios ni valida la existencia o el contenido de las rutas
+    externas; -ValidarContenidoKnowledgeBase conserva la validacion explicita
+    solicitada por los consumidores operativos.
     #>
     [CmdletBinding()]
     param(
@@ -333,6 +336,25 @@ function Validar-ConfiguracionMulticliente {
     return $ConfiguracionRaw
 }
 
+function Validar-ConfiguracionMulticliente {
+    <#
+    .SYNOPSIS
+    Conserva el nombre historico del validador estructural multicliente.
+    .DESCRIPTION
+    Los consumidores existentes siguen usando este nombre. La implementacion
+    queda separada en Validar-ConfiguracionEstructural para que el preflight
+    integral pueda invocarla sin inicializar ningun contexto.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]$ConfiguracionRaw,
+        [Parameter(Mandatory = $true)][string]$RaizRepositorio,
+        [Parameter(Mandatory = $false)][string]$ConfigPath,
+        [Parameter(Mandatory = $false)][switch]$ValidarContenidoKnowledgeBase
+    )
+    return Validar-ConfiguracionEstructural @PSBoundParameters
+}
+
 function Obtener-ClientesConfigurados {
     <#
     .SYNOPSIS
@@ -413,6 +435,347 @@ function Obtener-ModulosConfigurados {
     return $resultado.ToArray()
 }
 
+function Resolver-RutasContextoEnMemoria {
+    <#
+    .SYNOPSIS
+    Deriva las rutas de un contexto sin crear ningun directorio.
+    .DESCRIPTION
+    Normaliza clientesRoot, kbPath y las rutas de artefactos que utilizan los
+    consumidores del contexto. La existencia fisica de las rutas no forma parte
+    de esta resolucion.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]$ConfiguracionRaw,
+        [Parameter(Mandatory = $true)]$Ambiente,
+        [Parameter(Mandatory = $true)][string]$ClienteId,
+        [Parameter(Mandatory = $true)][string]$Modulo,
+        [Parameter(Mandatory = $true)][string]$AmbienteId,
+        [Parameter(Mandatory = $true)][string]$RaizRepositorio
+    )
+
+    $clientesRoot = Resolver-RutaRepositorio -Ruta ([string]$ConfiguracionRaw.rutas.clientesRoot) -Raiz $RaizRepositorio
+    $directorioContexto = [System.IO.Path]::GetFullPath((Join-Path (Join-Path (Join-Path $clientesRoot $ClienteId) $Modulo) $AmbienteId))
+    $directorioEstado = [System.IO.Path]::GetFullPath((Join-Path $directorioContexto 'estado'))
+
+    return [pscustomobject]@{
+        ClientesRoot = $clientesRoot
+        KbPath = Resolver-RutaRepositorio -Ruta ([string]$Ambiente.kbPath) -Raiz $RaizRepositorio
+        DirectorioContexto = $directorioContexto
+        DirectorioServicios = [System.IO.Path]::GetFullPath((Join-Path $directorioContexto 'documentacionServicios'))
+        DirectorioEstado = $directorioEstado
+        DirectorioXpz = [System.IO.Path]::GetFullPath((Join-Path $directorioContexto 'xpz'))
+        DirectorioLogs = [System.IO.Path]::GetFullPath((Join-Path $directorioContexto 'Logs'))
+        DirectorioTestFixtures = [System.IO.Path]::GetFullPath((Join-Path $directorioContexto 'test\fixtures'))
+        DirectorioTestResultados = [System.IO.Path]::GetFullPath((Join-Path $directorioContexto 'test\resultados'))
+        RutaControl = [System.IO.Path]::GetFullPath((Join-Path $directorioEstado 'controlVersiones.json'))
+        RutaHistorial = [System.IO.Path]::GetFullPath((Join-Path $directorioEstado 'historialVersiones.md'))
+        RutaLock = [System.IO.Path]::GetFullPath((Join-Path $directorioEstado 'actualizacion.lock'))
+    }
+}
+
+function Agregar-ErrorEvaluacionConfiguracion {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][System.Collections.Generic.List[object]]$Errores,
+        [Parameter(Mandatory = $true)][string]$Scope,
+        [Parameter(Mandatory = $true)][string]$Field,
+        [Parameter(Mandatory = $true)][string]$Message
+    )
+
+    $errorExistente = @($Errores | Where-Object {
+        $_.scope -ceq $Scope -and $_.field -ceq $Field -and $_.message -ceq $Message
+    })
+    if ($errorExistente.Count -eq 0) {
+        [void]$Errores.Add([pscustomobject]@{
+            scope = $Scope
+            field = $Field
+            message = $Message
+        })
+    }
+}
+
+function Evaluar-ConfiguracionIntegral {
+    <#
+    .SYNOPSIS
+    Evalua la configuracion completa sin crear directorios ni validar KBs.
+    .DESCRIPTION
+    Lee y parsea el JSON, acumula errores globales y contextuales independientes,
+    y deriva en memoria las rutas y propiedades de todos los contextos validos.
+    Los validadores historicos que lanzan ante el primer error no se modifican.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)][string]$ConfigPath,
+        [Parameter(Mandatory = $false)][string]$RaizRepositorio,
+        [Parameter(Mandatory = $false)][AllowNull()]$ConfiguracionRaw
+    )
+
+    if ([string]::IsNullOrWhiteSpace($RaizRepositorio)) {
+        $raizRepositorioResuelta = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
+    } else {
+        $raizRepositorioResuelta = [System.IO.Path]::GetFullPath($RaizRepositorio)
+    }
+    if ([string]::IsNullOrWhiteSpace($ConfigPath)) {
+        $ConfigPath = Join-Path $raizRepositorioResuelta 'configuracion.json'
+    }
+
+    $errores = New-Object System.Collections.Generic.List[object]
+    $simulaciones = New-Object System.Collections.Generic.List[object]
+    $configuracionCargada = $ConfiguracionRaw
+    $seRecibioConfiguracion = $PSBoundParameters.ContainsKey('ConfiguracionRaw')
+
+    if (-not $seRecibioConfiguracion) {
+        if (-not (Test-Path -LiteralPath $ConfigPath -PathType Leaf)) {
+            Agregar-ErrorEvaluacionConfiguracion -Errores $errores -Scope 'global' -Field 'configuracion' -Message 'No se encontro configuracion.json.'
+        } else {
+            try {
+                $configuracionCargada = Get-Content -LiteralPath $ConfigPath -Raw | ConvertFrom-Json
+            } catch {
+                Agregar-ErrorEvaluacionConfiguracion -Errores $errores -Scope 'global' -Field 'json' -Message ('El archivo configuracion.json no contiene JSON valido: ' + $_.Exception.Message)
+            }
+        }
+    }
+
+    $esObjetoConfiguracion = $null -ne $configuracionCargada -and $configuracionCargada.PSObject.Properties.Count -gt 0
+    if ($errores.Count -eq 0 -and -not $esObjetoConfiguracion) {
+        Agregar-ErrorEvaluacionConfiguracion -Errores $errores -Scope 'global' -Field 'configuracion' -Message 'La configuracion debe ser un objeto JSON.'
+    }
+
+    $clientesRootResuelto = $null
+    if ($esObjetoConfiguracion) {
+        $propiedadRutas = Obtener-PropiedadConfiguracionExacta -Objeto $configuracionCargada -Nombre 'rutas'
+        if ($null -eq $propiedadRutas -or $null -eq $propiedadRutas.Value) {
+            Agregar-ErrorEvaluacionConfiguracion -Errores $errores -Scope 'global' -Field 'rutas' -Message 'La configuracion no define la seccion rutas.'
+        } else {
+            $propiedadClientesRoot = Obtener-PropiedadConfiguracionExacta -Objeto $propiedadRutas.Value -Nombre 'clientesRoot'
+            if ($null -eq $propiedadClientesRoot -or [string]::IsNullOrWhiteSpace([string]$propiedadClientesRoot.Value)) {
+                Agregar-ErrorEvaluacionConfiguracion -Errores $errores -Scope 'global' -Field 'rutas.clientesRoot' -Message 'La configuracion no define rutas.clientesRoot.'
+            } else {
+                try {
+                    $clientesRootResuelto = Resolver-RutaRepositorio -Ruta ([string]$propiedadClientesRoot.Value) -Raiz $raizRepositorioResuelta
+                } catch {
+                    Agregar-ErrorEvaluacionConfiguracion -Errores $errores -Scope 'global' -Field 'rutas.clientesRoot' -Message 'rutas.clientesRoot no se puede normalizar.'
+                }
+            }
+        }
+
+        $propiedadExportacion = Obtener-PropiedadConfiguracionExacta -Objeto $configuracionCargada -Nombre 'exportacion'
+        if ($null -eq $propiedadExportacion -or $null -eq $propiedadExportacion.Value) {
+            Agregar-ErrorEvaluacionConfiguracion -Errores $errores -Scope 'global' -Field 'exportacion' -Message 'La configuracion no define la seccion exportacion.'
+        } else {
+            $propiedadOnlyModule = Obtener-PropiedadConfiguracionExacta -Objeto $propiedadExportacion.Value -Nombre 'onlyModuleAPIGLM'
+            if ($null -eq $propiedadOnlyModule) {
+                Agregar-ErrorEvaluacionConfiguracion -Errores $errores -Scope 'global' -Field 'exportacion.onlyModuleAPIGLM' -Message 'La configuracion no define exportacion.onlyModuleAPIGLM.'
+            } elseif ($propiedadOnlyModule.Value -isnot [bool]) {
+                Agregar-ErrorEvaluacionConfiguracion -Errores $errores -Scope 'global' -Field 'exportacion.onlyModuleAPIGLM' -Message 'exportacion.onlyModuleAPIGLM debe ser un booleano JSON.'
+            }
+        }
+
+        $propiedadHerramientas = Obtener-PropiedadConfiguracionExacta -Objeto $configuracionCargada -Nombre 'herramientas'
+        if ($null -eq $propiedadHerramientas -or $null -eq $propiedadHerramientas.Value) {
+            Agregar-ErrorEvaluacionConfiguracion -Errores $errores -Scope 'global' -Field 'herramientas' -Message 'La configuracion no define la seccion herramientas.'
+        } else {
+            foreach ($nombreHerramienta in @('geneXusProgramDir', 'msbuildPath', 'pandocPath', 'typstPath')) {
+                $propiedadHerramienta = Obtener-PropiedadConfiguracionExacta -Objeto $propiedadHerramientas.Value -Nombre $nombreHerramienta
+                if ($null -eq $propiedadHerramienta -or [string]::IsNullOrWhiteSpace([string]$propiedadHerramienta.Value)) {
+                    Agregar-ErrorEvaluacionConfiguracion -Errores $errores -Scope 'global' -Field ('herramientas.' + $nombreHerramienta) -Message ('La configuracion no define herramientas.' + $nombreHerramienta + '.')
+                } elseif ($propiedadHerramienta.Value -isnot [string]) {
+                    Agregar-ErrorEvaluacionConfiguracion -Errores $errores -Scope 'global' -Field ('herramientas.' + $nombreHerramienta) -Message ('herramientas.' + $nombreHerramienta + ' debe ser texto.')
+                }
+            }
+            $propiedadPerfil = Obtener-PropiedadConfiguracionExacta -Objeto $propiedadHerramientas.Value -Nombre 'geneXusExportProfile'
+            if ($null -ne $propiedadPerfil -and -not [string]::IsNullOrWhiteSpace([string]$propiedadPerfil.Value) -and ([string]$propiedadPerfil.Value -notin @('GX18', 'Evo3'))) {
+                Agregar-ErrorEvaluacionConfiguracion -Errores $errores -Scope 'global' -Field 'herramientas.geneXusExportProfile' -Message 'El perfil de exportacion debe ser GX18 o Evo3.'
+            }
+        }
+
+        $propiedadPanel = Obtener-PropiedadConfiguracionExacta -Objeto $configuracionCargada -Nombre 'panel'
+        if ($null -ne $propiedadPanel -and $null -ne $propiedadPanel.Value) {
+            foreach ($nombrePropiedadPanel in @('timeoutOperacionSegundos', 'timeoutMsbuildSegundos', 'maxPdfConcurrentProcesses', 'puerto')) {
+                $propiedadPanelActual = Obtener-PropiedadConfiguracionExacta -Objeto $propiedadPanel.Value -Nombre $nombrePropiedadPanel
+                if ($null -eq $propiedadPanelActual) { continue }
+                $valorPanel = 0
+                $esEnteroPanel = $propiedadPanelActual.Value -isnot [bool] -and [int]::TryParse([string]$propiedadPanelActual.Value, [ref]$valorPanel)
+                $valorMaximoPanel = if ($nombrePropiedadPanel -eq 'puerto') { 65535 } else { [int]::MaxValue }
+                if (-not $esEnteroPanel -or $valorPanel -le 0 -or $valorPanel -gt $valorMaximoPanel) {
+                    Agregar-ErrorEvaluacionConfiguracion -Errores $errores -Scope 'global' -Field ('panel.' + $nombrePropiedadPanel) -Message ('panel.' + $nombrePropiedadPanel + ' debe ser un entero positivo dentro del rango permitido.')
+                }
+            }
+        }
+    }
+
+    $propiedadClientes = if ($esObjetoConfiguracion) { Obtener-PropiedadConfiguracionExacta -Objeto $configuracionCargada -Nombre 'clientes' } else { $null }
+    $clientesConfigurados = if ($null -ne $propiedadClientes) { @($propiedadClientes.Value) } else { @() }
+    if ($esObjetoConfiguracion -and ($null -eq $propiedadClientes -or $null -eq $propiedadClientes.Value -or $clientesConfigurados.Count -eq 0)) {
+        Agregar-ErrorEvaluacionConfiguracion -Errores $errores -Scope 'global' -Field 'clientes' -Message 'La configuracion no define la coleccion clientes.'
+    }
+
+    $clientesVistos = @{}
+    $rutasKnowledgeBaseVistas = @{}
+    $indiceCliente = 0
+    foreach ($cliente in $clientesConfigurados) {
+        $clienteId = [string]$cliente.id
+        $clienteScope = if ([string]::IsNullOrWhiteSpace($clienteId)) { 'cliente/indice-' + ($indiceCliente + 1) } else { $clienteId }
+        if (-not (Test-NombreSlugValido -Valor $clienteId)) {
+            Agregar-ErrorEvaluacionConfiguracion -Errores $errores -Scope $clienteScope -Field 'id' -Message 'El id de cliente no es valido; use minusculas, digitos y guiones.'
+        }
+        if ([string]::IsNullOrWhiteSpace([string]$cliente.nombre)) {
+            Agregar-ErrorEvaluacionConfiguracion -Errores $errores -Scope $clienteScope -Field 'nombre' -Message 'El cliente no define su nombre visible.'
+        }
+        $claveCliente = $clienteId.ToLowerInvariant()
+        if (-not [string]::IsNullOrWhiteSpace($clienteId) -and $clientesVistos.ContainsKey($claveCliente)) {
+            Agregar-ErrorEvaluacionConfiguracion -Errores $errores -Scope $clienteScope -Field 'id' -Message 'El id de cliente esta duplicado.'
+        } else {
+            $clientesVistos[$claveCliente] = $true
+        }
+
+        $packageNames = @{}
+        $propiedadPackageNames = Obtener-PropiedadConfiguracionExacta -Objeto $cliente -Nombre 'packagenames'
+        if ($null -ne $propiedadPackageNames -and $null -ne $propiedadPackageNames.Value -and $propiedadPackageNames.Value -isnot [System.Array]) {
+            foreach ($propiedadModulo in @($propiedadPackageNames.Value.PSObject.Properties)) {
+                $moduloPackageName = ([string]$propiedadModulo.Name).Trim().ToLowerInvariant()
+                if ($moduloPackageName -notin @('comercial', 'erp')) {
+                    Agregar-ErrorEvaluacionConfiguracion -Errores $errores -Scope $clienteScope -Field 'packagenames' -Message ('El modulo de packagenames no es valido: ' + $moduloPackageName + '.')
+                    continue
+                }
+                if ([string]::IsNullOrWhiteSpace([string]$propiedadModulo.Value)) {
+                    Agregar-ErrorEvaluacionConfiguracion -Errores $errores -Scope $clienteScope -Field ('packagenames.' + $moduloPackageName) -Message 'El package name no puede estar vacio.'
+                } else {
+                    $packageNames[$moduloPackageName] = ([string]$propiedadModulo.Value).Trim()
+                }
+            }
+        } elseif ($null -ne $propiedadPackageNames) {
+            Agregar-ErrorEvaluacionConfiguracion -Errores $errores -Scope $clienteScope -Field 'packagenames' -Message 'packagenames debe ser un objeto JSON.'
+        }
+        $propiedadPackageNameHeredado = Obtener-PropiedadConfiguracionExacta -Objeto $cliente -Nombre 'packagename'
+        if ($null -ne $propiedadPackageNameHeredado -and -not $packageNames.ContainsKey('comercial') -and -not [string]::IsNullOrWhiteSpace([string]$propiedadPackageNameHeredado.Value)) {
+            $packageNames['comercial'] = ([string]$propiedadPackageNameHeredado.Value).Trim()
+        }
+
+        $propiedadServiciosIgnorados = Obtener-PropiedadConfiguracionExacta -Objeto $cliente -Nombre 'serviciosIgnorados'
+        if ($null -ne $propiedadServiciosIgnorados -and $propiedadServiciosIgnorados.Value -is [string]) {
+            Agregar-ErrorEvaluacionConfiguracion -Errores $errores -Scope $clienteScope -Field 'serviciosIgnorados' -Message 'serviciosIgnorados debe ser una coleccion.'
+        } elseif ($null -ne $propiedadServiciosIgnorados) {
+            foreach ($servicioIgnorado in @($propiedadServiciosIgnorados.Value)) {
+                if ($servicioIgnorado -isnot [string]) {
+                    Agregar-ErrorEvaluacionConfiguracion -Errores $errores -Scope $clienteScope -Field 'serviciosIgnorados' -Message 'Cada servicioIgnorado debe ser texto.'
+                    break
+                }
+            }
+        }
+
+        $propiedadAmbientes = Obtener-PropiedadConfiguracionExacta -Objeto $cliente -Nombre 'ambientes'
+        $ambientesConfigurados = if ($null -ne $propiedadAmbientes) { @($propiedadAmbientes.Value) } else { @() }
+        if ($null -eq $propiedadAmbientes -or $null -eq $propiedadAmbientes.Value -or $ambientesConfigurados.Count -eq 0) {
+            Agregar-ErrorEvaluacionConfiguracion -Errores $errores -Scope $clienteScope -Field 'ambientes' -Message 'El cliente no define ambientes.'
+            $indiceCliente++
+            continue
+        }
+        if ($ambientesConfigurados.Count -gt 4) {
+            Agregar-ErrorEvaluacionConfiguracion -Errores $errores -Scope $clienteScope -Field 'ambientes' -Message 'El cliente no puede tener mas de cuatro ambientes.'
+        }
+
+        $ambientesVistosPorModulo = @{}
+        $combinacionesVistas = @{}
+        foreach ($ambiente in $ambientesConfigurados) {
+            $ambienteId = [string]$ambiente.id
+            $modulo = if ($null -ne (Obtener-PropiedadConfiguracionExacta -Objeto $ambiente -Nombre 'modulo')) { ([string]$ambiente.modulo).Trim().ToLowerInvariant() } else { 'comercial' }
+            $ambienteScope = $clienteScope + '/' + $modulo + '/' + $ambienteId
+            if (-not (Test-NombreSlugValido -Valor $ambienteId)) {
+                Agregar-ErrorEvaluacionConfiguracion -Errores $errores -Scope $ambienteScope -Field 'id' -Message 'El id de ambiente no es valido; use minusculas, digitos y guiones.'
+            }
+            if ([string]::IsNullOrWhiteSpace([string]$ambiente.nombre)) {
+                Agregar-ErrorEvaluacionConfiguracion -Errores $errores -Scope $ambienteScope -Field 'nombre' -Message 'El ambiente no define su nombre visible.'
+            }
+            if ($modulo -notin @('comercial', 'erp')) {
+                Agregar-ErrorEvaluacionConfiguracion -Errores $errores -Scope $ambienteScope -Field 'modulo' -Message 'El modulo debe ser comercial o erp.'
+            }
+            $tipo = Clasificar-TipoAmbiente -Tipo ([string]$ambiente.tipo)
+            if ($null -eq $tipo) {
+                Agregar-ErrorEvaluacionConfiguracion -Errores $errores -Scope $ambienteScope -Field 'tipo' -Message 'El tipo de ambiente debe ser test o prod.'
+            }
+            if ([string]::IsNullOrWhiteSpace([string]$ambiente.kbPath)) {
+                Agregar-ErrorEvaluacionConfiguracion -Errores $errores -Scope $ambienteScope -Field 'kbPath' -Message 'El ambiente no define kbPath.'
+            }
+            if (-not $packageNames.ContainsKey($modulo)) {
+                Agregar-ErrorEvaluacionConfiguracion -Errores $errores -Scope $ambienteScope -Field ('packagenames.' + $modulo) -Message ('El cliente no define package name para el modulo ' + $modulo + '.')
+            }
+
+            $hostNormalizado = $null
+            $propiedadHost = Obtener-PropiedadConfiguracionExacta -Objeto $ambiente -Nombre 'host'
+            if ($null -ne $propiedadHost -and -not [string]::IsNullOrWhiteSpace([string]$propiedadHost.Value)) {
+                try { $hostNormalizado = Validar-HostAmbiente -HostUrl ([string]$propiedadHost.Value) } catch { Agregar-ErrorEvaluacionConfiguracion -Errores $errores -Scope $ambienteScope -Field 'host' -Message 'El host debe ser un origen absoluto http o https sin path adicional.' }
+            }
+            $baseUrlNormalizado = $null
+            try {
+                $baseUrlDeclarado = Obtener-BaseUrlAmbienteConfigurado -Ambiente $ambiente -Contexto $ambienteScope
+                if (-not [string]::IsNullOrWhiteSpace($baseUrlDeclarado)) { $baseUrlNormalizado = Validar-BaseUrlAmbiente -BaseUrl $baseUrlDeclarado }
+            } catch {
+                Agregar-ErrorEvaluacionConfiguracion -Errores $errores -Scope $ambienteScope -Field 'baseUrl' -Message 'baseUrl debe comenzar con / y no contener host, query o fragmento.'
+            }
+
+            if ($modulo -in @('comercial', 'erp')) {
+                if (-not $ambientesVistosPorModulo.ContainsKey($modulo)) { $ambientesVistosPorModulo[$modulo] = @{} }
+                $claveAmbiente = $ambienteId.ToLowerInvariant()
+                if ($ambientesVistosPorModulo[$modulo].ContainsKey($claveAmbiente)) {
+                    Agregar-ErrorEvaluacionConfiguracion -Errores $errores -Scope $ambienteScope -Field 'id' -Message 'El id de ambiente esta duplicado dentro del modulo.'
+                } else { $ambientesVistosPorModulo[$modulo][$claveAmbiente] = $true }
+                if ($null -ne $tipo) {
+                    $claveCombinacion = $modulo + '|' + $tipo
+                    if ($combinacionesVistas.ContainsKey($claveCombinacion)) {
+                        Agregar-ErrorEvaluacionConfiguracion -Errores $errores -Scope $ambienteScope -Field 'tipo' -Message 'El cliente no puede tener mas de un ambiente para la combinacion modulo/tipo.'
+                    } else { $combinacionesVistas[$claveCombinacion] = $true }
+                }
+            }
+
+            $kbPathResuelto = $null
+            if (-not [string]::IsNullOrWhiteSpace([string]$ambiente.kbPath)) {
+                try {
+                    $kbPathResuelto = Resolver-RutaRepositorio -Ruta ([string]$ambiente.kbPath) -Raiz $raizRepositorioResuelta
+                    $claveKb = $kbPathResuelto.ToLowerInvariant()
+                    if ($rutasKnowledgeBaseVistas.ContainsKey($claveKb)) {
+                        Agregar-ErrorEvaluacionConfiguracion -Errores $errores -Scope $ambienteScope -Field 'kbPath' -Message 'Dos ambientes apuntan a la misma ruta normalizada de Knowledge Base.'
+                    } else { $rutasKnowledgeBaseVistas[$claveKb] = $true }
+                } catch {
+                    Agregar-ErrorEvaluacionConfiguracion -Errores $errores -Scope $ambienteScope -Field 'kbPath' -Message 'kbPath no se puede normalizar.'
+                }
+            }
+
+            if ($null -ne $clientesRootResuelto -and $kbPathResuelto -and (Test-NombreSlugValido -Valor $clienteId) -and (Test-NombreSlugValido -Valor $ambienteId) -and $modulo -in @('comercial', 'erp')) {
+                try {
+                    $rutasContexto = Resolver-RutasContextoEnMemoria -ConfiguracionRaw $configuracionCargada -Ambiente $ambiente -ClienteId $clienteId -Modulo $modulo -AmbienteId $ambienteId -RaizRepositorio $raizRepositorioResuelta
+                    $serverUrl = if ($hostNormalizado -and $baseUrlNormalizado) { $hostNormalizado.TrimEnd('/') + '/' + $baseUrlNormalizado.TrimStart('/') } else { $null }
+                    [void]$simulaciones.Add([pscustomobject]@{
+                        clienteId = $clienteId
+                        modulo = $modulo
+                        ambienteId = $ambienteId
+                        contextId = $ambienteScope
+                        packageName = if ($packageNames.ContainsKey($modulo)) { [string]$packageNames[$modulo] } else { $null }
+                        kbPathResolved = $rutasContexto.KbPath
+                        serverUrl = $serverUrl
+                        pathsResolved = $true
+                        paths = $rutasContexto
+                    })
+                } catch {
+                    Agregar-ErrorEvaluacionConfiguracion -Errores $errores -Scope $ambienteScope -Field 'rutas' -Message 'No se pudieron normalizar las rutas del contexto.'
+                }
+            }
+        }
+        $indiceCliente++
+    }
+
+    $erroresOrdenados = @($errores | Sort-Object scope, field, message)
+    return [pscustomobject]@{
+        configurationValid = ($erroresOrdenados.Count -eq 0)
+        configurationBlocked = ($erroresOrdenados.Count -gt 0)
+        configurationErrors = $erroresOrdenados
+        simulations = @($simulaciones | Sort-Object contextId)
+        configurationRaw = $configuracionCargada
+        configPath = $ConfigPath
+    }
+}
+
 function Resolver-ContextoConfiguracion {
     <#
     .SYNOPSIS
@@ -433,7 +796,7 @@ function Resolver-ContextoConfiguracion {
         [Parameter(Mandatory = $false)][string]$Modulo
     )
 
-    Validar-ConfiguracionMulticliente -ConfiguracionRaw $ConfiguracionRaw -RaizRepositorio $RaizRepositorio -ConfigPath $ConfigPath | Out-Null
+    Validar-ConfiguracionEstructural -ConfiguracionRaw $ConfiguracionRaw -RaizRepositorio $RaizRepositorio -ConfigPath $ConfigPath | Out-Null
 
     $cliente = @($ConfiguracionRaw.clientes | Where-Object { [string]$_.id -ieq $ClienteId }) | Select-Object -First 1
     if ($null -eq $cliente) {
@@ -462,14 +825,15 @@ function Resolver-ContextoConfiguracion {
     $moduloCanonico = Obtener-ModuloAmbienteConfigurado -Ambiente $ambiente -Contexto ("El ambiente '" + [string]$ambiente.id + "' del cliente '" + $clienteIdCanonico + "'")
     $ambienteIdCanonico = [string]$ambiente.id
 
-    $clientesRoot = Resolver-RutaRepositorio -Ruta ([string]$ConfiguracionRaw.rutas.clientesRoot) -Raiz $RaizRepositorio
-    $directorioContexto = [System.IO.Path]::GetFullPath((Join-Path (Join-Path (Join-Path $clientesRoot $clienteIdCanonico) $moduloCanonico) $ambienteIdCanonico))
-    $directorioServicios = [System.IO.Path]::GetFullPath((Join-Path $directorioContexto 'documentacionServicios'))
-    $directorioEstado = [System.IO.Path]::GetFullPath((Join-Path $directorioContexto 'estado'))
-    $directorioXpz = [System.IO.Path]::GetFullPath((Join-Path $directorioContexto 'xpz'))
-    $directorioLogs = [System.IO.Path]::GetFullPath((Join-Path $directorioContexto 'Logs'))
-    $directorioTestFixtures = [System.IO.Path]::GetFullPath((Join-Path $directorioContexto 'test\fixtures'))
-    $directorioTestResultados = [System.IO.Path]::GetFullPath((Join-Path $directorioContexto 'test\resultados'))
+    $rutasContexto = Resolver-RutasContextoEnMemoria -ConfiguracionRaw $ConfiguracionRaw -Ambiente $ambiente -ClienteId $clienteIdCanonico -Modulo $moduloCanonico -AmbienteId $ambienteIdCanonico -RaizRepositorio $RaizRepositorio
+    $clientesRoot = $rutasContexto.ClientesRoot
+    $directorioContexto = $rutasContexto.DirectorioContexto
+    $directorioServicios = $rutasContexto.DirectorioServicios
+    $directorioEstado = $rutasContexto.DirectorioEstado
+    $directorioXpz = $rutasContexto.DirectorioXpz
+    $directorioLogs = $rutasContexto.DirectorioLogs
+    $directorioTestFixtures = $rutasContexto.DirectorioTestFixtures
+    $directorioTestResultados = $rutasContexto.DirectorioTestResultados
 
     $serviciosIgnorados = @()
     if ($cliente.serviciosIgnorados -and @($cliente.serviciosIgnorados).Count -gt 0) {
@@ -514,7 +878,7 @@ function Resolver-ContextoConfiguracion {
         AmbienteTipo = Clasificar-TipoAmbiente -Tipo ([string]$ambiente.tipo)
         ContextId = $clienteIdCanonico + '/' + $moduloCanonico + '/' + $ambienteIdCanonico
         DirectorioContexto = $directorioContexto
-        KbPath = Resolver-RutaRepositorio -Ruta ([string]$ambiente.kbPath) -Raiz $RaizRepositorio
+        KbPath = $rutasContexto.KbPath
         Host = $hostAmbiente
         BaseUrl = $baseUrl
         ServerUrl = $serverUrl
